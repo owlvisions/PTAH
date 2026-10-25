@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "id": "authorized-sample-app",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "evidence": [
+    {
+      "id": "ev-static-001",
+      "kind": "static-analysis",
+      "summary": "A handler reference is registered in the sample module.",
+      "source": "src/handler.js:18",
+      "confidence": "observed",
+      "targetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "claims": [
+    {
+      "id": "claim-001",
+      "text": "The application registers a handler.",
+      "evidenceIds": ["ev-static-001"],
+      "status": "supported"
+    }
+  ],
+  "questions": [
+    {
+      "id": "question-runtime",
+      "text": "Does the handler execute for the selected user action?",
+      "priority": 90,
+      "requiredEvidenceKinds": ["runtime-observation"]
+    }
+  ],
+  "actions": [
+    {
+      "id": "action-runtime-trace",
+      "name": "Run a permitted, isolated runtime trace",
+      "produces": ["runtime-observation"],
+      "cost": 3
+    },
+    {
+      "id": "action-doc-review",
+      "name": "Review documentation",
+      "produces": ["documentation"],
+      "cost": 1
+    }
+  ]
+}

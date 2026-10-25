@@ -1,0 +1,227 @@
+$ node --version
+v22.16.0
+$ node --check scripts/ptah.mjs
+$ node --check scripts/ptah-engine.mjs
+$ node --check scripts/ptah-mcp.mjs
+$ node --check scripts/ptah-ui.mjs
+$ node --check scripts/ptah-ui-server.mjs
+$ node --check scripts/tests/ptah.test.mjs
+$ npm run test:ptah
+
+> rea-agents@6.7.0 test:ptah
+> node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs
+
+TAP version 13
+# Subtest: investigation validator requires provenance and valid target digest
+ok 1 - investigation validator requires provenance and valid target digest
+  ---
+  duration_ms: 2.632988
+  type: 'test'
+  ...
+# Subtest: evidence report preserves source references and avoids calling inferred evidence verified
+ok 2 - evidence report preserves source references and avoids calling inferred evidence verified
+  ---
+  duration_ms: 0.309461
+  type: 'test'
+  ...
+# Subtest: evidence graph links source observations to claims and open questions
+ok 3 - evidence graph links source observations to claims and open questions
+  ---
+  duration_ms: 0.994443
+  type: 'test'
+  ...
+# Subtest: stale evidence from a different target digest is rejected
+ok 4 - stale evidence from a different target digest is rejected
+  ---
+  duration_ms: 0.232689
+  type: 'test'
+  ...
+# Subtest: verification checks schema and detects target-byte drift
+ok 5 - verification checks schema and detects target-byte drift
+  ---
+  duration_ms: 18.666875
+  type: 'test'
+  ...
+# Subtest: planner chooses an action that covers highest-priority missing evidence
+ok 6 - planner chooses an action that covers highest-priority missing evidence
+  ---
+  duration_ms: 0.585745
+  type: 'test'
+  ...
+# Subtest: planner stops honestly when budget or provider capability blocks progress
+ok 7 - planner stops honestly when budget or provider capability blocks progress
+  ---
+  duration_ms: 0.190467
+  type: 'test'
+  ...
+# Subtest: CLI report, graph, and planner commands accept a JSON investigation file
+ok 8 - CLI report, graph, and planner commands accept a JSON investigation file
+  ---
+  duration_ms: 269.871208
+  type: 'test'
+  ...
+# Subtest: fingerprint computes the real SHA-256 and identifies common binary signatures without executing the target
+ok 9 - fingerprint computes the real SHA-256 and identifies common binary signatures without executing the target
+  ---
+  duration_ms: 6.922138
+  type: 'test'
+  ...
+# Subtest: init creates a versioned investigation tied to actual target bytes and persists it
+ok 10 - init creates a versioned investigation tied to actual target bytes and persists it
+  ---
+  duration_ms: 53.860731
+  type: 'test'
+  ...
+# Subtest: fingerprint CLI fails clearly for a missing target
+ok 11 - fingerprint CLI fails clearly for a missing target
+  ---
+  duration_ms: 47.265565
+  type: 'test'
+  ...
+# Subtest: provider discovery reports PATH availability without executing external tools
+ok 12 - provider discovery reports PATH availability without executing external tools
+  ---
+  duration_ms: 39.327579
+  type: 'test'
+  ...
+# Subtest: providers CLI returns structured provider capability data
+ok 13 - providers CLI returns structured provider capability data
+  ---
+  duration_ms: 78.125374
+  type: 'test'
+  ...
+# Subtest: init -> add-evidence -> report forms a real file-backed investigation workflow
+ok 14 - init -> add-evidence -> report forms a real file-backed investigation workflow
+  ---
+  duration_ms: 167.254957
+  type: 'test'
+  ...
+# Subtest: add-evidence rejects invalid evidence kinds without corrupting the source file
+ok 15 - add-evidence rejects invalid evidence kinds without corrupting the source file
+  ---
+  duration_ms: 101.030902
+  type: 'test'
+  ...
+# Subtest: file-backed investigation supports adding claims, questions, and planner actions
+ok 16 - file-backed investigation supports adding claims, questions, and planner actions
+  ---
+  duration_ms: 361.716511
+  type: 'test'
+  ...
+# Subtest: bounded executable probe captures version output without a shell
+ok 17 - bounded executable probe captures version output without a shell
+  ---
+  duration_ms: 11.225638
+  type: 'test'
+  ...
+# Subtest: bounded executable probe kills a hung process at its deadline
+ok 18 - bounded executable probe kills a hung process at its deadline
+  ---
+  duration_ms: 205.138829
+  type: 'test'
+  ...
+# Subtest: provider probe is opt-in, uses PATH discovery, and reports bounded probe results
+ok 19 - provider probe is opt-in, uses PATH discovery, and reports bounded probe results
+  ---
+  duration_ms: 17.722858
+  type: 'test'
+  ...
+# Subtest: PTAH MCP stdio server implements initialize, tools/list, and safe fingerprint calls
+ok 20 - PTAH MCP stdio server implements initialize, tools/list, and safe fingerprint calls
+  ---
+  duration_ms: 53.924829
+  type: 'test'
+  ...
+# Subtest: PTAH MCP returns tool errors as MCP tool results rather than crashing the server
+ok 21 - PTAH MCP returns tool errors as MCP tool results rather than crashing the server
+  ---
+  duration_ms: 51.024734
+  type: 'test'
+  ...
+# Subtest: static analyzer adapter passes target paths as argv, bounds execution, and never launches the target
+ok 22 - static analyzer adapter passes target paths as argv, bounds execution, and never launches the target
+  ---
+  duration_ms: 11.538989
+  type: 'test'
+  ...
+# Subtest: static analyzer adapter refuses non-allow-listed providers and missing tools
+ok 23 - static analyzer adapter refuses non-allow-listed providers and missing tools
+  ---
+  duration_ms: 7.790136
+  type: 'test'
+  ...
+# Subtest: successful static analysis can be recorded as provenance-bound investigation evidence
+ok 24 - successful static analysis can be recorded as provenance-bound investigation evidence
+  ---
+  duration_ms: 19.081693
+  type: 'test'
+  ...
+# Subtest: CLI static analysis records evidence only after a successful bounded provider run
+ok 25 - CLI static analysis records evidence only after a successful bounded provider run
+  ---
+  duration_ms: 68.245791
+  type: 'test'
+  ...
+# Subtest: local UI serves the workbench and supports upload, evidence, report, and export APIs
+ok 26 - local UI serves the workbench and supports upload, evidence, report, and export APIs
+  ---
+  duration_ms: 78.91985
+  type: 'test'
+  ...
+# Subtest: local UI rejects non-loopback binding and oversized target uploads
+ok 27 - local UI rejects non-loopback binding and oversized target uploads
+  ---
+  duration_ms: 10.427641
+  type: 'test'
+  ...
+# Subtest: WebAssembly validation adapter requires a confirmed wasm signature and invokes only wasm-tools validate
+ok 28 - WebAssembly validation adapter requires a confirmed wasm signature and invokes only wasm-tools validate
+  ---
+  duration_ms: 49.840543
+  type: 'test'
+  ...
+# Subtest: PTAH help is available without installing project dependencies
+ok 29 - PTAH help is available without installing project dependencies
+  ---
+  duration_ms: 53.914289
+  type: 'test'
+  ...
+# Subtest: PTAH info reports compatibility honestly as a migration preview
+ok 30 - PTAH info reports compatibility honestly as a migration preview
+  ---
+  duration_ms: 48.397327
+  type: 'test'
+  ...
+# Subtest: PTAH self-check emits machine-readable readiness details
+ok 31 - PTAH self-check emits machine-readable readiness details
+  ---
+  duration_ms: 91.946384
+  type: 'test'
+  ...
+# Subtest: root branding identifies PTAH and documents the remaining compatibility migration
+ok 32 - root branding identifies PTAH and documents the remaining compatibility migration
+  ---
+  duration_ms: 13.286863
+  type: 'test'
+  ...
+# Subtest: PTAH validation workflow runs native tests and upstream CI on supported Node
+ok 33 - PTAH validation workflow runs native tests and upstream CI on supported Node
+  ---
+  duration_ms: 1.654265
+  type: 'test'
+  ...
+# Subtest: upstream sync workflow proposes reviewed updates without auto-merging
+ok 34 - upstream sync workflow proposes reviewed updates without auto-merging
+  ---
+  duration_ms: 2.16085
+  type: 'test'
+  ...
+1..34
+# tests 34
+# suites 0
+# pass 34
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2088.127533

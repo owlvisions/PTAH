@@ -1,2 +1,59 @@
-# PTAH
-PTAH - Program Understanding &amp; Analysis Toolkit
+# PTAH — Program Understanding & Analysis Toolkit
+
+PTAH is the emerging product identity for this codebase: a program-understanding and reverse-engineering toolkit with a dependency-free investigation engine, CLI, MCP interface, and early local workbench. This repository is a **migration preview**, not a completed replacement of every REA capability.
+
+> **Status and compatibility:** the codebase still contains the upstream REA runtime and legacy identifiers. The npm package is intentionally still named `rea-agents` until a verified owner-controlled package namespace and coordinated release migration exist. Do not treat this checkout or its PTAH additions as an official upstream release merely because the original implementation is present.
+
+## Current PTAH-native features
+
+- **Investigation engine:** target SHA-256 fingerprinting, file-signature hints, schema/provenance validation, evidence reports and graphs, deterministic bounded planning, and target-drift verification.
+- **CLI:** `ptah` commands for `info`, `self-check`, `providers`, `fingerprint`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `verify`, `report`, `graph`, `plan`, and bounded `analyze` operations.
+- **MCP:** `ptah-mcp` exposes PTAH investigation operations over stdio using JSON-RPC/MCP.
+- **Local workbench:** `ptah ui` launches an early loopback-only interface for investigations, evidence, reports, graphs, planning, and export.
+- **Compatibility:** `rea` and `rea-agents` remain as legacy entry points while feature parity is evaluated.
+
+These features are deliberately scoped. Static adapters for `objdump`, `llvm-objdump`, and `wasm-tools` provide bounded metadata/validation operations; they are not a universal decompiler. External tools are not OS-sandboxed by this migration slice, and the workbench is a local single-user utility rather than a production multi-user application.
+
+## Quick start from a source checkout
+
+Requirements for the full legacy project are declared in `package.json` (Node.js `^22.19.0 || ^24.11.0 || >=26.0.0` and npm `11.16.0`). The lightweight PTAH-native commands do not require installing project dependencies, but the legacy runtime does.
+
+```sh
+node scripts/ptah.mjs help
+node scripts/ptah.mjs info
+node scripts/ptah.mjs self-check --json
+node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs
+```
+
+Create an investigation bound to a target file:
+
+```sh
+node scripts/ptah.mjs fingerprint --target ./sample.bin
+node scripts/ptah.mjs init --target ./sample.bin --output ./sample.investigation.json
+node scripts/ptah.mjs report --input ./sample.investigation.json
+node scripts/ptah.mjs verify --input ./sample.investigation.json --target ./sample.bin
+```
+
+Start the local workbench with `node scripts/ptah.mjs ui`. It binds to loopback by default; do not expose it to an untrusted network.
+
+## Validation
+
+Run the dependency-free PTAH suite with:
+
+```sh
+npm run test:ptah
+```
+
+A passing PTAH suite does **not** establish that the entire upstream monorepo builds or that every inherited provider works. The full project build and test suite require the declared Node.js version and installed dependencies. See [the current source audit](docs/PTAH-AUDIT.md), [architecture](docs/PTAH-ARCHITECTURE.md), [engine schema](docs/PTAH-ENGINE-V1.md), [MCP guide](docs/PTAH-MCP.md), [workbench notes](docs/PTAH-UI.md), [roadmap](docs/PTAH-ROADMAP.md), and [brand migration audit](docs/PTAH-BRAND-AUDIT.md), [v0.8 validation report](docs/PTAH-V0.8-VALIDATION.md), [v0.9 validation report](docs/PTAH-V0.9-VALIDATION.md), [v0.10 validation report](docs/PTAH-V0.10-VALIDATION.md), [v0.11 validation report](docs/PTAH-V0.11-VALIDATION.md), and [upstream sync guide](docs/PTAH-UPSTREAM-SYNC.md).
+
+## Branding and provenance
+
+This is a staged migration. The root README and PTAH-owned documentation use the PTAH identity, while upstream attribution, licensing, existing REA integrations, package identifiers, generated metadata, translations, and release links require careful coordinated review. The prior README snapshot is retained at [`docs/legacy/REA-README-upstream-snapshot.md`](docs/legacy/REA-README-upstream-snapshot.md) for provenance and comparison. Review [PTAH-BRAND-AUDIT.md](docs/PTAH-BRAND-AUDIT.md) before describing the project as fully rebranded or publishing a new package.
+
+## License
+
+The repository's existing `LICENSE` and `THIRD_PARTY_NOTICES.md` continue to apply. Rebranding does not change upstream copyright, third-party licenses, or attribution obligations.
+
+## Keeping up with upstream REA
+
+See [PTAH-UPSTREAM-SYNC.md](docs/PTAH-UPSTREAM-SYNC.md) for the scheduled upstream polling and reviewed sync PR workflow.
