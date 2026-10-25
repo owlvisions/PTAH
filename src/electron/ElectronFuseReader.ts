@@ -16,6 +16,7 @@ import {
   type ElectronFuseSentinel,
   type ElectronFuseSlice,
 } from "../domain/electron/electronFuses.js";
+import { machoImageSlices } from "../domain/apple/dylibResolution.js";
 import {
   RegularFileChangedError,
   sameRegularFileState,
@@ -52,6 +53,7 @@ interface SliceRange {
   readonly fileOffset: number;
   readonly size: number;
   readonly architecture: string | null;
+  readonly hidden?: boolean;
 }
 
 /** The selected container is malformed or outside the supported formats. */
@@ -149,7 +151,7 @@ export const readElectronFuseImage = async (
     path,
     options?.resources ?? new ArtifactResourceScope(),
     signal,
-    async (owned) => {
+    async ({ handle: owned }) => {
       const opened = await owned.stat({ bigint: true });
       if (!sameRegularFileState(before, opened))
         throw new RegularFileChangedError(path);
@@ -259,11 +261,12 @@ const identifyMacho = async (
     );
   }
   const format = isFat(head) ? "mach-o-universal" : "mach-o";
-  const slices = facts.slices.map((slice, index) => ({
+  const slices = machoImageSlices(facts).map((slice, index) => ({
     index,
     fileOffset: slice.slice_offset,
     size: slice.slice_size,
     architecture: slice.architecture,
+    ...(slice.hidden === undefined ? {} : { hidden: slice.hidden }),
   }));
   assertNonOverlappingSlices(slices);
   return {
@@ -340,6 +343,9 @@ const scanSlices = async (
       file_offset: state.slice.fileOffset,
       size: state.slice.size,
       architecture: state.slice.architecture,
+      ...(state.slice.hidden === undefined
+        ? {}
+        : { hidden: state.slice.hidden }),
       sentinel_count: sentinels.length,
       sentinels,
     });

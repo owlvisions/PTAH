@@ -62,14 +62,43 @@ returns `resource_constraint` with resource `file-size` and its fixed byte
 allowance in `reported_limits.maximum_input_bytes`; retrying the unchanged file
 does not raise that allowance. WASM bytes are copied
 into a private workspace as read-only `module.wasm`; its digest is rechecked
-before and after each tool. WABT validates with `--enable-all`,
-reports sections through `wasm-objdump -h -x`, and decodes through
-`wasm2wat --enable-all`. The result retains selected byte SHA-256 and size,
-section payload ranges, full header/detail output (including module-name
-preambles), exact import/export WAT
-forms, decoded WAT and its UTF-8 SHA-256. Producer format drift and invalid or
-truncated modules are failures, with validation diagnostics and partial Evidence
-retaining selected byte identity and tool provenance.
+before and after each tool. WABT validates with
+`wasm-validate --enable-all --ignore-custom-section-errors`, reports sections
+through `wasm-objdump -h -x`, and decodes through
+`wasm2wat --enable-all --ignore-custom-section-errors`. The result retains
+selected byte SHA-256 and size, section payload ranges, full header/detail output
+(including module-name preambles), exact import/export WAT forms, decoded WAT
+and its UTF-8 SHA-256. Producer format drift and invalid or truncated modules
+are failures, with validation diagnostics and partial Evidence retaining
+selected byte identity and tool provenance.
+If inspection stops after selected files were read, partial Evidence also keeps
+the completed candidate file identities and glue parse observations. A stable
+read remains observed when descriptor finalization later fails; cleanup still
+requires retry. Partial Evidence for a glue read whose finalization fails
+before decoding retains its digest with `not-performed` parse status. Invalid
+UTF-8 retains the digest with failed parse status. Neither case invents
+references, and a failed file read contributes no invented facts.
+These independent observations do not establish that the selected WASM module is
+valid: partial results state whether WABT validation is unknown, rejected the
+module, or succeeded before a later inspection failure.
+CLI errors include this partial Evidence inline. MCP errors can return its
+`retained-evidence` reference in `details.partial_observation`; use
+`get_evidence_bundle` with `detail: "complete"` to retrieve the matching record.
+
+Core validation remains authoritative when an optional custom section cannot
+be interpreted. WABT warning output is preserved in `custom_section_warnings`;
+`debug_name_metadata` reports whether the optional name section was absent,
+fully interpreted, uninterpretable, or unknown. WABT custom-section warnings
+whose section attribution is unknown prevent a complete debug-name claim, even
+when module names were decoded. They do not establish that the name section is
+malformed. Exact warnings retain their producing tool and text. Older portable
+reports retain their original strict command profile; missing metadata coverage
+is `unknown` and missing warning history is `null`. The raw custom section
+remains in the decoded WAT. An uninterpretable name section leaves complete
+debug-name coverage unknown. Module names decoded before a later metadata
+failure remain available for exact objdump framing, including names containing
+newlines or NUL; those partial observations do not establish complete optional
+metadata.
 
 The tool profile preserves upstream release/source identity, resolved executable
 paths, executable digests, exact banners and arguments. Executable digests are
@@ -85,6 +114,12 @@ commands, file checks, cleanup and delivery. A provider timeout reports the
 actual selected deadline and these recovery controls; increasing only the client
 deadline does not change the provider budget. No server restart is required to
 change this per-call setting. Resolve incomplete cleanup before another attempt.
+
+To change the default across new MCP operations, set `wasm.command_timeout_ms`
+through `update_analysis_settings`. An explicit `command_timeout_ms` still wins;
+correct that argument if it caused the timeout. Runtime defaults do not insert
+omitted arguments into Evidence parameters. See the
+[settings design](design/limits-and-recovery.md#precedence-and-lifetime).
 
 For example, `rea inspect-wasm-artifact /artifacts/module.wasm
 --command-timeout-ms 60000 --format json` uses a 60-second per-command deadline;
@@ -141,7 +176,14 @@ import/export forms. Function/tag signatures resolve type indices; table/memory
 limits, memory page size and global value type/mutability remain explicit.
 Unadmitted types (including GC reference signatures) retain null signatures and
 issues. Exact decoded names retain escapes, empty names, BOM and punctuation.
-This facet is absent in historical Evidence that did not examine typed interfaces.
+Internal WAT labels are display identifiers: a repeated label in a type or
+function/table/memory/global/tag index space is ambiguous. Named references to
+it retain null signatures or indices and an explicit issue; numeric references
+and uniquely named definitions keep their own identity. Comparison treats an
+unresolved signature as unknown, including in self-comparison. Inventory
+completeness describes observed import/export entries, independently of type
+resolution. This facet is absent in historical Evidence that did not examine
+typed interfaces.
 
 `compare_wasm_interfaces` accepts two complete `inspect_wasm_artifact` Evidence
 records, or exact retained references in the current MCP session, and required
@@ -176,3 +218,9 @@ After building, run `REA_WABT_BIN_DIRECTORY=/absolute/wabt/bin node
 scripts/verify-wasm-interface-comparison.mjs` for original-module comparison
 through the compiled CLI and stdio MCP. It uses owned fixtures and WABT 1.0.42;
 no WASM module is instantiated or executed.
+
+Glue parsing accepts Node-supported WASM source-phase imports, including
+`import source module from "./module.wasm"` and
+`await import.source("./module.wasm")`. Their string literals retain the same
+coordinates and local candidate associations as ordinary import literals; these
+are static source observations, without module instantiation or execution.

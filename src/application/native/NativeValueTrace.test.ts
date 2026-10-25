@@ -11,7 +11,10 @@ import { nativeValueTraceSchema } from "../../domain/native/nativeValueTrace.js"
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { ok, err } from "../../domain/result.js";
 
 const subject = {
@@ -106,6 +109,87 @@ const analysis: AnalysisOperationPort = {
     );
   },
 };
+describe("native value trace seed admission", () => {
+  it("preserves the exact abort reason before attempting a seed", async () => {
+    const reason = { request: "cancel before native trace" };
+    const attempted: unknown[] = [];
+    const result = await traceNativeValues(
+      {
+        execute: async (operation, parameters) => {
+          attempted.push([operation, parameters]);
+          return analysis.execute(operation, parameters);
+        },
+      },
+      { procedure: "0x1000" },
+      AbortSignal.abort(reason),
+    );
+    if (result.ok) throw new Error("Expected pre-seed cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    expect(attempted).toEqual([]);
+  });
+
+  it.each([
+    new AnalysisInputError("analyze_function", {
+      userMessage: "Unknown selector: missing",
+    }),
+    new NoBinaryOpenError(),
+    new AnalysisResourceConstraintError(
+      "analyze_function",
+      "capacity",
+      "Provider is busy",
+      null,
+      { retryable: true },
+    ),
+    new AnalysisCancelledError("analyze_function"),
+  ])("preserves the original seed failure object: $_tag", async (failure) => {
+    const attempted: unknown[] = [];
+    const result = await traceNativeValues(
+      {
+        execute: async (operation, parameters) => {
+          attempted.push([operation, parameters]);
+          return err(failure);
+        },
+      },
+      { procedure: "missing" },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected seed failure");
+    expect(result.error).toBe(failure);
+    expect(attempted).toEqual([["analyze_function", { procedure: "missing" }]]);
+  });
+
+  it("retains a successful seed without def-use as a useful unknown trace", async () => {
+    const base = functionDossierSchema.parse(ghidraFunctionDossier());
+    const result = await traceNativeValues(
+      {
+        execute: async () =>
+          ok(
+            createAnalysisExecution(
+              { ...base, native_value_flow: null },
+              provider,
+              { subject },
+            ),
+          ),
+      },
+      { procedure: base.procedure.address },
+    );
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+      target_sha256: subject.sha256,
+      decompilations: 1,
+      procedures: [
+        expect.objectContaining({ address: base.procedure.address }),
+      ],
+      unknowns: [
+        expect.objectContaining({
+          reason: "Provider has no native def-use model",
+        }),
+      ],
+    });
+  });
+});
+
 describe("native value parameter-use node membership", () => {
   it("retains only parameter uses whose parameter nodes fit the node budget", async () => {
     const operationCount = 3_000;

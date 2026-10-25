@@ -1,4 +1,6 @@
-import { JAVASCRIPT_APPLICATION_PROVIDER } from "../application/InvestigationProviders.js";
+import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
+import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import { JAVASCRIPT_APPLICATION_PROVIDER } from "../domain/investigationProviders.js";
 import { createProgressReporter } from "../application/ProgressReporter.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -6,6 +8,46 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { javaScriptSourcePathsSchema } from "../domain/javascript/javascriptSourceSelection.js";
+import { parseCliJsonInput } from "../cliJsonInput.js";
+
+const OPERATION = "analyze_javascript_application";
+
+/**
+ * Combine repeated `--source-path` values with `--source-paths-json`, an inline
+ * JSON array or a JSON file. A file keeps large selections below the host
+ * command-line limit; entries remain exact application-relative paths and are
+ * not resolved against the working directory.
+ */
+export const cliJavaScriptSourcePaths = async (
+  sourcePath: readonly string[] | undefined,
+  sourcePathsJson: string | undefined,
+  signal?: AbortSignal,
+): Promise<
+  | { readonly ok: true; readonly value: readonly string[] | undefined }
+  | { readonly ok: false; readonly error: JsonValue }
+> => {
+  if (sourcePathsJson === undefined) return { ok: true, value: sourcePath };
+  const input = await parseCliJsonInput(sourcePathsJson, OPERATION, signal);
+  if (!input.ok) return input;
+  const parsed = javaScriptSourcePathsSchema.safeParse(input.value);
+  if (!parsed.success)
+    return {
+      ok: false,
+      error: cliError(
+        analysisInputErrorFromIssues(
+          OPERATION,
+          parsed.error.issues.map((issue) => ({
+            ...issue,
+            path: ["source_paths_json", ...issue.path],
+          })),
+          { source_paths_json: input.value },
+        ),
+      ),
+    };
+  return { ok: true, value: [...(sourcePath ?? []), ...parsed.data] };
+};
 
 /**
  * One scope for every JavaScript analysis in this process. A healthy worker
@@ -46,7 +88,13 @@ export const closeCliJavaScriptResources = (): Promise<void> => {
 /** Execute the shared CLI boundary for static JavaScript analysis. */
 export const runCliJavaScriptApplicationAnalysis = async (
   input: unknown,
+  environment: Readonly<Record<string, string | undefined>>,
   signal?: AbortSignal,
+  delivery?: {
+    readonly detail: "complete" | "summary";
+    readonly evidenceOutput: string | undefined;
+    readonly view?: AnalysisViewRequest;
+  },
 ): Promise<JsonValue> => {
   const { analyzeJavaScriptApplication } =
     await import("../application/javascript/JavaScriptApplicationService.js");
@@ -58,6 +106,7 @@ export const runCliJavaScriptApplicationAnalysis = async (
   );
   const resources = cliAnalysisScope();
   const result = await analyzeJavaScriptApplication(input, resources, {
+    environment,
     progress,
     ...(signal === undefined ? {} : { signal }),
   });
@@ -85,7 +134,15 @@ export const runCliJavaScriptApplicationAnalysis = async (
           ),
     );
   }
-  return result.ok ? result.value : cliError(result.error);
+  const value = result.ok ? result.value : cliError(result.error);
+  return delivery === undefined
+    ? value
+    : publishCliAnalysisEvidence(value, {
+        ...delivery,
+        providerId: JAVASCRIPT_APPLICATION_PROVIDER.id,
+        operation: "analyze_javascript_application",
+        signal: signal ?? new AbortController().signal,
+      });
 };
 
 const cliError = (

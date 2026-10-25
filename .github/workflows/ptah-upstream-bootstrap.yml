@@ -1,12 +1,7 @@
 name: PTAH upstream history bootstrap
 
 on:
-  push:
-    paths:
-      - '.github/workflows/ptah-upstream-bootstrap.yml'
   workflow_dispatch:
-  schedule:
-    - cron: '41 3 * * 1'
 
 permissions:
   contents: write
@@ -64,14 +59,14 @@ jobs:
       - name: Set up supported Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '24.22.1'
+          node-version: "24.22.1"
           cache: npm
           cache-dependency-path: integrated/package-lock.json
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Run PTAH syntax checks and tests
         working-directory: integrated
@@ -88,7 +83,7 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run deps:check
-          npm run check
+          npm run check:ci
           npm test
 
       - name: Commit the integrated overlay on top of upstream history
@@ -106,7 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           git remote add ptah-origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push --force ptah-origin HEAD:refs/heads/bot/ptah-upstream-bootstrap
+          git push ptah-origin HEAD:refs/heads/bot/ptah-upstream-bootstrap
 
       - name: Upload integrated source snapshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

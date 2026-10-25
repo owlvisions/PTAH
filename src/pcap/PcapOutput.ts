@@ -73,8 +73,15 @@ export const parseCapinfosOutput = (stdout: string): CapinfosMetadata => {
   const lines = new Map<string, string>();
   for (const line of stdout.split(/\r?\n/u)) {
     const at = line.indexOf(":");
-    if (at >= 0 && !/^\s/u.test(line))
-      lines.set(line.slice(0, at), line.slice(at + 1).trim());
+    if (at >= 0 && !/^\s/u.test(line)) {
+      const key = line.slice(0, at);
+      const value = line.slice(at + 1).trim();
+      // capinfos repeats this label for inferred truncation lengths. They
+      // describe captured packets, not the capture header's snapshot limit.
+      if (key === "Packet size limit" && !value.startsWith("file hdr:"))
+        continue;
+      lines.set(key, value);
+    }
   }
   const fileType = lines.get("File type");
   const encapsulation = lines.get("File encapsulation");
@@ -212,6 +219,7 @@ export const parseTsharkJsonOutput = async (
   const uris = new Set<string>();
   const observedUris = new Set<string>();
   let uriRedactions = 0;
+  let unresolvedHttpUriTarget = false;
   const unattributed = new Set<string>();
   let unattributedPackets = 0;
   let retainedBytes = 0;
@@ -319,10 +327,60 @@ export const parseTsharkJsonOutput = async (
       if (!protocols.has(protocol)) charge(protocol);
       protocols.set(protocol, (protocols.get(protocol) ?? 0) + 1);
     }
-    for (const value of field("http.request.full_uri")) {
+    const fullUris = field("http.request.full_uri");
+    const fullUriCandidates = fullUris.map((value) => ({
+      value,
+      parsed: parseRecordedTransportUrl(value),
+    }));
+    const requestUriCandidates = field("http.request.uri").map((value) => ({
+      value,
+      parsed: parseRecordedTransportUrl(value),
+    }));
+    // Wireshark emits full_uri alongside each request URI it can resolve.
+    // Raw absolute-form targets stand on their own; relative targets need a
+    // corresponding full_uri occurrence. Compare counts only after consuming
+    // exact absolute-form duplicates, since output arrays have no join key.
+    const absoluteRequests = new Map<string, number>();
+    let relativeRequestCount = 0;
+    for (const candidate of requestUriCandidates) {
+      if (candidate.value === "") continue;
+      if (candidate.parsed.origin !== null)
+        absoluteRequests.set(
+          candidate.value,
+          (absoluteRequests.get(candidate.value) ?? 0) + 1,
+        );
+      else relativeRequestCount += 1;
+    }
+    let unmatchedFullUriCount = 0;
+    for (const candidate of fullUriCandidates) {
+      const absoluteCount = absoluteRequests.get(candidate.value) ?? 0;
+      if (absoluteCount > 0)
+        absoluteRequests.set(candidate.value, absoluteCount - 1);
+      else if (candidate.value !== "") unmatchedFullUriCount += 1;
+    }
+    if (relativeRequestCount > unmatchedFullUriCount)
+      unresolvedHttpUriTarget = true;
+
+    const http2Uris = field("http2.request.full_uri").filter(
+      (value) => value !== "",
+    );
+    if (
+      field("http2.headers.path").filter((value) => value !== "").length >
+      http2Uris.length
+    )
+      unresolvedHttpUriTarget = true;
+    for (const candidate of [
+      ...fullUriCandidates,
+      ...http2Uris.map((value) => ({
+        value,
+        parsed: parseRecordedTransportUrl(value),
+      })),
+      ...requestUriCandidates.filter(({ parsed }) => parsed.origin !== null),
+    ]) {
+      const { value, parsed } = candidate;
       if (value === "" || observedUris.has(value)) continue;
       add(observedUris, value);
-      const { credentials } = parseRecordedTransportUrl(value);
+      const { credentials } = parsed;
       if (credentials !== null) uriRedactions += 1;
       if (credentials === "ambiguous") continue;
       add(
@@ -362,6 +420,9 @@ export const parseTsharkJsonOutput = async (
     unattributedDnsAddressCount: unattributed.size,
     unattributedDnsPackets: unattributedPackets,
     packetCount: packets.length,
-    partial: observedUris.size > uris.size || unattributedPackets > 0,
+    partial:
+      observedUris.size > uris.size ||
+      unattributedPackets > 0 ||
+      unresolvedHttpUriTarget,
   };
 };

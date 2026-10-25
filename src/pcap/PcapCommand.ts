@@ -39,6 +39,7 @@ export interface PcapCommandCleanup {
 export interface PcapCommandOutput {
   readonly stdout: string;
   readonly stderr: string;
+  readonly invalidUtf8Streams: readonly ("stdout" | "stderr")[];
   readonly cleanup?: PcapCommandCleanup;
 }
 
@@ -139,6 +140,10 @@ export const runPcapCommand = async (options: {
     return {
       stdout: output.stdout.text,
       stderr: output.stderr.text,
+      invalidUtf8Streams: [
+        ...(output.stdout.invalidUtf8 === true ? (["stdout"] as const) : []),
+        ...(output.stderr.invalidUtf8 === true ? (["stderr"] as const) : []),
+      ],
       ...(cleanup === undefined ? {} : { cleanup }),
     };
   } catch (cause) {
@@ -176,14 +181,16 @@ export const runPcapCommand = async (options: {
             },
           }
         : {}),
-      ...(cause instanceof OwnedCommandFailure && cause.cleanupFailure !== null
-        ? {
-            cleanup: {
-              reason: cause.cleanupFailure,
-              resources: cause.resources,
-            },
-          }
-        : {}),
+      ...(cleanup !== undefined
+        ? { cleanup }
+        : cause instanceof OwnedCommandFailure && cause.cleanupFailure !== null
+          ? {
+              cleanup: {
+                reason: cause.cleanupFailure,
+                resources: cause.resources,
+              },
+            }
+          : {}),
     };
     if (cause instanceof OwnedCommandFailure && cause.reason === "cancelled")
       throw new AnalysisCancelledError(operation, {

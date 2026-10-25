@@ -1,8 +1,8 @@
-import {
-  createAnalysisExecutionEvidence,
-  type AnalysisExecution,
-  type AnalysisOperationPort,
+import type {
+  AnalysisExecution,
+  AnalysisOperationPort,
 } from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,

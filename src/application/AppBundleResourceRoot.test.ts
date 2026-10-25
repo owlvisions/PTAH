@@ -1,16 +1,26 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
-  createAnalysisExecution,
-  createAnalysisExecutionEvidence,
-} from "./AnalysisProvider.js";
-import { resolveAppBundleResourceRoot } from "./AppBundleExecutable.js";
+  findAppBundleResourceRoot,
+  resolveAppBundleResourceRoot,
+} from "./AppBundleExecutable.js";
 import { bindExecutionTarget } from "./binary/BinarySessionExecution.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 const provider = { id: "test", name: "test", version: null } as const;
 const target = {
@@ -70,6 +80,43 @@ it("resolves a flat bundle resource root without inferring executable identity",
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "preserves the actual denied plist classification through resource-only root discovery",
+  async () => {
+    const temp = await mkdtemp(join(tmpdir(), "rea-resource-read-denied-"));
+    const bundle = join(temp, "Fixture.app");
+    const contents = join(bundle, "Contents");
+    await mkdir(contents, { recursive: true });
+    const plist = join(contents, "Info.plist");
+    await writeFile(plist, "<plist><dict/></plist>");
+    try {
+      await chmod(contents, 0o600);
+      const result = await resolveAppBundleResourceRoot(bundle);
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "access_denied",
+          details: {
+            path: plist,
+            system_code: "EACCES",
+            boundary: "filesystem-read",
+          },
+        });
+      await chmod(contents, 0o700);
+      expect((await resolveAppBundleResourceRoot(bundle)).ok).toBe(true);
+      const ordinary = join(temp, "web.app");
+      await mkdir(ordinary);
+      expect(await findAppBundleResourceRoot(ordinary)).toEqual({
+        ok: true,
+        value: undefined,
+      });
+    } finally {
+      await chmod(contents, 0o700);
+      await rm(temp, { recursive: true, force: true });
+    }
+  },
+);
 
 it("distinguishes default target binding from an explicitly unbound observation", () => {
   const defaultSubject = createAnalysisExecution({ ok: true }, provider);

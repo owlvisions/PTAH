@@ -15,7 +15,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 cliTest(
   "compares portable Evidence identically through CLI and retained MCP with schema/provenance",
   async ({ cli }) => {
-    const sources = (["i32", "i64"] as const).map((parameter) => {
+    const sources = (["i32", "i64"] as const).map((parameter, index) => {
       const report = wasmArtifactFixture();
       report.interface = {
         state: "complete",
@@ -33,6 +33,18 @@ cliTest(
           },
         ],
       };
+      // The left source predates optional-metadata coverage fields and the
+      // tolerant custom-section profile. Portable Evidence remains readable.
+      const {
+        debug_name_metadata: _debugNames,
+        custom_section_warnings: _warnings,
+        ...legacyReport
+      } = report;
+      if (index === 0)
+        for (const command of legacyReport.tool_profile.commands)
+          command.arguments = command.arguments.filter(
+            (argument) => argument !== "--ignore-custom-section-errors",
+          );
       return createEvidence(
         {
           path: report.artifact.path,
@@ -43,7 +55,7 @@ cliTest(
         {
           operation: "inspect_wasm_artifact",
           parameters: { path: report.artifact.path },
-          result: report,
+          result: index === 0 ? legacyReport : report,
           confidence: "observed",
         },
       );

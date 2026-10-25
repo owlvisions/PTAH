@@ -43,6 +43,79 @@ afterEach(async () => {
   );
 });
 
+it("retains usable CDP sibling identities and reports malformed optional discovery metadata", async () => {
+  const { endpoint } = await listen((request, response) => {
+    const port = new URL(endpoint).port;
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify(
+        request.url === "/json/version"
+          ? {
+              Browser: "Chrome/fixture",
+              "Protocol-Version": "1.3",
+              "User-Agent": "fixture",
+              "V8-Version": "fixture",
+              "WebKit-Version": "fixture",
+              webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/fixture`,
+            }
+          : [
+              {
+                id: "malformed-attachment",
+                type: "page",
+                url: "https://example.test/a",
+                attached: "unknown",
+              },
+              {
+                id: "selected",
+                type: "page",
+                url: "https://example.test/b",
+                attached: false,
+                webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/selected`,
+              },
+              { id: 1, type: "page", url: "https://example.test/invalid" },
+              {
+                id: "invalid-socket",
+                type: "page",
+                url: "https://example.test/c",
+                attached: null,
+                webSocketDebuggerUrl: 1,
+              },
+              {
+                id: "worker",
+                type: "worker",
+                url: "https://example.test/worker",
+                attached: true,
+              },
+            ],
+      ),
+    );
+  });
+  const discovery = await discoverCdpEndpoint(endpoint, "list_browser_targets");
+  expect(discovery.targets.map(({ id }) => id)).toEqual([
+    "malformed-attachment",
+    "selected",
+    "invalid-socket",
+    "worker",
+  ]);
+  expect(discovery.targets[0]?.attached).toBeNull();
+  expect(discovery.targets[1]?.webSocket).toMatchObject({
+    scope: "page",
+    targetId: "selected",
+  });
+  expect(discovery.targets[2]?.webSocket).toBeUndefined();
+  expect(discovery.targets[3]?.attached).toBe(true);
+  expect(discovery.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining(
+        'target malformed-attachment reported malformed attached metadata "unknown"',
+      ),
+      expect.stringContaining(
+        "row 2 was excluded because its target identity is malformed",
+      ),
+    ]),
+  );
+});
+
 describe("CDP discovery cancellation ownership", () => {
   it("preserves the exact reason for a pre-aborted discovery request", async () => {
     let requests = 0;

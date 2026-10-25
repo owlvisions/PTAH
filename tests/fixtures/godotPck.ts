@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 export interface GodotPckMember {
   readonly path: string;
-  readonly data: string;
+  readonly data: string | Uint8Array;
   readonly flags?: number;
   readonly md5?: Buffer;
   readonly size?: bigint;
@@ -35,10 +35,12 @@ export const buildGodotPck = (
 ): Buffer => {
   const data: Buffer[] = [];
   const offsets: number[] = [];
+  const memberBytes: Buffer[] = [];
   let dataBytes = 0;
   for (const member of members) {
     offsets.push(dataBytes);
     const bytes = pad4(Buffer.from(member.data));
+    memberBytes.push(Buffer.from(member.data));
     data.push(bytes);
     dataBytes += bytes.length;
   }
@@ -50,8 +52,11 @@ export const buildGodotPck = (
         pckU32(path.length),
         path,
         pckU64(member.offset ?? BigInt(offsets[index] ?? 0)),
-        pckU64(member.size ?? BigInt(Buffer.byteLength(member.data))),
-        member.md5 ?? createHash("md5").update(member.data).digest(),
+        pckU64(member.size ?? BigInt(memberBytes[index]?.length ?? 0)),
+        member.md5 ??
+          createHash("md5")
+            .update(memberBytes[index] ?? "")
+            .digest(),
         pckU32(member.flags ?? 0),
       ];
     }),

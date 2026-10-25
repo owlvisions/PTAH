@@ -1,5 +1,8 @@
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { createEvidenceBundle, type EvidenceBundle } from "../../domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  type EvidenceBundle,
+} from "../../domain/evidenceBundle.js";
 
 /** Minimal structural contract accepted from the dependency-free PTAH engine. */
 export interface PtahInvestigationEvidence {
@@ -54,14 +57,25 @@ export function exportPtahEvidenceBundle(
 
   const seen = new Set<string>();
   const records: Evidence[] = [];
-  const evidenceIdMap: Record<string, string> = Object.create(null) as Record<string, string>;
+  const evidenceIdMap: Record<string, string> = Object.create(null) as Record<
+    string,
+    string
+  >;
   for (const item of investigation.evidence) {
-    if (seen.has(item.id)) throw new TypeError(`Duplicate PTAH evidence ID: ${item.id}`);
+    if (seen.has(item.id))
+      throw new TypeError(`Duplicate PTAH evidence ID: ${item.id}`);
     seen.add(item.id);
-    if (item.targetSha256.toLowerCase() !== investigation.target.sha256.toLowerCase())
-      throw new TypeError(`Evidence ${item.id} belongs to a different target digest`);
+    if (
+      item.targetSha256.toLowerCase() !==
+      investigation.target.sha256.toLowerCase()
+    )
+      throw new TypeError(
+        `Evidence ${item.id} belongs to a different target digest`,
+      );
     if (!item.summary.trim() || !item.source.trim() || !item.kind.trim())
-      throw new TypeError(`Evidence ${item.id} must include kind, summary, and source`);
+      throw new TypeError(
+        `Evidence ${item.id} must include kind, summary, and source`,
+      );
 
     const record = createEvidence(
       {
@@ -73,7 +87,11 @@ export function exportPtahEvidenceBundle(
       {
         predicateType: "ptah.imported-evidence-summary",
         operation: "import-ptah-evidence-summary",
-        parameters: { ptahEvidenceId: item.id, kind: item.kind, source: item.source },
+        parameters: {
+          ptahEvidenceId: item.id,
+          kind: item.kind,
+          source: item.source,
+        },
         result: { summary: item.summary },
         confidence: item.confidence,
         authority: "analyst-inference",
@@ -90,7 +108,10 @@ export function exportPtahEvidenceBundle(
   const claims = (investigation.claims ?? []).map((claim) => {
     const mappedIds = claim.evidenceIds.map((id) => {
       const mapped = evidenceIdMap[id];
-      if (mapped === undefined) throw new TypeError(`Claim ${claim.id} references unknown PTAH evidence ID: ${id}`);
+      if (mapped === undefined)
+        throw new TypeError(
+          `Claim ${claim.id} references unknown PTAH evidence ID: ${id}`,
+        );
       return mapped;
     });
     return { id: claim.id, text: claim.text, evidenceIds: mappedIds };

@@ -267,3 +267,68 @@ Section
   const truncatedBytes = truncatedCount.replace("2 2 48", "2 1 32");
   expect(() => parseOtoolLoadCommands(truncatedBytes)).toThrow(/sizes/u);
 });
+
+it.each([
+  ["LC_VERSION_MIN_IPHONEOS", 7, "IOSSIMULATOR"],
+  ["LC_VERSION_MIN_IPHONEOS", 16777223, "IOSSIMULATOR"],
+  ["LC_VERSION_MIN_IPHONEOS", 16777228, "IPHONEOS"],
+  ["LC_VERSION_MIN_TVOS", 7, "TVOS"],
+  ["LC_VERSION_MIN_TVOS", 16777223, "TVOSSIMULATOR"],
+  ["LC_VERSION_MIN_TVOS", 16777228, "TVOS"],
+  ["LC_VERSION_MIN_WATCHOS", 7, "WATCHOSSIMULATOR"],
+  ["LC_VERSION_MIN_WATCHOS", 16777223, "WATCHOSSIMULATOR"],
+  ["LC_VERSION_MIN_WATCHOS", 16777228, "WATCHOS"],
+  ["LC_VERSION_MIN_MACOSX", 7, "MACOSX"],
+  ["LC_VERSION_MIN_MACOSX", 16777223, "MACOSX"],
+  ["LC_VERSION_MIN_MACOSX", 16777228, "MACOSX"],
+])(
+  "classifies legacy command %s on CPU %s as %s",
+  (command, cpuType, platform) => {
+    const text = [
+      "Mach header",
+      "      magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
+      ` ${cpuType === 7 ? "0xfeedface" : "0xfeedfacf"} ${cpuType} 3 0x00 2 1 16 0x0`,
+      "Load command 0",
+      `      cmd ${command}`,
+      "  cmdsize 16",
+      "   version 12.0",
+      "       sdk 12.1",
+    ].join("\n");
+    expect(parseOtoolLoadCommands(text).builds[0]?.platform).toBe(platform);
+  },
+);
+
+it.each([
+  ["3", "TVOS"],
+  ["4294967295", "4294967295"],
+])("preserves explicit build platform %s on Intel", (code, platform) => {
+  const text = [
+    "Mach header",
+    "      magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
+    " 0xfeedfacf 16777223 3 0x00 2 1 24 0x0",
+    "Load command 0",
+    "      cmd LC_BUILD_VERSION",
+    "  cmdsize 24",
+    ` platform ${code}`,
+    "    minos 12.0",
+    "      sdk 12.1",
+    "   ntools 0",
+  ].join("\n");
+  expect(parseOtoolLoadCommands(text).builds[0]?.platform).toBe(platform);
+});
+
+it("preserves an unknown legacy platform spelling on Intel", () => {
+  const text = [
+    "Mach header",
+    "      magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
+    " 0xfeedfacf 16777223 3 0x00 2 1 16 0x0",
+    "Load command 0",
+    "      cmd LC_VERSION_MIN_FUTURE",
+    "  cmdsize 16",
+    "   version 12.0",
+    "       sdk 12.1",
+  ].join("\n");
+  const result = parseOtoolLoadCommands(text);
+  expect(result.builds[0]?.platform).toBe("FUTURE");
+  expect(result.commands[0]?.kind).toBe("LC_VERSION_MIN_FUTURE");
+});

@@ -18,7 +18,7 @@ export const managedTargetInputSchema = z.strictObject({
 
 /** Delivery selection belongs to artifact and member inspection, not native queries. */
 export const managedArtifactInputSchema = managedTargetInputSchema.extend({
-  detail: analysisDetailSchema.unwrap().optional(),
+  detail: analysisDetailSchema,
 });
 
 /** Member inspection may select declaring types before members are decoded. */

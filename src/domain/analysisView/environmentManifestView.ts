@@ -15,7 +15,10 @@ import {
   type TemplateRule,
 } from "./environmentManifestRules.js";
 import { admitHarCaptureParent } from "./WebNetworkProjectionAccumulator.js";
-import { admitScenarioCaptureParent } from "./scenarioCaptureRecords.js";
+import {
+  admitScenarioCaptureParent,
+  type ScenarioResponseBodyRetention,
+} from "./scenarioCaptureRecords.js";
 import { ROUTE_RULES } from "./webNetworkRouteTemplates.js";
 
 /** Opt-in template rules, each listed at most once; shared by every view that groups tools. */
@@ -133,6 +136,10 @@ export interface CaptureParent {
     | "capture_browser_scenario";
   readonly records: readonly WebNetworkCaptureRecord[];
   readonly total_records: number;
+  readonly scenarioResponseBodies?: ReadonlyMap<
+    number,
+    ScenarioResponseBodyRetention
+  >;
   readonly limitations: readonly string[];
   readonly artifact: { readonly path: string; readonly sha256: string | null };
 }
@@ -150,6 +157,7 @@ const admitCaptureParent = (
           operation: "capture_browser_scenario",
           records: scenario.value.records,
           total_records: scenario.value.totalRecords,
+          scenarioResponseBodies: scenario.value.responseBodies,
           limitations: scenario.value.limitations,
           artifact: { path: "", sha256: null },
         })
@@ -207,23 +215,32 @@ const addCaptureRecords = (
   ]);
   if (!limitations.ok) return limitations;
   for (const record of capture.records) {
-    const added = target.accumulator.add(record);
+    const added = target.accumulator.add(
+      record,
+      capture.scenarioResponseBodies?.get(record.ordinal),
+    );
     if (!added.ok) return added;
   }
   return ok(undefined);
 };
 
-/** Project retained request lines, from a HAR or a browser scenario, into a replayable tool surface; templates are inferences. */
-export const projectEnvironmentManifestView = (
-  parent: AnalysisViewParent,
+/** Create the manifest budget with its selected query names and template rules. */
+export const createEnvironmentManifestAccumulator = (
   view: AnalysisViewRequest,
-  accumulator = view.kind === "environment-manifest"
+): EnvironmentManifestAccumulator =>
+  view.kind === "environment-manifest"
     ? new EnvironmentManifestAccumulator(
         undefined,
         view.include_query_parameter_names,
         view.template_rules,
       )
-    : new EnvironmentManifestAccumulator(),
+    : new EnvironmentManifestAccumulator();
+
+/** Project retained request lines, from a HAR or a browser scenario, into a replayable tool surface; templates are inferences. */
+export const projectEnvironmentManifestView = (
+  parent: AnalysisViewParent,
+  view: AnalysisViewRequest,
+  accumulator = createEnvironmentManifestAccumulator(view),
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   if (view.kind !== "environment-manifest")
     return err(

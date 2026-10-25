@@ -40,7 +40,6 @@ import {
 } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { Logger } from "pino";
 import { GhidraClient } from "./GhidraClient.js";
@@ -55,9 +54,9 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
   admitGhidraLanguageOverride,
-  GhidraLanguageCatalogCleanupError,
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
+import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 import {
   ghidraProcessorUnsupportedReason,
   isGhidraPspTarget,
@@ -397,31 +396,15 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     if (override !== undefined && installation.status === "available") {
       let catalog: Awaited<ReturnType<typeof readGhidraLanguageCatalog>>;
       try {
-        catalog = await readGhidraLanguageCatalog(installation.installDir);
+        catalog = await readGhidraLanguageCatalog(
+          installation.installDir,
+          this.#inspectionResources,
+          options?.signal,
+        );
       } catch (cause: unknown) {
-        if (cause instanceof GhidraLanguageCatalogCleanupError)
-          return err(
-            new ProviderCleanupError(
-              "ghidra",
-              cause.paths,
-              {
-                reason: cause.message,
-                paths: [...cause.paths],
-                close_failures: cause.causes.map(providerFailureText),
-                ...(cause.readFailure === undefined
-                  ? {}
-                  : { read_failure: providerFailureText(cause.readFailure) }),
-              },
-              { operation: "resolve_analysis_profile", cause },
-            ),
-          );
         return err(
-          new ProviderAdapterError("ghidra", "resolve_analysis_profile", {
-            cause,
-            diagnostics: {
-              reason:
-                "Could not read the installed Ghidra language definitions.",
-            },
+          ghidraFileFailure(cause, "resolve_analysis_profile", {
+            setting: "REA_GHIDRA_LANGUAGE_ID",
           }),
         );
       }
@@ -636,6 +619,15 @@ const inspectWindowsP0TargetSupport = (
   // The raw 6502 lane uses the same immutable snapshot and native ownership boundary.
   if (target.format === "raw-binary" && target.architecture === "6502")
     return { status: "supported", code: null, reason: null, diagnostics };
+  // DOL is verified on POSIX hosts only; Windows P0 does not admit it, like the other non-PE lanes.
+  if (target.format === "gamecube-dol")
+    return {
+      status: "unsupported",
+      code: "target_format_unsupported",
+      reason:
+        "GameCube DOL analysis is not part of Windows Ghidra P0; it is verified on POSIX hosts only.",
+      diagnostics,
+    };
   if (target.format !== "pe")
     return {
       status: "unsupported",

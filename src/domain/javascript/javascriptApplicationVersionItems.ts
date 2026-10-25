@@ -7,6 +7,8 @@ import type {
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
+import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
+import { applicationEndpointCorrespondence } from "./javascriptApplicationEndpointCorrespondence.js";
 import type { ApplicationVersionComparisonItem } from "./javascriptApplicationVersionComparisonSchemas.js";
 import type {
   ApplicationVersionMatchingProjection,
@@ -29,6 +31,8 @@ interface ItemContext {
   readonly pairByRight: ReadonlyMap<string, string>;
   readonly leftRelationships: RelationshipIndex;
   readonly rightRelationships: RelationshipIndex;
+  readonly leftUnresolvedEndpointKinds: ReadonlySet<string | null>;
+  readonly rightUnresolvedEndpointKinds: ReadonlySet<string | null>;
 }
 
 type ItemContextInput = Omit<
@@ -39,6 +43,8 @@ type ItemContextInput = Omit<
   | "pairByRight"
   | "leftRelationships"
   | "rightRelationships"
+  | "leftUnresolvedEndpointKinds"
+  | "rightUnresolvedEndpointKinds"
 > & {
   readonly leftNativeEvidence: readonly Evidence[];
   readonly rightNativeEvidence: readonly Evidence[];
@@ -106,6 +112,8 @@ export const classifyJavaScriptApplicationVersions = (
     pairByRight,
     leftRelationships: indexRelationships(context.leftGraph),
     rightRelationships: indexRelationships(context.rightGraph),
+    leftUnresolvedEndpointKinds: unresolvedEndpointKinds(context.leftGraph),
+    rightUnresolvedEndpointKinds: unresolvedEndpointKinds(context.rightGraph),
   };
   const leftItems = matching.unmatchedLeft.map((node) => {
     const candidates = matching.candidatesForLeft.get(node.node_id) ?? [];
@@ -147,6 +155,8 @@ const matchedItem = (
   const complete = graphsComplete(context);
   const ownEvidenceUncertain =
     ownPresenceUncertain(pair.left) || ownPresenceUncertain(pair.right);
+  const endpointTargetUncertain =
+    unresolvedEndpointTarget(pair.left) || unresolvedEndpointTarget(pair.right);
   const observedChange =
     !ownEvidenceUncertain &&
     (dimensions.includes("content") || dimensions.includes("properties"));
@@ -161,7 +171,7 @@ const matchedItem = (
       ? "unknown"
       : observedChange || completeChange
         ? "changed"
-        : complete && !relationships.unresolved
+        : complete && !relationships.unresolved && !endpointTargetUncertain
           ? "unchanged"
           : "unknown";
   const finalDimensions = ownEvidenceUncertain
@@ -179,8 +189,8 @@ const matchedItem = (
     evidence_links: itemEvidenceLinks(pair.left, pair.right, context),
     limitations: [
       ...new Set([
-        ...ownAvailabilityLimitations(pair.left),
-        ...ownAvailabilityLimitations(pair.right),
+        ...ownComparisonLimitations(pair.left),
+        ...ownComparisonLimitations(pair.right),
       ]),
       ...matchLimitations(pair),
       ...(status === "unknown" && !complete
@@ -231,11 +241,11 @@ const leftOnlyItem = (
       },
       dimensions: ["availability"],
       limitations: [
-        ...ownAvailabilityLimitations(node),
+        ...ownComparisonLimitations(node),
         AMBIGUOUS_MATCH_LIMITATION,
       ],
     });
-  if (ownPresenceUncertain(node))
+  if (ownPresenceUncertain(node) || unresolvedEndpointTarget(node))
     return itemWithId({
       ...common,
       status: "unknown",
@@ -243,21 +253,31 @@ const leftOnlyItem = (
       right_node_id: null,
       match: unmatchedMatch(),
       dimensions: ["availability"],
-      limitations: ownAvailabilityLimitations(node),
+      limitations: ownComparisonLimitations(node),
     });
-  const absenceObserved = absenceClaimable(context.rightGraph.coverage);
+  const endpointGap = oppositeEndpointUncertain(
+    node,
+    context.rightUnresolvedEndpointKinds,
+  );
+  const absenceObserved =
+    !endpointGap && absenceClaimable(context.rightGraph.coverage);
   return itemWithId({
     ...common,
     status: absenceObserved ? "removed" : "unknown",
     left_node_id: node.node_id,
     right_node_id: null,
     match: unmatchedMatch(),
-    dimensions: absenceObserved
-      ? ["availability"]
-      : ["availability", "coverage"],
+    dimensions:
+      absenceObserved || endpointGap
+        ? ["availability"]
+        : ["availability", "coverage"],
     limitations: [
-      ...ownAvailabilityLimitations(node),
-      ...(absenceObserved ? [] : [INCOMPLETE_GRAPH_LIMITATION]),
+      ...ownComparisonLimitations(node),
+      ...(endpointGap
+        ? [ENDPOINT_ABSENCE_LIMITATION]
+        : absenceObserved
+          ? []
+          : [INCOMPLETE_GRAPH_LIMITATION]),
     ],
   });
 };
@@ -287,11 +307,11 @@ const rightOnlyItem = (
       },
       dimensions: ["availability"],
       limitations: [
-        ...ownAvailabilityLimitations(node),
+        ...ownComparisonLimitations(node),
         AMBIGUOUS_MATCH_LIMITATION,
       ],
     });
-  if (ownPresenceUncertain(node))
+  if (ownPresenceUncertain(node) || unresolvedEndpointTarget(node))
     return itemWithId({
       ...common,
       status: "unknown",
@@ -299,21 +319,31 @@ const rightOnlyItem = (
       right_node_id: node.node_id,
       match: unmatchedMatch(),
       dimensions: ["availability"],
-      limitations: ownAvailabilityLimitations(node),
+      limitations: ownComparisonLimitations(node),
     });
-  const absenceObserved = absenceClaimable(context.leftGraph.coverage);
+  const endpointGap = oppositeEndpointUncertain(
+    node,
+    context.leftUnresolvedEndpointKinds,
+  );
+  const absenceObserved =
+    !endpointGap && absenceClaimable(context.leftGraph.coverage);
   return itemWithId({
     ...common,
     status: absenceObserved ? "added" : "unknown",
     left_node_id: null,
     right_node_id: node.node_id,
     match: unmatchedMatch(),
-    dimensions: absenceObserved
-      ? ["availability"]
-      : ["availability", "coverage"],
+    dimensions:
+      absenceObserved || endpointGap
+        ? ["availability"]
+        : ["availability", "coverage"],
     limitations: [
-      ...ownAvailabilityLimitations(node),
-      ...(absenceObserved ? [] : [INCOMPLETE_GRAPH_LIMITATION]),
+      ...ownComparisonLimitations(node),
+      ...(endpointGap
+        ? [ENDPOINT_ABSENCE_LIMITATION]
+        : absenceObserved
+          ? []
+          : [INCOMPLETE_GRAPH_LIMITATION]),
     ],
   });
 };
@@ -374,6 +404,35 @@ const AMBIGUOUS_MATCH_LIMITATION =
   "Multiple nodes share the same permitted match key; no cross-version pair was selected.";
 const INCOMPLETE_GRAPH_LIMITATION =
   "The opposite graph is incomplete, so an unmatched node cannot be classified as added or removed.";
+const ENDPOINT_TARGET_LIMITATION =
+  "Endpoint target identity remains unresolved; any matched source site aligns retained syntax, not an established runtime destination.";
+const ENDPOINT_ABSENCE_LIMITATION =
+  "An unresolved endpoint of the same kind on the opposite side prevents proving this endpoint target absent.";
+
+const unresolvedEndpointTarget = (node: ApplicationNode): boolean =>
+  node.kind === "endpoint" &&
+  applicationEndpointCorrespondence(node).targetResolution !== "exact";
+
+const unresolvedEndpointKinds = (
+  graph: JavaScriptApplicationGraph,
+): ReadonlySet<string | null> => {
+  const kinds = new Set<string | null>();
+  for (const node of graph.nodes) {
+    if (node.kind !== "endpoint") continue;
+    const identity = applicationEndpointCorrespondence(node);
+    if (identity.targetResolution !== "exact") kinds.add(identity.endpointKind);
+  }
+  return kinds;
+};
+
+const oppositeEndpointUncertain = (
+  node: ApplicationNode,
+  kinds: ReadonlySet<string | null>,
+): boolean => {
+  if (node.kind !== "endpoint" || kinds.size === 0) return false;
+  const { endpointKind } = applicationEndpointCorrespondence(node);
+  return endpointKind === null || kinds.has(null) || kinds.has(endpointKind);
+};
 
 const ownPresenceUncertain = (node: ApplicationNode): boolean =>
   node.observations.every(
@@ -381,10 +440,16 @@ const ownPresenceUncertain = (node: ApplicationNode): boolean =>
       evidence.state === "unknown" || evidence.state === "unavailable",
   );
 
-const ownAvailabilityLimitations = (node: ApplicationNode): string[] => {
+const ownComparisonLimitations = (node: ApplicationNode): string[] => {
   const limitations = new Set<string>();
+  const endpointTargetUncertain = unresolvedEndpointTarget(node);
+  if (endpointTargetUncertain) limitations.add(ENDPOINT_TARGET_LIMITATION);
   for (const { evidence } of node.observations)
-    if (evidence.state === "unknown" || evidence.state === "unavailable")
+    if (
+      endpointTargetUncertain ||
+      evidence.state === "unknown" ||
+      evidence.state === "unavailable"
+    )
       for (const limitation of evidence.limitations)
         limitations.add(limitation);
   return [...limitations].sort(compareUnicodeCodePoints);
@@ -442,12 +507,32 @@ const properties = (node: ApplicationNode) =>
   node.observations
     .map(({ label, properties: values, source_map_reference }) => ({
       label,
-      properties: values,
+      properties: comparisonPropertyValues(values),
       source_map_reference,
     }))
     .sort((left, right) =>
       compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
     );
+
+const comparisonPropertyValues = (
+  values: ApplicationNode["observations"][number]["properties"],
+) => {
+  const occurrence = javaScriptFileOccurrenceSchema.safeParse(
+    values.file_occurrence,
+  );
+  if (!occurrence.success) return values;
+  // A containing artifact's digest locates this occurrence in one version;
+  // sibling changes do not establish a change to this file's own facts.
+  // Keep the occurrence's path and content digest comparable, and retain the
+  // complete provenance record on the original observation.
+  return {
+    ...values,
+    file_occurrence: {
+      path: occurrence.data.path,
+      sha256: occurrence.data.sha256,
+    },
+  };
+};
 
 const indexRelationships = (
   graph: JavaScriptApplicationGraph,

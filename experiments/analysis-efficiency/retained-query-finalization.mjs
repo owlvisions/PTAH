@@ -45,18 +45,28 @@ export const finalizeRetainedQueryReceipt = async ({
 }) => {
   report.cleanup_failures = [];
   await Promise.all([
-    attempt(report.cleanup_failures, "client", () => client.close()),
-    attempt(report.cleanup_failures, "transport", () => transport.close()),
+    ...(client === undefined
+      ? []
+      : [attempt(report.cleanup_failures, "client", () => client.close())]),
+    ...(transport === undefined
+      ? []
+      : [
+          attempt(report.cleanup_failures, "transport", () =>
+            transport.close(),
+          ),
+        ]),
   ]);
-  await attempt(report.cleanup_failures, "server-log", async () => {
-    if (!serverLog.writableEnded) serverLog.end();
-    await serverLogFinished;
-  });
-  if (report.cleanup_failures.length === 0)
+  if (serverLog !== undefined)
+    await attempt(report.cleanup_failures, "server-log", async () => {
+      if (!serverLog.writableEnded) serverLog.end();
+      await serverLogFinished;
+    });
+  if (account !== undefined && report.cleanup_failures.length === 0)
     await attempt(report.cleanup_failures, "workspace", () =>
       rm(account, { recursive: true }),
     );
-  if (report.cleanup_failures.length > 0) report.retained_workspace = account;
+  if (account !== undefined && report.cleanup_failures.length > 0)
+    report.retained_workspace = account;
 
   return publishRetainedQueryReceipt({ report, output, transcript, stdout });
 };

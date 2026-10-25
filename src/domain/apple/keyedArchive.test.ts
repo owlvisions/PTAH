@@ -49,7 +49,7 @@ describe("projectKeyedArchive root reference projection", () => {
         $objects: ["$null", "target"],
         $top: {
           UID: { CF$UID: 1 },
-          CF$UID: { UID: 1 },
+          CF$UID: { CF$UID: 1 },
         },
       },
       { offset: 0, limit: 2 },
@@ -60,7 +60,7 @@ describe("projectKeyedArchive root reference projection", () => {
         source: null,
         path: ["CF$UID"],
         target: 1,
-        raw: { UID: 1 },
+        raw: { CF$UID: 1 },
         status: "resolved",
       },
       {
@@ -106,7 +106,7 @@ it("keeps generated unknown scalar wrappers scalar and lookalike dictionaries or
           reason: "unsupported-markup",
         },
       ],
-      $top: { root: { UID: 1 } },
+      $top: { root: { CF$UID: 1 } },
     },
     { offset: 0, limit: 3 },
   );

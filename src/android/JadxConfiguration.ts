@@ -1,3 +1,8 @@
+import { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
+import {
+  jadxOperationTimeoutGuidance,
+  JADX_OPERATION_TIMEOUT_REMEDIATION,
+} from "./JadxOperationTimeout.js";
 import { inspectJadxJava, type JadxJavaProbeOptions } from "./JadxJavaProbe.js";
 import {
   JadxInterruption,
@@ -32,13 +37,10 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import type { DoctorProviderCheck } from "../application/Doctor.js";
 import {
-  DEFAULT_JADX_OPERATION_TIMEOUT_MS,
-  jadxOperationTimeoutGuidance,
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_JAVA_PROBE_REMEDIATION,
   JADX_JAVA_RUNTIME_REMEDIATION,
   JADX_JVM_OPTIONS_REMEDIATION,
-  JADX_OPERATION_TIMEOUT_REMEDIATION,
   JADX_UNSUPPORTED_HOST_REMEDIATION,
   JADX_WINDOWS_NATIVE_REMEDIATION,
 } from "./JadxRelease.js";
@@ -178,10 +180,16 @@ class JadxConfigurationFailure extends Error {
 /** Inspect the same JAR and Java prerequisites that gate actual execution. */
 export const inspectJadxAvailability = async (
   environment: Readonly<Record<string, string | undefined>>,
-  options: JadxJavaProbeOptions,
+  options: JadxJavaProbeOptions & {
+    /** Admitted runtime override; omission retains launch configuration. */
+    readonly operationTimeoutMs?: number | undefined;
+  },
 ): Promise<ProviderAvailability> => {
   try {
-    const operationTimeoutMs = readOperationTimeout(environment);
+    const operationTimeoutMs = readOperationTimeout(
+      environment,
+      options.operationTimeoutMs,
+    );
     const configuration = await readJadxConfigurationInputs(
       environment,
       options.signal,
@@ -227,9 +235,10 @@ export const inspectJadxAvailability = async (
 export const resolveJadxOperationTimeout = (
   environment: Readonly<Record<string, string | undefined>>,
   operation: AndroidOperation,
+  runtimeTimeoutMs?: number,
 ): Result<number, AnalysisCapabilityUnavailableError> => {
   try {
-    return ok(readOperationTimeout(environment));
+    return ok(readOperationTimeout(environment, runtimeTimeoutMs));
   } catch (cause) {
     if (!(cause instanceof JadxConfigurationFailure)) throw cause;
     return err(projectConfigurationFailure(operation, cause));
@@ -341,7 +350,7 @@ const requireEngineArchive = async (
             ),
         },
         options.signal,
-        async (handle) => {
+        async ({ handle, initial }) => {
           try {
             // Metadata enumeration borrows this descriptor. The file workflow
             // alone owns admission, final close, cancellation and failed retry.
@@ -349,7 +358,7 @@ const requireEngineArchive = async (
               jar,
               "zip",
               JAR_METADATA_READ_MAX_BYTES,
-              { handle, initial: await handle.stat() },
+              { handle, initial },
             );
             const missing = new Set([
               "com/atxx/jhmcp/JadxSession.class",
@@ -595,7 +604,9 @@ const resolveJava = async (
       Object.entries(environment).find(
         ([key]) => key.toLowerCase() === "path",
       )?.[1] ?? "";
-    for (const directory of [process.cwd(), ...path.split(delimiter)]) {
+    for (const directory of path
+      .split(delimiter)
+      .filter((entry) => entry !== "")) {
       throwIfJadxInterrupted(signal);
       // Windows PATH commonly quotes individual entries containing spaces.
       const selected =
@@ -700,7 +711,9 @@ const resolveJvmArguments = (
 
 const readOperationTimeout = (
   environment: Readonly<Record<string, string | undefined>>,
+  runtimeTimeoutMs?: number,
 ): number => {
+  if (runtimeTimeoutMs !== undefined) return runtimeTimeoutMs;
   const value = environment.REA_JADX_OPERATION_TIMEOUT_MS;
   if (value === undefined) return DEFAULT_JADX_OPERATION_TIMEOUT_MS;
   const parsed = providerStartupTimeoutSchema.safeParse(value);

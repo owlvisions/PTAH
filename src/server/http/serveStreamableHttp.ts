@@ -198,24 +198,27 @@ const hasStreamablePostHeaders = (request: Request): boolean => {
 };
 
 /** Only a new client's initialize travels without a session id; peek within the SDK body bound. */
-const isInitializePost = async (request: Request): Promise<boolean> => {
+const classifyInitializePost = async (
+  request: Request,
+): Promise<"initialize" | "batch" | undefined> => {
   if (
     request.method !== "POST" ||
     request.headers.has("mcp-session-id") ||
     !hasStreamablePostHeaders(request)
   )
-    return false;
+    return undefined;
   const probe = request.clone();
   try {
     const read = await readRequestBody(probe);
-    if (read.tooLarge) return false;
+    if (read.tooLarge) return undefined;
     const body: unknown = JSON.parse(read.text);
-    // The transport accepts only a lone initialize, so only that may evict a session.
-    return Array.isArray(body)
-      ? body.length === 1 && isInitializeRequest(body[0])
-      : isInitializeRequest(body);
+    // SDK 2.3.1 accepts a one-message array. REA's session handover contract
+    // requires an object, regardless of whether a session is already open.
+    if (Array.isArray(body))
+      return body.some(isInitializeRequest) ? "batch" : undefined;
+    return isInitializeRequest(body) ? "initialize" : undefined;
   } catch {
-    return false;
+    return undefined;
   } finally {
     // The clone is one branch of a tee; awaiting its cancel would wait for the original to drain.
     void probe.body?.cancel().catch(() => undefined);
@@ -336,12 +339,19 @@ export class McpSessionSlot {
 
   async #handle(request: Request): Promise<Response> {
     if (this.#closed) return SHUTTING_DOWN();
+    const initialization = await classifyInitializePost(request);
+    if (initialization === "batch")
+      return jsonError(
+        400,
+        -32600,
+        "Initialize must be a single JSON-RPC object, not a batch",
+      );
     if (this.#draining) await this.#live?.transport.close();
     if (this.#closed) return SHUTTING_DOWN();
     const open = this.#live;
     if (
       open?.transport.sessionId !== undefined &&
-      (await isInitializePost(request)) &&
+      initialization === "initialize" &&
       // A client that left while its initialize was probed would evict the session for nobody.
       !request.signal.aborted
     ) {

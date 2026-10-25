@@ -7,7 +7,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { evmInterfaceEvidence } from "./EvmInterfaceEvidence.js";
+import { evmInterfaceEvidence } from "../../domain/evm/evmInterfaceEvidence.js";
 import {
   inspectEvmInterfaceInputSchema,
   evmInterfaceSchema,

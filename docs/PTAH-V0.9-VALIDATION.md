@@ -4,16 +4,16 @@
 
 ## Checks performed in this environment
 
-| Check | Result | Notes |
-|---|---|---|
-| PTAH JavaScript syntax checks | PASS | CLI, engine, MCP server, UI launcher and UI server parsed successfully under Node.js v22.16.0 |
-| `npm run test:ptah` | PASS: 33 tests | Includes the upstream-sync workflow contract test; dependency-free PTAH tests only |
-| Upstream sync workflow YAML parse | PASS | Parsed structurally with PyYAML; GitHub-hosted execution has not been run |
-| Overlay patch against supplied REA snapshot | PASS | Patch applies to the exact `rea-main.zip` snapshot supplied with this work |
-| ZIP archive integrity | PASS | `unzip -t` reported no errors in the generated archive |
-| Tests from a clean archive extraction | PASS: 33 tests | The extracted `PTAH-v0.9` directory passed the dependency-free test suite |
-| Live fetch of GitHub `main` | BLOCKED | This execution environment could not resolve `github.com`; no claim is made that this archive includes upstream commits newer than its supplied baseline |
-| Full monorepo build and test matrix | BLOCKED / NOT RUN | Dependencies are absent and Node.js v22.16.0 is below the repository's declared v22.19.0 minimum |
+| Check                                       | Result            | Notes                                                                                                                                                    |
+| ------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PTAH JavaScript syntax checks               | PASS              | CLI, engine, MCP server, UI launcher and UI server parsed successfully under Node.js v22.16.0                                                            |
+| `npm run test:ptah`                         | PASS: 33 tests    | Includes the upstream-sync workflow contract test; dependency-free PTAH tests only                                                                       |
+| Upstream sync workflow YAML parse           | PASS              | Parsed structurally with PyYAML; GitHub-hosted execution has not been run                                                                                |
+| Overlay patch against supplied REA snapshot | PASS              | Patch applies to the exact `rea-main.zip` snapshot supplied with this work                                                                               |
+| ZIP archive integrity                       | PASS              | `unzip -t` reported no errors in the generated archive                                                                                                   |
+| Tests from a clean archive extraction       | PASS: 33 tests    | The extracted `PTAH-v0.9` directory passed the dependency-free test suite                                                                                |
+| Live fetch of GitHub `main`                 | BLOCKED           | This execution environment could not resolve `github.com`; no claim is made that this archive includes upstream commits newer than its supplied baseline |
+| Full monorepo build and test matrix         | BLOCKED / NOT RUN | Dependencies are absent and Node.js v22.16.0 is below the repository's declared v22.19.0 minimum                                                         |
 
 ## What the upstream-sync automation does
 

@@ -18,6 +18,10 @@ export type ReferenceSourceExclusionKind = ReferenceSourceEntryKind | "unknown";
 
 export interface ReferenceSourceReaderOptions {
   readonly signal?: AbortSignal;
+  /** Prepare policy after identity admission and opening, before enumeration; refusal closes the owned handle. */
+  readonly beforeDirectory?: (
+    path: string,
+  ) => Promise<ReferenceSourceResult<undefined>>;
   readonly shouldExclude?: (
     path: string,
     kind: ReferenceSourceExclusionKind,
@@ -58,6 +62,8 @@ export type ReferenceSourceEntry =
       readonly path: string;
       readonly code: ReferenceSourceFailureCode;
       readonly message: string;
+      /** Exact filesystem presentation; may contain the selected local root path. */
+      readonly localDiagnostic?: string;
       readonly size?: number;
     };
 
@@ -95,6 +101,10 @@ export type TraversalState = {
   readonly root: string;
   readonly rootIdentity: BigIntStats;
   readonly signal?: AbortSignal;
+  /** Prepare policy after identity admission and opening, before enumeration; refusal closes the owned handle. */
+  readonly beforeDirectory?: (
+    path: string,
+  ) => Promise<ReferenceSourceResult<undefined>>;
   readonly shouldExclude?: (
     path: string,
     kind: ReferenceSourceExclusionKind,

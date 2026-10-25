@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
+import { jsonValueSchema } from "./jsonValue.js";
 
 import { absoluteLocalPathStringSchema } from "./localPath.js";
 import { browserNetworkContentSelectionSchema } from "./browserNetworkEvidence.js";
@@ -67,6 +68,97 @@ const queryEntrySchema = z.strictObject({
   value: browserScenarioValueSchema,
 });
 
+/** HTTP methods a request step may send. */
+export const BROWSER_SCENARIO_REQUEST_METHODS = [
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+] as const;
+
+/** Header names a page's fetch cannot set (and User-Agent, which Chrome drops), so a request step refuses them rather than having them dropped. */
+const FORBIDDEN_REQUEST_HEADERS = new Set([
+  "accept-charset",
+  "accept-encoding",
+  "access-control-request-headers",
+  "access-control-request-method",
+  "connection",
+  "content-length",
+  "cookie",
+  "cookie2",
+  "date",
+  "dnt",
+  "expect",
+  "host",
+  "keep-alive",
+  "origin",
+  "referer",
+  "set-cookie",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "user-agent",
+  "via",
+]);
+
+/** Characters an HTTP field value may carry: visible ASCII, space, tab and obs-text. */
+export const HEADER_FIELD_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/u;
+
+const settableRequestHeader = (name: string): boolean => {
+  const lower = name.toLowerCase();
+  return (
+    !FORBIDDEN_REQUEST_HEADERS.has(lower) &&
+    !lower.startsWith("proxy-") &&
+    !lower.startsWith("sec-")
+  );
+};
+
+/** A header value a request step reads from the page as it runs; it is redacted like a declared secret. */
+const browserScenarioPageValueSchemas = [
+  z.strictObject({
+    source: z.literal("cookie"),
+    name: z
+      .string()
+      .min(1)
+      .describe("Cookie the browser holds for the request URL."),
+  }),
+  z.strictObject({
+    source: z.literal("local_storage"),
+    key: z.string().min(1).describe("Local storage key on the start origin."),
+    json_pointer: z
+      .string()
+      .regex(/^(?:\/.*)?$/u)
+      .optional()
+      .describe(
+        "Parse the stored value as JSON and use the string or number at this pointer; empty selects the whole value.",
+      ),
+  }),
+] as const;
+
+const requestHeaderSchema = z.strictObject({
+  name: z
+    .string()
+    .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u)
+    .refine(settableRequestHeader, {
+      message: "A page's fetch cannot set this header",
+    }),
+  value: z.discriminatedUnion("source", [
+    ...browserScenarioValueSchema.options,
+    ...browserScenarioPageValueSchemas,
+  ]),
+  prefix: z
+    .string()
+    .regex(HEADER_FIELD_VALUE, {
+      message: "A header value cannot carry line breaks or control characters",
+    })
+    .optional()
+    .describe("Text sent before the value, such as `Bearer `."),
+});
+export type BrowserScenarioRequestHeader = z.infer<typeof requestHeaderSchema>;
+
 /** URL with ordinary inline details and optional structured secret query references. */
 export const browserScenarioUrlSchema = z.strictObject({
   url: browserScenarioBaseUrlSchema,
@@ -98,8 +190,8 @@ export const browserScenarioEnvironmentSchema = z
   .strictObject({
     viewport: z
       .strictObject({
-        width: z.number().int().positive().default(1_280),
-        height: z.number().int().positive().default(720),
+        width: z.int().positive().default(1_280),
+        height: z.int().positive().default(720),
         device_scale_factor: z.number().positive().default(1),
       })
       .default({ width: 1_280, height: 720, device_scale_factor: 1 }),
@@ -169,7 +261,6 @@ const MAX_BROWSER_SCENARIO_TIMEOUT_MS = 2_147_483_647;
 const stepBase = {
   step_id: scenarioIdentifierSchema,
   timeout_ms: z
-    .number()
     .int()
     .min(1)
     .max(MAX_BROWSER_SCENARIO_TIMEOUT_MS)
@@ -191,7 +282,7 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
     action: z.literal("click"),
     locator: locatorSchema,
     button: z.enum(["left", "middle", "right"]).default("left"),
-    click_count: z.number().int().positive().default(1),
+    click_count: z.int().positive().default(1),
   }),
   z.strictObject({
     ...stepBase,
@@ -223,10 +314,43 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
     state: z.enum(["attached", "detached", "visible", "hidden"]),
   }),
   z.strictObject({
+    ...stepBase,
+    action: z.literal("request"),
+    method: z.enum(BROWSER_SCENARIO_REQUEST_METHODS),
+    path: z
+      .string()
+      .regex(/^\/(?![/\\])/u)
+      .describe(
+        "Path, and optional literal query, on the start URL's origin, such as /api/folders; it must resolve to that origin.",
+      ),
+    query: z.array(queryEntrySchema).default([]),
+    headers: z.array(requestHeaderSchema).default([]),
+    json: jsonValueSchema
+      .optional()
+      .describe(
+        "JSON request body, sent with Content-Type application/json unless a header sets one; not allowed for GET or HEAD.",
+      ),
+    expected_status: z
+      .array(
+        z
+          .int()
+          .min(100)
+          .max(599)
+          .refine((status) => status < 300 || status > 399, {
+            message:
+              "Request steps follow no redirects, so a 3xx status cannot complete one",
+          }),
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Statuses that complete the step; any other status fails it. Omitted means any response completes it.",
+      ),
+  }),
+  z.strictObject({
     step_id: scenarioIdentifierSchema,
     action: z.literal("wait_for_timeout"),
     duration_ms: z
-      .number()
       .int()
       .min(1)
       .max(MAX_BROWSER_SCENARIO_TIMEOUT_MS)

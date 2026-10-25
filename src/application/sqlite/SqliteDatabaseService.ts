@@ -17,14 +17,29 @@ import {
   type SqliteDatabase,
   SQLITE_ROW_LIMIT_DEFAULT,
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
+  sqliteSchemaHasObjectDeclaration,
   sqliteSchemaScope,
   sqliteInspectionParameters,
 } from "../../domain/sqlite/sqliteDatabase.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 
 const OPERATION = "inspect_sqlite_database";
+
+const matchesSelectedSchema = (
+  schema: SqliteDatabase["schema"],
+  table: string,
+): boolean =>
+  sqliteSchemaHasObjectDeclaration(table)
+    ? schema.tables.length === 1 &&
+      schema.tables[0]?.name === table &&
+      schema.indexes.every((index) => index.table === table) &&
+      schema.triggers.every((trigger) => trigger.table === table) &&
+      schema.views.length === 0
+    : schema.tables.length === 0 &&
+      schema.indexes.length === 0 &&
+      schema.views.length === 0 &&
+      schema.triggers.length === 0;
 
 const matchesSelectedDatabase = (
   report: SqliteDatabase,
@@ -41,13 +56,8 @@ const matchesSelectedDatabase = (
   (report.wal === null || report.wal.path === `${input.path}-wal`) &&
   report.schema.scope === sqliteSchemaScope(input) &&
   (report.schema.scope !== "selected_table" ||
-    (report.schema.tables.length === 1 &&
-      report.schema.tables[0]?.name === input.table &&
-      report.schema.indexes.every((index) => index.table === input.table) &&
-      report.schema.triggers.every(
-        (trigger) => trigger.table === input.table,
-      ) &&
-      report.schema.views.length === 0)) &&
+    (input.table !== undefined &&
+      matchesSelectedSchema(report.schema, input.table))) &&
   (input.table === undefined
     ? report.rows === null
     : report.rows?.table === input.table &&
@@ -104,7 +114,7 @@ export class SqliteDatabaseService {
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
         parameters: sqliteInspectionParameters(input.data),
-        result: jsonValueSchema.parse(report.data),
+        result: report.data,
         ...(execution.rawResult === null
           ? {}
           : { rawResult: execution.rawResult }),

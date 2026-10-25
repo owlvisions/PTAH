@@ -12,6 +12,7 @@ import {
 import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { AnalysisTimeoutError } from "../../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const hooks = vi.hoisted(() => ({
@@ -288,9 +289,30 @@ nativeClientTest.each([false, true])(
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",
       retryable: true,
-      details: { timeout_ms: 10000 },
+      details: {
+        timeout_ms: 10000,
+        diagnostics: { prerequisite_operation: "inspect_adb_client" },
+      },
     });
-    expect(result.error.cause).toBe(hooks.failure);
+    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(result.error.cause).toBeInstanceOf(AnalysisTimeoutError);
+    const prerequisite = result.error.cause;
+    if (!(prerequisite instanceof AnalysisTimeoutError))
+      throw new Error("Expected the authored client-probe timeout frame");
+    expect(prerequisite.operation).toBe("inspect_adb_client");
+    expect(prerequisite.timeoutMs).toBe(10000);
+    expect(prerequisite.cause).toBe(hooks.failure);
+    const capturedOutput = {
+      stdout: "",
+      stderr: "",
+      stdout_bytes: 0,
+      stderr_bytes: 0,
+      exit_code: null,
+      signal: "SIGTERM",
+      truncated: false,
+    };
+    expect(prerequisite.capturedOutput).toEqual(capturedOutput);
+    expect(result.error.capturedOutput).toEqual(capturedOutput);
   },
   20000,
 );

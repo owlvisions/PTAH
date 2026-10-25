@@ -1,5 +1,5 @@
 import { access } from "node:fs/promises";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
@@ -14,7 +14,17 @@ import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
 import {
   runSourceMapCommand,
   SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+  type SourceMapCleanupRetention,
 } from "./SourceMapCommand.js";
+
+const unexpectedCleanup: SourceMapCleanupRetention = {};
+afterEach(async () => {
+  const owner = unexpectedCleanup.owner;
+  const failure = await owner?.close();
+  if (failure !== undefined) throw failure;
+  unexpectedCleanup.owner = undefined;
+  expect(owner).toBeUndefined();
+});
 
 const runChild = (
   signal: AbortSignal | undefined,
@@ -44,6 +54,7 @@ const runChild = (
         return child;
       },
     },
+    unexpectedCleanup,
   );
 
 const exitsAfterHoldingOutput =
@@ -65,11 +76,73 @@ it("preserves the exact object reason for an already-aborted caller", async () =
         throw new Error("must not launch");
       },
     },
+    unexpectedCleanup,
   );
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
+});
+
+it.each([null, { caller: "late source-map cancellation" }])(
+  "retains a late caller reason %j when runtime cleanup first fails",
+  async (reason) => {
+    const root = await PrivateRuntimeRoot.create({
+      prefix: "rea-source-map-late-cleanup-test-",
+    });
+    const controller = new AbortController();
+    let cleanupAttempts = 0;
+    const retainedCleanup: SourceMapCleanupRetention = {};
+    try {
+      const result = await runSourceMapCommand(
+        "{}",
+        "/probe/source.map",
+        { signal: controller.signal },
+        {
+          prepareOwnership: async () => {},
+          createRuntime: async () => ({
+            path: root.path,
+            close: async () => {
+              cleanupAttempts += 1;
+              if (cleanupAttempts === 1) {
+                controller.abort(reason);
+                throw new Error("controlled late cleanup failure");
+              }
+              await root.close();
+            },
+          }),
+          launcher: async (options) =>
+            spawnOwnedProviderProcess({
+              ...options,
+              arguments: ["-e", 'process.stdout.write("complete")'],
+            }),
+        },
+        retainedCleanup,
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok)
+        throw new Error("expected cancellation with cleanup failure");
+      expect(result.error.cleanupPrimary).toBeInstanceOf(
+        AnalysisCancelledError,
+      );
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+      expect(result.error.cleanupResources).toEqual([root.path]);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(retainedCleanup.owner).toBeDefined();
+      await retainedCleanup.owner?.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupResources).toEqual([]);
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    } finally {
+      await retainedCleanup.owner?.close();
+      await root.close();
+    }
+  },
+);
+
+it("returns completed codec output after successful cleanup", async () => {
+  const result = await runChild(undefined, 'process.stdout.write("complete")');
+  expect(result).toEqual({ ok: true, value: "complete" });
 });
 
 it("preserves exact caller reason when cancellation precedes process exit", async () => {
@@ -222,6 +295,7 @@ it("preserves an observed process-memory limit over the codec exit status", asyn
           return spawned;
         },
       },
+      unexpectedCleanup,
     );
   } finally {
     waitSpy.mockRestore();
@@ -266,6 +340,7 @@ it("keeps a timeout distinct from caller cancellation", async () => {
           throw new Error("launcher settled after deadline");
         },
       },
+      unexpectedCleanup,
     );
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected timeout");
@@ -301,6 +376,7 @@ it("applies a non-default decode deadline and releases its runtime", async () =>
           throw new Error("launcher settled after deadline");
         },
       },
+      unexpectedCleanup,
       250,
     );
     expect(result.ok).toBe(false);

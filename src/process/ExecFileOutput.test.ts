@@ -51,8 +51,10 @@ describe("execFileOutput", () => {
       "process.stdout.write(Buffer.from([0x00, 0xff, 0x41])); process.stderr.write(Buffer.from([0xfe]));",
     ]);
 
-    expect(result.stdout).toEqual(Buffer.from([0x00, 0xff, 0x41]));
-    expect(result.stderr).toEqual(Buffer.from([0xfe]));
+    expect(Buffer.compare(result.stdout, Buffer.from([0x00, 0xff, 0x41]))).toBe(
+      0,
+    );
+    expect(Buffer.compare(result.stderr, Buffer.from([0xfe]))).toBe(0);
   });
 
   it("reports raw byte counts when UTF-8 decoding changes the captured text", async () => {

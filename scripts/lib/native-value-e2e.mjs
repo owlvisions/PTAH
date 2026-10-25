@@ -208,7 +208,10 @@ async function verifyNativeValueAdapters(
     assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
     assert.deepEqual(mcpGraph, cliGraph);
     const analyzed = await client.callTool(
-      { name: "analyze_function", arguments: { procedure } },
+      {
+        name: "analyze_function",
+        arguments: { procedure, detail: "complete" },
+      },
       { timeout: 180000 },
     );
     assert.notEqual(analyzed.isError, true, JSON.stringify(analyzed));
@@ -350,7 +353,10 @@ async function verifyUnresolvedCallEvidence(client) {
     "Source fixture lacks the unresolved callback and its possible target",
   );
   const analyzed = await client.callTool(
-    { name: "analyze_function", arguments: { procedure: indirect.address } },
+    {
+      name: "analyze_function",
+      arguments: { procedure: indirect.address, detail: "complete" },
+    },
     { timeout: 180000 },
   );
   assert.notEqual(analyzed.isError, true, JSON.stringify(analyzed));

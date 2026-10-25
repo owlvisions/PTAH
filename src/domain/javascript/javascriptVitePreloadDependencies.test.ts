@@ -84,6 +84,29 @@ describe("Vite preload dependency recovery", () => {
     ).toEqual(["./original.js"]);
   });
 
+  it.each([
+    ["type DependencyHelper = typeof __vite__mapDeps;", "./original.js"],
+    ["const labels = { __vite__mapDeps() {} };", "./original.js"],
+    ["const labels = { [__vite__mapDeps]: true };", null],
+    ["const dependencyTable = __vite__mapDeps.f;", null],
+  ])(
+    "distinguishes an erased type query from a runtime helper escape: %s",
+    (read, expected) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+      const __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
+        (map.f || (map.f = ["./original.js"]))) =>
+        indexes.map((index) => dependencies[index]);
+      ${read}
+      __vite__mapDeps([0]);
+    `);
+      expect(
+        analysis.references
+          .filter(({ kind }) => kind === "dynamic-import")
+          .map(({ specifier }) => specifier),
+      ).toEqual([expected]);
+    },
+  );
+
   it("keeps table slots from a spread onward unknown", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       const __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =

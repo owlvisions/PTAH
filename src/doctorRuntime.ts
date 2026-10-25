@@ -13,6 +13,8 @@ import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "./domain/providerCleanupError.js";
+import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
 import {
   inspectLinuxHopperPythonRuntime,
@@ -104,8 +106,12 @@ export const createSystemDoctorHost = (
         signal: inspectionSignal,
       }),
     ],
-    linuxDemoRuntimeCheck: () =>
-      inspectLinuxHopperDemoRuntime(environment, signal),
+    linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
+      inspectLinuxHopperDemoRuntime(
+        environment,
+        resourceScope,
+        inspectionSignal,
+      ),
   });
 };
 
@@ -115,12 +121,57 @@ const HOPPER_DEMO_HELPER_PATH = fileURLToPath(
 
 const inspectLinuxHopperDemoRuntime = async (
   environment: Readonly<NodeJS.ProcessEnv>,
+  resourceScope: RetainedResourceScope,
   signal?: AbortSignal,
 ): Promise<DoctorCheck> => {
   const selection = await selectLinuxPrivateDisplayStrategy({
     helperPath: HOPPER_DEMO_HELPER_PATH,
     environment,
+    ...(signal === undefined ? {} : { signal }),
   });
+  if (!selection.ok && selection.cleanup !== undefined) {
+    const { lease, reason } = selection.cleanup;
+    resourceScope.retain(
+      {
+        close: () => lease.release(),
+        get cleanupResources() {
+          return lease.cleanupResources;
+        },
+      },
+      "hopper-private-display-probe",
+    );
+    const cleanup = {
+      reason,
+      resources: [
+        ...(lease.cleanupResources ?? ["hopper-private-display-probe"]),
+      ],
+    };
+    const diagnostics = {
+      hopper_demo_runtime: { private_display: { ...selection.diagnostic } },
+    };
+    const failure =
+      signal?.aborted === true
+        ? new AnalysisCancelledError("doctor", {
+            cause: signal.reason,
+            cleanup,
+            diagnostics,
+          })
+        : new ProviderCleanupError(
+            "hopper",
+            cleanup.resources,
+            { reason, ...diagnostics },
+            { operation: "doctor" },
+          );
+    new AnalysisCleanupLeaseGroup(failure, [lease]);
+    throw failure;
+  }
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError("doctor", {
+      cause: signal.reason,
+      diagnostics: {
+        hopper_demo_runtime: { private_display: { ...selection.diagnostic } },
+      },
+    });
   const python = await inspectLinuxHopperPythonRuntime(environment, signal);
   const pythonFailure = !python.ok
     ? python.error

@@ -1,8 +1,13 @@
+import type {
+  AnalysisAccumulator,
+  IncludedScript,
+} from "./webBundleAnalyzerState.js";
 import * as t from "@babel/types";
+import { JavaScriptRouteScan } from "./javascript/javascriptRouteScan.js";
+import type { JavaScriptRouteSourceFacts } from "./javascript/javascriptRouteFacts.js";
 
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import { compositeKey } from "./unicodeCodePointOrder.js";
-import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
@@ -18,6 +23,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascript/javascriptAstValues.js";
 import {
+  STATIC_ROUTE_CALL_NAMES,
   calleeName,
   endpointArgument,
   stringValue,
@@ -37,34 +43,14 @@ type ChunkEdge = BundleObservations["chunks"]["edges"][number];
 type Finding = BundleObservations["routes"][number];
 type WebMcpDeclaration = BundleObservations["webmcp_declarations"][number];
 type Inference = WebBundleAnalysis["inferences"][number];
-type BrowserScript = WebPageInspection["scripts"]["items"][number];
-type IncludedSource = Extract<BrowserScript["source"], { included: true }>;
-export type IncludedScript = Omit<BrowserScript, "source"> & {
-  readonly source: IncludedSource;
-};
-
-export interface AnalysisAccumulator {
-  readonly edges: ChunkEdge[];
-  readonly routes: Finding[];
-  readonly endpoints: Finding[];
-  readonly webMcp: WebMcpDeclaration[];
-  readonly inferences: Inference[];
-  readonly seen: Set<string>;
-  visitedNodes: number;
-  parsedScripts: number;
-  readonly failedScripts: string[];
-  readonly recoveredScripts: string[];
-  readonly widenedScripts: string[];
-}
-
 export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
-): void => {
+): JavaScriptRouteSourceFacts | null => {
   const file = parseJavaScriptSource(script.source.artifact.text);
   if (file === null) {
     accumulator.failedScripts.push(script.script_key);
-    return;
+    return null;
   }
   accumulator.parsedScripts += 1;
   if ((file.errors?.length ?? 0) > 0)
@@ -75,6 +61,18 @@ export const analyzeScript = (
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());
   const { receivers } = index;
+  const routeScan = completeSemanticSteps(
+    JavaScriptRouteScan.createSteps(file, index, ({ node, value, mechanism }) =>
+      addFinding({
+        collection: accumulator.routes,
+        script,
+        rawValue: value,
+        mechanism,
+        node,
+        accumulator,
+      }),
+    ),
+  );
   const openReceiverFacts = receivers.openReceivers;
   let mutationFactsIndexed = false;
   const isMapLookup = (
@@ -94,8 +92,9 @@ export const analyzeScript = (
     index,
   );
   traverseJavaScriptAst(file, {
-    enter: (node) => {
+    enter: (node, parent) => {
       accumulator.visitedNodes += 1;
+      routeScan.inspect(node, parent);
       inspectNode(script, node, accumulator, openReceiverFacts, isMapLookup);
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)
@@ -121,6 +120,7 @@ export const analyzeScript = (
       });
   if (index.bindings.returnedReferenceWidenings.size > 0)
     accumulator.widenedScripts.push(script.script_key);
+  return completeSemanticSteps(routeScan.finishSteps());
 };
 
 const inspectNode = (
@@ -162,7 +162,6 @@ const inspectNode = (
         accumulator,
       });
   }
-  if (t.isObjectProperty(node)) inspectRouteProperty(script, node, accumulator);
   if (
     t.isCallExpression(node) ||
     t.isOptionalCallExpression(node) ||
@@ -197,19 +196,10 @@ const inspectCall = (
       addEdge({ script, specifier, kind: "worker_import", node, accumulator });
     }
   if (
-    routeCallNames.some(
+    STATIC_ROUTE_CALL_NAMES.some(
       (candidate) => name === candidate || name.endsWith(`.${candidate}`),
     )
   ) {
-    if (first !== undefined)
-      addFinding({
-        collection: accumulator.routes,
-        script,
-        rawValue: first,
-        mechanism: `call:${name}`,
-        node,
-        accumulator,
-      });
     addRouteFrameworkInference({
       script,
       name,
@@ -265,24 +255,6 @@ const isWebMcpRegistrationCallee = (callee: t.Node): boolean => {
     semanticStaticPropertyKey(receiver.property, receiver.computed) ===
       "modelContext"
   );
-};
-
-const inspectRouteProperty = (
-  script: IncludedScript,
-  node: t.ObjectProperty,
-  accumulator: AnalysisAccumulator,
-): void => {
-  const key = semanticStaticPropertyName(node.key, node.computed);
-  const route = stringValue(node.value);
-  if ((key === "path" || key === "route") && route !== undefined)
-    addFinding({
-      collection: accumulator.routes,
-      script,
-      rawValue: route,
-      mechanism: `property:${key}`,
-      node,
-      accumulator,
-    });
 };
 
 interface AddEdgeContext {
@@ -500,32 +472,6 @@ const basis = (script: IncludedScript, detector: string) => ({
   column: null,
   detector,
 });
-
-export const emptyAccumulator = (): AnalysisAccumulator => ({
-  edges: [],
-  routes: [],
-  endpoints: [],
-  webMcp: [],
-  inferences: [],
-  seen: new Set(),
-  visitedNodes: 0,
-  parsedScripts: 0,
-  failedScripts: [],
-  recoveredScripts: [],
-  widenedScripts: [],
-});
-
-export const isIncludedScript = (
-  script: BrowserScript,
-): script is IncludedScript => script.source.included;
-
-const routeCallNames = [
-  "route",
-  "addRoute",
-  "useRoutes",
-  "createBrowserRouter",
-  "createHashRouter",
-] as const;
 
 const vendorDetectors: readonly {
   readonly value: string;

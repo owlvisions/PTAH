@@ -1,40 +1,64 @@
-interface ParsedDyldSymbol {
-  readonly name: string;
+interface ParsedDyldSymbolFields {
   readonly address: string | null;
   readonly weak: boolean | null;
   readonly reexport: boolean | null;
   readonly source: string | null;
+}
+
+interface ParsedDyldImport extends ParsedDyldSymbolFields {
+  readonly name: string | null;
+  /** Full producer text when the symbol/addend split cannot be established. */
+  readonly raw_name: string | null;
+  readonly name_status: "exact" | "ambiguous";
+  readonly addend: string | null;
+}
+
+interface ParsedDyldExport extends ParsedDyldSymbolFields {
+  readonly name: string;
   /** The source library's name for a symbol it re-exports under another name. */
   readonly sourceSymbol?: string;
 }
 
-/** Decode Apple dyld inventory rows, projecting export offsets to VM addresses. */
-export const parseDyldSymbols = (
+/** Decode Apple dyld import rows, retaining chained suffix ambiguity. */
+export const parseDyldImports = (
   output: string,
-  mode: "imports" | "exports",
-  imageBase: string | null = null,
-  knownExportNames: ReadonlySet<string> = new Set(),
-) => {
-  const offsets = /^\s*offset\s+symbol\s*$/mu.test(output);
-  return output.split(/\r?\n/u).flatMap<ParsedDyldSymbol>((rawLine) => {
+  hasChainedFixups: boolean,
+): ParsedDyldImport[] =>
+  output.split("\n").flatMap<ParsedDyldImport>((rawLine) => {
     const line = rawLine.trim();
-    if (mode === "imports") {
-      const imported =
-        /^(?:0x[\da-f]+\s+)?(.+?)(?:\s+\[([^\]]+)\])?\s+\(from (.+)\)$/iu.exec(
-          line,
-        );
-      if (imported?.[1] !== undefined)
-        return [
-          {
-            name: imported[1],
-            address: null,
-            weak: /\bweak-import\b/u.test(imported[2] ?? "") ? true : null,
-            reexport: null,
-            source: imported[3] ?? null,
-          },
-        ];
-      return [];
-    }
+    const imported =
+      /^(?:0x[\da-f]+\s+)?(.+?)(?:\s+\[([^\]]+)\])?\s+\(from (.+)\)$/iu.exec(
+        line,
+      );
+    if (imported?.[1] === undefined) return [];
+    const ambiguousSuffix = hasChainedFixups
+      ? /^(.*)\+0x[\da-f]+$/iu.test(imported[1])
+      : false;
+    return [
+      {
+        name: ambiguousSuffix ? null : imported[1],
+        raw_name: ambiguousSuffix ? imported[1] : null,
+        name_status: ambiguousSuffix ? "ambiguous" : "exact",
+        addend: null,
+        address: null,
+        weak: /\bweak-import\b/u.test(imported[2] ?? "") ? true : null,
+        reexport: null,
+        source: imported[3] ?? null,
+      },
+    ];
+  });
+
+/** Decode Apple dyld export rows, projecting export offsets to VM addresses. */
+export const parseDyldExports = (
+  output: string,
+  imageBase: string | null,
+  knownExportNames: ReadonlySet<string>,
+): ParsedDyldExport[] => {
+  const offsets = /^\s*offset\s+symbol\s*$/mu.test(output);
+  // dyld_info ends rows with LF. A carriage return before it belongs to the
+  // symbol name, so export rows keep their trailing text.
+  return output.split("\n").flatMap<ParsedDyldExport>((rawLine) => {
+    const line = rawLine.trimStart();
     // dyld_info prints `_sym (from lib)`, or `_new (_old from lib)` when the
     // source library names the symbol differently. Split the trailing
     // parenthesized suffix with string scans so a library path containing
@@ -54,9 +78,9 @@ export const parseDyldSymbols = (
             : { sourceSymbol: reexport.sourceSymbol }),
         },
       ];
-    const exported = /^(0x[\da-f]+)\s+(.+?)(?:\s+\[([^\]]+)\])?$/iu.exec(line);
+    const exported = /^(0x[\da-f]+)\s+(.+?)(?:\s+\[([^\]]+)\])?$/isu.exec(line);
     if (exported?.[1] === undefined || exported[2] === undefined) return [];
-    const rawName = /^0x[\da-f]+\s+(.+)$/iu.exec(line)?.[1];
+    const rawName = /^0x[\da-f]+\s+(.+)$/isu.exec(line)?.[1];
     const literalName = rawName !== undefined && knownExportNames.has(rawName);
     // If nm establishes both interpretations, the textual row cannot bind an address or flags.
     // Let the caller retain the exact nm names without guessing which one owns this row.

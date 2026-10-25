@@ -13,16 +13,39 @@ import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
+  ghidraDecompileTimeoutSchema,
   providerStartupTimeoutSchema,
 } from "./providerStartupTimeout.js";
 import { mcpInputSchemaProfileSchema } from "./mcpInputSchemaProfile.js";
 import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
+import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
+import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
+import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
+import { regexMatchingDeadlineMsSchema } from "./regexMatchingDeadline.js";
+import { regexWorkerHeapRequestMiBSchema } from "./regexWorkerHeapRequest.js";
+import {
+  mcpDoctorDeadlineMsSchema,
+  mcpFirstCatalogBudgetMsSchema,
+  mcpInitializeBudgetMsSchema,
+  mcpToolsListBudgetMsSchema,
+} from "./mcpStartupBudgets.js";
 import { parseLoaderArgs, parseStringArray } from "./parsers.js";
+import { processStartConfigurationSchema } from "./processStart.js";
 
 const environmentSchema = z.object({
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
+  REA_BRIDGE_MAX_REQUEST_BYTES: bridgeMaxRequestBytesSchema.optional(),
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
+  REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema.optional(),
+  REA_CAPTURE_DECODER_OLD_GENERATION_MIB:
+    captureDecoderOldGenerationMiBSchema.optional(),
+  REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema.optional(),
+  REA_REGEX_WORKER_HEAP_REQUEST_MIB: regexWorkerHeapRequestMiBSchema.optional(),
+  REA_MCP_INITIALIZE_BUDGET_MS: mcpInitializeBudgetMsSchema.optional(),
+  REA_MCP_TOOLS_LIST_BUDGET_MS: mcpToolsListBudgetMsSchema.optional(),
+  REA_MCP_FIRST_CATALOG_BUDGET_MS: mcpFirstCatalogBudgetMsSchema.optional(),
+  REA_MCP_DOCTOR_DEADLINE_MS: mcpDoctorDeadlineMsSchema.optional(),
   REA_MCP_INPUT_SCHEMA_PROFILE: mcpInputSchemaProfileSchema.optional(),
   REA_MCP_OUTPUT_SCHEMA_PROFILE: mcpOutputSchemaProfileSchema.optional(),
   REA_IDA_MCP_CONFIG: z
@@ -55,6 +78,7 @@ const environmentSchema = z.object({
   REA_SWIFTC_COMPILE_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   ),
+  REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: ghidraDecompileTimeoutSchema.optional(),
   REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
   REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
   REA_GHIDRA_DISABLED_ANALYZERS: ghidraDisabledAnalyzersSchema.optional(),
@@ -72,9 +96,7 @@ const environmentSchema = z.object({
   HOPPER_TARGET_PATH: z.string().min(1).optional(),
   HOPPER_TARGET_KIND: z.enum(["executable", "database"]).default("executable"),
   HOPPER_LOADER_ARGS_JSON: z.string().optional(),
-  REA_LOG_LEVEL: z
-    .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
-    .default("info"),
+  REA_LOG_LEVEL: processStartConfigurationSchema.shape.REA_LOG_LEVEL,
   REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
 });
 
@@ -99,7 +121,7 @@ export const parseJebMcpTimeoutMs = (
   );
 };
 
-type Environment = Omit<
+export type Environment = Omit<
   z.infer<typeof environmentSchema>,
   "HOPPER_LOADER_ARGS_JSON" | "REA_REFERENCE_SECRET_PATTERNS_JSON"
 > & {

@@ -72,3 +72,36 @@ it("preserves the primary operation error when cancellation arrives during close
     },
   });
 });
+
+it("retains late cancellation and completed Evidence when close also fails", async () => {
+  const evidence = scriptCaptureEvidenceFixture();
+  const controller = new AbortController();
+  const cleanup = new ProviderCleanupError(
+    "fixture-provider",
+    ["retained connection"],
+    { reason: "close failed" },
+  );
+  const result = await finishAnalysisCommand(
+    async () => ok(evidence),
+    {
+      close: async () => {
+        controller.abort({ during: "close" });
+        throw cleanup;
+      },
+    },
+    "fixture-provider",
+    "inspect_web_page",
+    controller.signal,
+  );
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "cancelled",
+    details: {
+      partial_observation: evidence,
+      diagnostics: {
+        primary_error: { code: "cancelled" },
+        cleanup_error: { details: { resources: ["retained connection"] } },
+      },
+    },
+  });
+});

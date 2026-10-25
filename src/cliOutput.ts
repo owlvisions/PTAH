@@ -1,57 +1,75 @@
+export {
+  normalizeCliArguments,
+  splitIncurBuiltinArguments,
+  type IncurBuiltinArgumentSplit,
+} from "./cliBuiltinArguments.js";
+import {
+  declaredSensitiveValues,
+  splitIncurBuiltinArguments,
+} from "./cliBuiltinArguments.js";
+import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
+import { formatCliOutput } from "./cli/cliOutputFormatter.js";
+
+import { jsonOutputParts } from "./cli/jsonOutput.js";
+import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
+import {
+  versionReport,
+  type VersionReportHost,
+} from "./domain/versionReport.js";
+
+// The launcher and compiled CLI drivers share this lightweight entrypoint.
+export { cliConfigurationError } from "./cliConfiguration.js";
+
 const UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE =
   "Token windows cannot preserve structured output. Remove --token-limit/--token-offset and use --filter-output or command pagination.";
 
 type StructuredOutputFormat = "json" | "jsonl" | "yaml";
-const INCUR_OUTPUT_FORMATS = new Set(["toon", "json", "yaml", "md", "jsonl"]);
-/** Global output flags that take a value. */
-const VALUED_OUTPUT_FLAGS = new Set([
-  "--format",
-  "--filter-output",
-  "--token-limit",
-  "--token-offset",
-]);
+/** Output formats Incur renders, in its documented order. */
+export const CLI_OUTPUT_FORMATS = [
+  "toon",
+  "json",
+  "yaml",
+  "md",
+  "jsonl",
+] as const;
+export type CliOutputFormat = (typeof CLI_OUTPUT_FORMATS)[number];
+const INCUR_OUTPUT_FORMATS: ReadonlySet<string> = new Set(CLI_OUTPUT_FORMATS);
 
-const ROOT_UPDATE_OUTPUT_FLAGS = new Set([
-  "--json",
-  "--full-output",
-  "--token-count",
-]);
+const isCliOutputFormat = (value: string): value is CliOutputFormat =>
+  INCUR_OUTPUT_FORMATS.has(value);
 
 /**
- * Route the root update alias and split `--flag=value` output forms. Incur reads these
- * flags only in spaced form, so `--format=json` otherwise reaches the command
- * parser and fails as an unknown flag. Command options accept both forms.
+ * Render a document REA writes outside Incur's command pipeline. JSON follows
+ * the CLI contract: indented for a terminal, compact when piped or redirected.
  */
-export const normalizeCliArguments = (
-  arguments_: readonly string[],
-): string[] => {
-  const normalized: string[] = [];
-  const updates = new Set<number>();
-  let rootUpdate = true;
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index]!;
-    if (VALUED_OUTPUT_FLAGS.has(argument) && arguments_[index + 1]) {
-      // Incur consumes a nonempty spaced value before looking for more flags.
-      // Its contents belong to that option, even when they look like a flag.
-      normalized.push(argument, arguments_[index + 1]!);
-      index += 1;
-      continue;
-    }
-    const separator = argument.indexOf("=");
-    const flag = argument.slice(0, separator);
-    if (separator >= 0 && VALUED_OUTPUT_FLAGS.has(flag))
-      normalized.push(flag, argument.slice(separator + 1));
-    else {
-      if (argument === "--update") updates.add(normalized.length);
-      else if (!ROOT_UPDATE_OUTPUT_FLAGS.has(argument)) rootUpdate = false;
-      normalized.push(argument);
-    }
-  }
-  // Output option values were consumed above; flag-shaped data is never an alias.
-  // Help/check/command/unknown tokens retain Incur's parsing and precedence.
-  return rootUpdate && updates.size > 0
-    ? ["update", ...normalized.filter((_, index) => !updates.has(index))]
-    : normalized;
+export const renderCliDocument = (
+  value: unknown,
+  format: CliOutputFormat,
+  stdoutIsTerminal: boolean,
+): string =>
+  format === "json" || format === "jsonl"
+    ? [...jsonOutputParts(value, format, stdoutIsTerminal)].join("")
+    : `${formatCliOutput(value, format)}\n`;
+/**
+ * Validate a spaced output-flag value before Incur dispatch. REA narrows token
+ * coordinates to nonnegative safe integers so slice metadata remains coherent.
+ */
+export const cliOutputValueRejection = (
+  flag: string,
+  value: string,
+): string | undefined => {
+  if (flag === "--format")
+    return INCUR_OUTPUT_FORMATS.has(value)
+      ? undefined
+      : `Invalid format: "${value}". Expected one of: ${[...INCUR_OUTPUT_FORMATS].join(", ")}`;
+  if (
+    (flag === "--token-limit" || flag === "--token-offset") &&
+    (!Number.isSafeInteger(Number(value)) ||
+      Number(value) < 0 ||
+      value.trim() === "")
+  )
+    return `Invalid value for ${flag}: "${value}". Expected a nonnegative safe integer.`;
+  return undefined;
 };
 
 export type CliOutputArgumentValidation =
@@ -62,21 +80,30 @@ export type CliOutputArgumentValidation =
       readonly code:
         | "UNSUPPORTED_OUTPUT_COMBINATION"
         | "INVALID_OUTPUT_FILTER"
+        | "INVALID_OUTPUT_VALUE"
         | "MISSING_OUTPUT_VALUE";
       readonly message: string;
     };
 
-interface ParsedCliOutputArguments {
+interface CliOutputControls {
   readonly filterOutput: string | undefined;
   readonly format: string;
+  /** Whether `--json` or `--format` selected the format, rather than the default. */
+  readonly formatExplicit: boolean;
   readonly fullOutput: boolean;
   /** First valued output flag that Incur skips because it has no value. */
   readonly missingValue: string | undefined;
-  readonly parseError: boolean;
+  readonly invalidValue: string | undefined;
   readonly tokenCount: boolean;
   readonly tokenWindow: boolean;
   readonly tokenLimit: number | undefined;
   readonly tokenOffset: number | undefined;
+}
+
+/** Parsed output controls and the decisions shared by every executable consumer. */
+export interface ParsedCliOutputArguments extends CliOutputControls {
+  readonly validation: CliOutputArgumentValidation;
+  readonly versionReportFormat: CliOutputFormat | undefined;
 }
 
 /** Read effective Incur output controls at the executable boundary. */
@@ -84,39 +111,79 @@ export const parseCliOutputArguments = (
   arguments_: readonly string[],
 ): ParsedCliOutputArguments => {
   let format: string = "toon";
+  let rootVersion = false;
+  let versionEligible = true;
+  let formatExplicit = false;
   let filterOutput: string | undefined;
   let fullOutput = false;
   let missingValue: string | undefined;
+  let invalidValue: string | undefined;
   let tokenCount = false;
   let tokenLimit: number | undefined;
   let tokenOffset: number | undefined;
-  const parsed = (parseError: boolean): ParsedCliOutputArguments => ({
-    filterOutput,
-    format,
-    fullOutput,
-    missingValue,
-    parseError,
-    tokenCount,
-    tokenWindow:
-      !parseError && (tokenLimit !== undefined || tokenOffset !== undefined),
-    tokenLimit: parseError ? undefined : tokenLimit,
-    tokenOffset: parseError ? undefined : tokenOffset,
-  });
+  const parsed = (): ParsedCliOutputArguments => {
+    const parseError = invalidValue !== undefined;
+    const controls: CliOutputControls = {
+      filterOutput,
+      format,
+      formatExplicit,
+      fullOutput,
+      missingValue,
+      invalidValue:
+        invalidValue === undefined
+          ? undefined
+          : redactExplicitText(
+              invalidValue,
+              declaredSensitiveValues(
+                splitIncurBuiltinArguments(arguments_).command,
+              ),
+            ),
+      tokenCount,
+      tokenWindow:
+        !parseError && (tokenLimit !== undefined || tokenOffset !== undefined),
+      tokenLimit: parseError ? undefined : tokenLimit,
+      tokenOffset: parseError ? undefined : tokenOffset,
+    };
+    return {
+      ...controls,
+      validation: validateCliOutputControls(controls),
+      versionReportFormat:
+        rootVersion &&
+        versionEligible &&
+        formatExplicit &&
+        !parseError &&
+        missingValue === undefined &&
+        isCliOutputFormat(format)
+          ? format
+          : undefined,
+    };
+  };
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
+    // Only these flags can accompany a formatted root version request.
+    // Valued output flags consume their data below before the next iteration.
+    if (argument === "--version") {
+      const next = arguments_[index + 1];
+      if (next === undefined || next.startsWith("-")) rootVersion = true;
+      else versionEligible = false;
+    } else if (argument !== "--json" && argument !== "--format")
+      versionEligible = false;
     // Incur scans builtins across `--` and reads spaced value forms, which
     // normalizeCliArguments has produced. Mirror those effective values.
     if (argument === "--json") {
       format = "json";
+      formatExplicit = true;
       continue;
     }
     if (argument === "--format") {
       const value = arguments_[index + 1];
       if (value) {
-        // Incur stops parsing at an invalid format before applying any later
-        // output controls. Let it report that malformed flag itself.
-        if (!INCUR_OUTPUT_FORMATS.has(value)) return parsed(true);
-        format = value;
+        const rejection = cliOutputValueRejection(argument, value);
+        if (rejection !== undefined) invalidValue ??= rejection;
+        else {
+          format = value;
+          formatExplicit = true;
+        }
         index += 1;
       } else missingValue ??= argument;
       continue;
@@ -131,11 +198,10 @@ export const parseCliOutputArguments = (
     if (argument === "--token-limit" || argument === "--token-offset") {
       const value = arguments_[index + 1];
       if (value) {
-        const numericValue = Number(value);
-        if (!Number.isFinite(numericValue) || value.trim() === "")
-          return parsed(true);
-        if (argument === "--token-limit") tokenLimit = numericValue;
-        else tokenOffset = numericValue;
+        const rejection = cliOutputValueRejection(argument, value);
+        if (rejection !== undefined) invalidValue ??= rejection;
+        else if (argument === "--token-limit") tokenLimit = Number(value);
+        else tokenOffset = Number(value);
         index += 1;
       } else missingValue ??= argument;
       continue;
@@ -143,7 +209,7 @@ export const parseCliOutputArguments = (
     if (argument === "--full-output") fullOutput = true;
     if (argument === "--token-count") tokenCount = true;
   }
-  return parsed(false);
+  return parsed();
 };
 
 /** Reject slices that cannot advance within Incur's comma-delimited paths. */
@@ -164,13 +230,25 @@ const hasUnclosedFilterSlice = (expression: string): boolean => {
   return unclosed;
 };
 
+/** Name a valued output flag that was given without a value. */
+export const missingCliOutputValueMessage = (flag: string): string =>
+  `${flag} requires a value, as in ${flag} <value> or ${flag}=<value>.`;
+
 /** Reject output controls that cannot safely produce a complete result. */
-export const validateCliOutputArguments = (
-  arguments_: readonly string[],
-): CliOutputArgumentValidation => {
-  const { filterOutput, format, missingValue, parseError, tokenWindow } =
-    parseCliOutputArguments(arguments_);
-  if (parseError) return { ok: true };
+const validateCliOutputControls = ({
+  filterOutput,
+  format,
+  missingValue,
+  invalidValue,
+  tokenWindow,
+}: CliOutputControls): CliOutputArgumentValidation => {
+  if (invalidValue !== undefined)
+    return {
+      ok: false,
+      format: format === "yaml" || format === "jsonl" ? format : "json",
+      code: "INVALID_OUTPUT_VALUE",
+      message: invalidValue,
+    };
   if (filterOutput !== undefined && hasUnclosedFilterSlice(filterOutput))
     return {
       ok: false,
@@ -196,18 +274,18 @@ export const validateCliOutputArguments = (
       ok: false,
       format: format === "yaml" || format === "jsonl" ? format : "json",
       code: "MISSING_OUTPUT_VALUE",
-      message: `${missingValue} requires a value, as in ${missingValue} <value> or ${missingValue}=<value>.`,
+      message: missingCliOutputValueMessage(missingValue),
     };
   return { ok: true };
 };
 
 /** Preserve a complete document when Incur filters the entire result away. */
-export const renderEmptyFilteredCliOutput = (
-  arguments_: readonly string[],
-): string | undefined => {
-  const { filterOutput, format, parseError } =
-    parseCliOutputArguments(arguments_);
-  if (parseError) return undefined;
+export const renderEmptyFilteredCliOutput = ({
+  filterOutput,
+  format,
+  validation,
+}: ParsedCliOutputArguments): string | undefined => {
+  if (!validation.ok) return undefined;
   if (
     filterOutput &&
     (format === "json" || format === "jsonl" || format === "yaml")
@@ -226,5 +304,19 @@ export const renderCliOutputArgumentError = (
   };
   if (error.format === "yaml")
     return `ok: false\nerror:\n  code: ${error.code}\n  message: ${JSON.stringify(error.message)}\n`;
-  return `${JSON.stringify(value)}\n`;
+  return `${JSON.stringify(error.format === "jsonl" ? jsonLinesErrorRecord(value) : value)}\n`;
+};
+
+/**
+ * Render the version report for a formatted root `--version` request, or
+ * return undefined so Incur prints the bare version or handles the request.
+ */
+export const renderVersionReport = (
+  { versionReportFormat: format }: ParsedCliOutputArguments,
+  host: VersionReportHost,
+  stdoutIsTerminal: boolean,
+): string | undefined => {
+  return format === undefined
+    ? undefined
+    : renderCliDocument(versionReport(host), format, stdoutIsTerminal);
 };

@@ -27,10 +27,8 @@ export const isTypeOnlyExportDeclaration = (
 ): boolean =>
   node.exportKind === "type" ||
   (t.isExportNamedDeclaration(node) &&
-    node.declaration !== null &&
-    (t.isTSInterfaceDeclaration(node.declaration) ||
-      t.isTSTypeAliasDeclaration(node.declaration) ||
-      t.isTSDeclareFunction(node.declaration)));
+    node.declaration != null &&
+    isErasedJavaScriptDeclaration(node.declaration));
 
 /**
  * Runtime external-module target for a value import-equals declaration;

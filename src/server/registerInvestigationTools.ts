@@ -1,3 +1,4 @@
+import { resolveInvestigationEvidenceClosure } from "../application/investigation/InvestigationEvidence.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -5,12 +6,9 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { buildCallPath } from "../domain/callPath.js";
 import { findChangedBehavior } from "../domain/changedBehavior.js";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { correlateStaticAndRuntime } from "../domain/staticRuntimeCorrelation.js";
 import {
   comparisonClosure,
-  evidenceClosure,
-  functionEvidenceIds,
   isIncomplete,
   recordWorkflowEvidence,
 } from "./registerInvestigationTools/helpers.js";
@@ -20,7 +18,7 @@ import {
   CHANGED_BEHAVIOR_PROVIDER,
   RECONSTRUCTION_PROVIDER,
   STATIC_RUNTIME_PROVIDER,
-} from "../application/InvestigationProviders.js";
+} from "../domain/investigationProviders.js";
 import {
   applicationToolRegistrationOptions,
   toolRegistrationOptions,
@@ -76,7 +74,10 @@ const registerChangedBehavior = (
         if (!computed.ok)
           return server.delivery.toCallToolResult(computed, contract);
         const { result, comparisonEvidenceIds } = computed.value;
-        const closure = evidenceClosure(session, result.evidence_links);
+        const closure = resolveInvestigationEvidenceClosure(
+          session,
+          result.evidence_links,
+        );
         if (!closure.ok)
           return server.delivery.toCallToolResult(closure, contract);
         const links = closure.value;
@@ -86,7 +87,7 @@ const registerChangedBehavior = (
           parameters: {
             comparison_evidence_ids: [...comparisonEvidenceIds],
           },
-          result: jsonValueSchema.parse(result),
+          result,
           confidence: "derived",
           authority: "analyst-inference",
           limitations: result.limitations,
@@ -137,9 +138,9 @@ const registerCallPath = (
         contract.name,
         context.mcpReq.signal,
         async () => {
-          const closure = evidenceClosure(
+          const closure = resolveInvestigationEvidenceClosure(
             session,
-            functionEvidenceIds(input.functions),
+            input.functions.map(({ evidence_id }) => evidence_id),
           );
           if (!closure.ok)
             return server.delivery.toCallToolResult(closure, contract);
@@ -159,7 +160,7 @@ const registerCallPath = (
               start: input.start.address,
               goal: input.goal.address,
             },
-            result: jsonValueSchema.parse(result),
+            result,
             confidence: "derived",
             authority: "analyst-inference",
             limitations: result.limitations,
@@ -210,7 +211,7 @@ const registerStaticRuntime = (
         contract.name,
         context.mcpReq.signal,
         async () => {
-          const closure = evidenceClosure(
+          const closure = resolveInvestigationEvidenceClosure(
             session,
             comparisonClosure([
               ...input.static_comparisons,
@@ -234,7 +235,7 @@ const registerStaticRuntime = (
             parameters: {
               mapping_count: input.mappings.length,
             },
-            result: jsonValueSchema.parse(result),
+            result,
             confidence: "inferred",
             authority: "analyst-inference",
             limitations: result.limitations,
@@ -284,7 +285,7 @@ const registerReconstruction = (
         contract.name,
         context.mcpReq.signal,
         async () => {
-          const owned = session.exportEvidenceBundle();
+          const owned = session.immutableEvidenceBundle();
           const computed = await runDerivedOperation(
             context,
             contract.name,
@@ -293,7 +294,10 @@ const registerReconstruction = (
           if (!computed.ok)
             return server.delivery.toCallToolResult(computed, contract);
           const result = computed.value;
-          const closure = evidenceClosure(session, result.evidence_links);
+          const closure = resolveInvestigationEvidenceClosure(
+            session,
+            result.evidence_links,
+          );
           if (!closure.ok)
             return server.delivery.toCallToolResult(closure, contract);
           const links = closure.value;
@@ -306,7 +310,7 @@ const registerReconstruction = (
                 ({ claim_id: id }) => id,
               ),
             },
-            result: jsonValueSchema.parse(result),
+            result,
             confidence: "derived",
             authority: "analyst-inference",
             limitations: result.limitations,

@@ -12,7 +12,9 @@ import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
 import { parseExecutableHeader } from "../../domain/binaryTarget.js";
 import {
   classifyFatContainerIdentity,
+  findOverlappingFatSlices,
   readFatContainerHeader,
+  readFatSliceDeclarations,
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
 
@@ -29,6 +31,94 @@ const classify = (bytes: Uint8Array) => {
   });
 };
 
+describe("FAT declaration facts", () => {
+  it.each([
+    { wide: false, littleEndian: false },
+    { wide: false, littleEndian: true },
+    { wide: true, littleEndian: false },
+    { wide: true, littleEndian: true },
+  ])(
+    "retains raw fields and reserved-field absence for wide=$wide littleEndian=$littleEndian",
+    async ({ wide, littleEndian }) => {
+      const arm64e = machoImage({ cpu: CPU.arm64e });
+      const x86 = machoImage({ cpu: CPU.x86_64 });
+      const bytes = fatImage(
+        [
+          { cpu: CPU.arm64e, bytes: arm64e },
+          { cpu: CPU.x86_64, bytes: x86 },
+        ],
+        wide,
+        littleEndian,
+      );
+      if (wide)
+        new DataView(
+          bytes.buffer,
+          bytes.byteOffset,
+          bytes.byteLength,
+        ).setUint32(8 + 32 + 28, 0x89abcdef, littleEndian);
+      const declarations = readFatSliceDeclarations(
+        bytes.subarray(8, 8 + 2 * (wide ? 32 : 20)),
+        { count: 2, wide, littleEndian },
+      );
+      expect(declarations).toEqual({
+        status: "parsed",
+        slices: [
+          {
+            index: 0,
+            offset: 4096,
+            size: arm64e.byteLength,
+            alignmentExponent: 12,
+            cpuType: CPU.arm64e.type,
+            cpuSubtype: CPU.arm64e.subtype,
+            reserved: wide ? 0 : null,
+          },
+          {
+            index: 1,
+            offset: 8192,
+            size: x86.byteLength,
+            alignmentExponent: 12,
+            cpuType: CPU.x86_64.type,
+            cpuSubtype: CPU.x86_64.subtype,
+            reserved: wide ? 0x89abcdef : null,
+          },
+        ],
+      });
+      // Physical facts do not impose Hopper's reserved-field admission policy.
+      expect(classify(bytes)).toEqual({ state: "mach-o" });
+      expect(
+        await readMachoImage(readerOf(bytes), bytes.byteLength),
+      ).toMatchObject({
+        status: "parsed",
+      });
+    },
+  );
+
+  it("finds overlap in physical order while retaining declarations in table order", () => {
+    const bytes = fatImage([
+      { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+      { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+    ]);
+    const header = readFatContainerHeader(bytes, bytes.byteLength);
+    if (header.state !== "parsed") throw new Error("expected parsed FAT table");
+    const first = { ...header.slices[0]!, offset: 128, size: 64 };
+    const second = { ...header.slices[1]!, offset: 96, size: 64 };
+    const tableOrder = [first, second];
+    const overlap = findOverlappingFatSlices(tableOrder);
+    expect(overlap).toEqual([second, first]);
+    expect(overlap?.[0]).toBe(second);
+    expect(overlap?.[1]).toBe(first);
+    expect(tableOrder).toEqual([first, second]);
+    expect(
+      findOverlappingFatSlices([first, { ...second, size: 32 }]),
+    ).toBeNull();
+    expect(
+      findOverlappingFatSlices([first, { ...second, size: 16 }]),
+    ).toBeNull();
+    expect(findOverlappingFatSlices([first])).toBeNull();
+    expect(findOverlappingFatSlices([])).toBeNull();
+  });
+});
+
 describe("FAT Mach-O identity", () => {
   it("does not treat known CPU declarations as proof when slices are ar archives", async () => {
     const archive = arArchive();
@@ -43,7 +133,7 @@ describe("FAT Mach-O identity", () => {
     });
     expect(parseExecutableHeader(Buffer.from(bytes), "arm64")).toEqual({
       ok: false,
-      error: "FAT table does not identify a Mach-O image",
+      error: "unsupported binary format",
     });
   });
 
@@ -62,7 +152,7 @@ describe("FAT Mach-O identity", () => {
     });
     expect(parseExecutableHeader(Buffer.from(bytes), "arm64")).toEqual({
       ok: false,
-      error: "FAT table does not identify a Mach-O image",
+      error: "unsupported binary format",
     });
   });
 

@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { ok as resultOk } from "../../src/domain/result.js";
 import { describe, expect, it } from "vitest";
@@ -55,6 +56,57 @@ const recordingFactories = (
   };
   return { dependencies, sessions, clientsClosed: () => clientsClosed };
 };
+
+it("requires a durable summary destination before acquiring a managed session", async () => {
+  const factories = recordingFactories();
+  const result = await runProviderAnalysis(
+    factories.dependencies,
+    "/fixture/missing.dll",
+    "inspect_managed_members",
+    {},
+    undefined,
+    undefined,
+    { detail: "summary" },
+  );
+  expect(result).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "inspect_managed_members",
+      issues: [{ path: ["evidence_bundle"], reason: "missing_argument" }],
+    },
+  });
+  expect(factories.sessions).toEqual([]);
+});
+
+it.each([
+  "inspect_macho",
+  "inventory_artifact",
+  "inspect_managed_artifact",
+] as const)(
+  "rejects delivery options for %s before selecting a provider",
+  async (tool) => {
+    const factories = recordingFactories();
+    const invocation = [
+      factories.dependencies,
+      "/fixture/missing",
+      tool,
+      {},
+      undefined,
+      undefined,
+      { detail: "summary", evidenceBundlePath: "/fixture/bundle.json" },
+    ] as const;
+    // @ts-expect-error JavaScript callers can bypass managed-members-only delivery.
+    const result = await runProviderAnalysis(...invocation);
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: tool,
+        issues: [{ path: ["delivery"], reason: "invalid_value" }],
+      },
+    });
+    expect(factories.sessions).toEqual([]);
+  },
+);
 
 describe("one-shot analysis factory boundary", () => {
   it("preserves thrown failures while releasing clients and cancellation listeners", async () => {
@@ -228,4 +280,46 @@ it("preserves a managed execution profile in direct analysis Evidence", async ()
     {},
   );
   expect(evidence).toMatchObject({ analysis_profile: profile });
+});
+
+it("direct analysis snapshot target mismatch retains actionable snapshot recovery", async () => {
+  const [path, other] = await createBinarySessionTargets();
+  const profile = createAnalysisProfile(
+    { id: "fixture", name: "Fixture analysis provider", version: "1" },
+    { fixture: true },
+  );
+  const factories = recordingFactories(undefined, profile);
+  const snapshotPath = join(dirname(path), "snapshot.json");
+  expect(
+    await runDirectAnalysis(
+      factories.dependencies,
+      path,
+      "read_bytes",
+      {},
+      { snapshotPath },
+    ),
+  ).not.toHaveProperty("code");
+  const mismatch = await runDirectAnalysis(
+    factories.dependencies,
+    other,
+    "read_bytes",
+    {},
+    { snapshotPath },
+  );
+  expect(mismatch).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    remediation: {
+      action:
+        "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.",
+    },
+  });
+  expect(
+    await runDirectAnalysis(
+      factories.dependencies,
+      path,
+      "read_bytes",
+      {},
+      { snapshotPath },
+    ),
+  ).not.toHaveProperty("code");
 });

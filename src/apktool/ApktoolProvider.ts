@@ -8,7 +8,7 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
@@ -20,16 +20,14 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  ExecutionOptions,
-  ProviderAvailability,
-} from "../application/AnalysisProvider.js";
-import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import {
+  type ExecutionOptions,
+  type ProviderAvailability,
   createAnalysisExecution,
-  createAnalysisExecutionEvidence,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
+import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   apktoolResultSchemas,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
@@ -695,11 +693,12 @@ export class ApktoolProvider {
         ),
       );
     } catch (cause) {
-      const physical = artifactFilePrimaryFailure(cause);
+      const { cause: physical, origin } = artifactFilePrimaryFacts(cause);
       const primary =
-        physical instanceof AnalysisError
+        origin === "owned-or-classified" && physical instanceof AnalysisError
           ? physical
-          : physical instanceof ArtifactReaderFailure &&
+          : origin === "owned-or-classified" &&
+              physical instanceof ArtifactReaderFailure &&
               physical.reason === "cancelled"
             ? new AnalysisCancelledError(operation, {
                 cause: artifactFileCancellationCause(physical),

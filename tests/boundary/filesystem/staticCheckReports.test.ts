@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { writeRepositoryOxlintConfiguration } from "../../fixtures/oxlintConfiguration.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const script = fileURLToPath(
@@ -149,8 +150,11 @@ it("keeps lint errors failing and visible alongside the retained warnings", asyn
 
 it("excludes translation staging while retaining authored website errors", async () => {
   const root = await fixture();
-  for (const name of [".gitignore", ".oxlintrc.json"])
-    await writeFile(join(root, name), await readFile(join(repository, name)));
+  await writeFile(
+    join(root, ".gitignore"),
+    await readFile(join(repository, ".gitignore")),
+  );
+  await writeRepositoryOxlintConfiguration(root);
   const authored = "website/public/assets/authored.js";
   const staged =
     "website/.i18n-regression/site/examples/notes-electron/main.js";

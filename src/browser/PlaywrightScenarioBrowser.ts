@@ -872,7 +872,7 @@ export const openPlaywrightScenarioBrowser = async (
               : [],
         }),
       commandTimeoutMs,
-      "handshake",
+      "launch",
     );
   } catch (cause: unknown) {
     const cleanup = new AnalysisCleanupLease(async () => {

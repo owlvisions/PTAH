@@ -1,3 +1,4 @@
+import { plistUidValue } from "./plistUid.js";
 import type { JsonValue } from "../jsonValue.js";
 
 /** Source element types needed to distinguish large integers from integral reals. */
@@ -75,12 +76,8 @@ export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
     if (typeof item === "number") return mapNumber(item);
     if (Array.isArray(item)) return item.map(map);
     if (item !== null && typeof item === "object") {
-      const keys = Object.keys(item);
-      const marker = item[keys[0] ?? ""];
-      const reference =
-        keys.length === 1 &&
-        (keys[0] === "UID" || keys[0] === "CF$UID") &&
-        typeof marker === "number";
+      const marker = plistUidValue(item);
+      const reference = marker !== undefined;
       if (reference) {
         // Keep malformed numeric reference markers recognizable by the graph reader.
         if (

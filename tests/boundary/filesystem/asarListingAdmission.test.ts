@@ -47,7 +47,7 @@ it("rejects path expansion before publishing any inventory, preserving the input
     reason: "limit",
     message: "ASAR expanded listing exceeds its 64 MiB representation budget",
   });
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 it("reads deeply nested packed metadata without recursive listing or member lookup", async () => {
@@ -59,7 +59,12 @@ it("reads deeply nested packed metadata without recursive listing or member look
       count++;
       if (entry.kind === "file") {
         expect(entry.path).toBe(`${"d/".repeat(3500)}f0`);
-        expect(await buffer(await reader.open(entry))).toEqual(Buffer.alloc(0));
+        expect(
+          Buffer.compare(
+            await buffer(await reader.open(entry)),
+            Buffer.alloc(0),
+          ),
+        ).toBe(0);
       }
     }
     expect(count).toBe(3501);
@@ -123,9 +128,12 @@ it("preserves POSIX literal backslashes and rejects Windows component separators
       const entries = await list();
       expect(entries).toHaveLength(1);
       expect(entries[0]?.path).toBe("a\\b");
-      expect(await buffer(await reader.open(entries[0]!))).toEqual(
-        Buffer.alloc(0),
-      );
+      expect(
+        Buffer.compare(
+          await buffer(await reader.open(entries[0]!)),
+          Buffer.alloc(0),
+        ),
+      ).toBe(0);
     }
   } finally {
     await reader.close();

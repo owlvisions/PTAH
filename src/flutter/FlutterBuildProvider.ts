@@ -6,15 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 
-import type {
-  ExecutionOptions,
-  ProviderAvailability,
-} from "../application/AnalysisProvider.js";
 import {
+  type ExecutionOptions,
+  type ProviderAvailability,
   createAnalysisExecution,
-  createAnalysisExecutionEvidence,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   MAX_FLUTTER_LIBRARY_PATH_BYTES,
   type FlutterRequest,
@@ -26,8 +24,8 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -57,6 +55,7 @@ import {
   readSnapshotHeader,
 } from "./DartElf.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
+import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 /** Stable identity for the Flutter build-identification provider. */
 export const FLUTTER_PROVIDER_IDENTITY = {
@@ -221,10 +220,15 @@ const inputFailureMessage = (path: string, cause: unknown): string => {
   return `The APK could not be read as a package: ${path}: ${message}`;
 };
 
-/** Provider-owned storage failures must never be attributed to caller input. */
+/**
+ * Provider-owned storage failures must never be attributed to caller input.
+ * `workspacePath` is the owned root once allocated, so a failure without its
+ * own errno path still names the workspace it occurred in.
+ */
 const mapOwnedIoFailure = (
   operation: string,
   cause: unknown,
+  workspacePath: string | null,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const cancellation = regularFileCancellation(cause);
@@ -239,24 +243,27 @@ const mapOwnedIoFailure = (
     "code" in cause &&
     typeof cause.code === "string"
   )
-    return new AnalysisResourceConstraintError(
+    return privateWorkspaceFailure(
+      FLUTTER_PROVIDER_IDENTITY.id,
       operation,
-      "file-size",
-      `Provider-owned Flutter snapshot storage failed (${cause.code}): ${cause.message}`,
-      null,
-      { cause },
+      cause,
+      workspacePath,
     );
   return new AnalysisProtocolError(operation, { cause });
 };
 
-/** ZIP format failures describe caller bytes; its descriptor is provider-owned. */
+/**
+ * ZIP format failures describe caller bytes. A system error comes from the
+ * provider-owned snapshot descriptor, so it propagates unchanged to the
+ * snapshot owner, which maps it against the owned workspace.
+ */
 const mapPackageFailure = (
   operation: string,
   path: string,
   cause: unknown,
-): AnalysisError =>
+): unknown =>
   cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? mapOwnedIoFailure(operation, cause)
+    ? cause
     : mapInputFailure(operation, path, cause);
 
 interface FlutterLibrary {
@@ -382,7 +389,8 @@ export class FlutterBuildProvider {
     try {
       root = await mkdtemp(join(tmpdir(), "rea-flutter-"));
     } catch (cause) {
-      throw mapOwnedIoFailure(operation, cause);
+      // No workspace exists yet; the errno path names the attempted template.
+      throw mapOwnedIoFailure(operation, cause, null);
     }
     this.ownedRoots.set(root, new Set());
     const snapshotPath = join(root, "input.apk");
@@ -401,12 +409,11 @@ export class FlutterBuildProvider {
       // stops the write promptly instead of draining the whole file.
       let source: OwnedFileHandle;
       try {
-        source = this.ownResource(
-          root,
-          new OwnedFileHandle(
-            await openRegularFile(path, { symlinks: "follow", signal }),
-          ),
-        );
+        const { handle } = await openRegularFile(path, {
+          symlinks: "follow",
+          signal,
+        });
+        source = this.ownResource(root, new OwnedFileHandle(handle));
       } catch (cause) {
         if (cause instanceof RegularFileAdmissionFailure) {
           this.ownResource(root, cause.owner);
@@ -482,7 +489,7 @@ export class FlutterBuildProvider {
       await this.discardRoot(root);
       if (signal?.aborted === true)
         throw new AnalysisCancelledError(operation, { cause });
-      throw mapOwnedIoFailure(operation, cause);
+      throw mapOwnedIoFailure(operation, cause, root);
     }
   }
 
@@ -630,7 +637,9 @@ export class FlutterBuildProvider {
               libraries,
             );
     } catch (cause) {
-      result = err(mapOwnedIoFailure(request.operation, cause));
+      result = err(
+        mapOwnedIoFailure(request.operation, cause, snapshot?.root ?? null),
+      );
     } finally {
       if (snapshot !== undefined) await this.discardRoot(snapshot.root);
     }
@@ -920,7 +929,7 @@ export class FlutterBuildProvider {
               )
               .map(
                 (entry) =>
-                  `lib/${entry.abi}/libapp.so carries ${String(entry.libapp.snapshot_hash_sources)} snapshot section(s); a complete AOT payload carries two, so the library is truncated or nonstandard`,
+                  `lib/${entry.abi}/libapp.so carries ${String(entry.libapp.snapshot_hash_sources)} observed snapshot header(s); complete coverage of the supported legacy split VM/isolate profile requires two independent sources. Unified and other layouts remain unverified`,
               ),
             ...abis
               .filter(
@@ -1125,14 +1134,42 @@ export class FlutterBuildProvider {
             section.offset < previous.offset + previous.size,
         ),
     );
-    if (sections.length === 0)
+    if (sections.length === 0) {
+      // This is a profile diagnostic, not aliases for the split data sources.
+      // Probe only after the legacy selection fails, leaving its normal path
+      // and two-source completeness rule unchanged.
+      const unified = await readElfSymbols(
+        bounded,
+        ["_kDartSnapshotData", "_kDartSnapshotText"],
+        signal,
+      );
+      if (unified.symbols.length > 0)
+        return err(
+          new AnalysisUnsupportedTargetError(
+            "inspect_dart_aot",
+            path,
+            "Observed unified Dart snapshot exports; this reader supports the legacy split VM/isolate profile (Dart 2.14 FullAOT kind 3). The unified profile is unsupported, not missing legacy data",
+            {
+              diagnostics: {
+                supported_profile: "dart-2.14-split-full-aot",
+                observed_exports: unified.symbols.map(
+                  ({ name, offset, size }) => ({ name, offset, size }),
+                ),
+                abi: selected.abi,
+                libapp_sha256: imageSha256,
+                libapp_bytes: imageLength,
+              },
+            },
+          ),
+        );
       return err(
         new AnalysisUnsupportedTargetError(
           "inspect_dart_aot",
           path,
-          `No recognizable Dart snapshot symbols were found: ${inventory.failures.map((failure) => failure.reason).join("; ")}`,
+          `No recognizable legacy split Dart snapshot symbols were found: ${inventory.failures.map((failure) => failure.reason).join("; ")}`,
         ),
       );
+    }
     const pool = await projectStringPool(isolateData, signal);
     const snapshotPartial =
       inventory.failures.length > 0 ||

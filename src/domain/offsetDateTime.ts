@@ -50,6 +50,47 @@ export const parseOffsetDateTimeInstant = (
   };
 };
 
+/** Parse recorded ISO spelling once, retaining its exact instant and formatting facts. */
+export const readRecordedDateTime = (
+  value: string,
+):
+  | {
+      readonly instant: OffsetDateTimeInstant;
+      readonly spelling: {
+        readonly separator: "T" | " ";
+        readonly secondsPresent: boolean;
+        readonly fractionDigits: number;
+        readonly zone: string;
+      };
+    }
+  | undefined => {
+  const match =
+    /^(\d{4}-\d{2}-\d{2})([T ])(\d{2}:\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:?\d{2})?$/u.exec(
+      value,
+    );
+  if (match === null) return undefined;
+  const [, date, separator, time, seconds, fraction = "", zone = ""] = match;
+  const offset =
+    zone === ""
+      ? "Z"
+      : zone === "Z" || zone.includes(":")
+        ? zone
+        : `${zone.slice(0, 3)}:${zone.slice(3)}`;
+  const normalized = offsetDateTimeSchema.safeParse(
+    `${date}T${time}${seconds === undefined ? "" : `:${seconds}`}${fraction === "" ? "" : `.${fraction}`}${offset}`,
+  );
+  if (!normalized.success) return undefined;
+  return {
+    instant: parseOffsetDateTimeInstant(normalized.data),
+    spelling: {
+      separator: separator as "T" | " ",
+      secondsPresent: seconds !== undefined,
+      fractionDigits: fraction.length,
+      zone,
+    },
+  };
+};
+
 /** Convert a Date.now-style integer into the same exact comparison shape. */
 export const offsetDateTimeInstantFromEpochMilliseconds = (
   epochMilliseconds: number,

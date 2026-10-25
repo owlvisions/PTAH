@@ -15,8 +15,11 @@ import {
 } from "../domain/evidenceErrors.js";
 import {
   AnalysisCancelledError,
+  type AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   JsonInputPhysicalReadFailure,
@@ -26,7 +29,11 @@ import {
   type JsonObjectMemberReader,
 } from "./JsonInputFile.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
-import { RegularFileCleanupFailure } from "./RegularFileRead.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
+import { bindRegularFileCleanup } from "./RegularFileRead.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
@@ -52,13 +59,14 @@ export const readJsonFile = async (
   path: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "read_evidence_file",
 ): Promise<
   Result<
     unknown,
     EvidenceFileError | AnalysisResourceConstraintError | AnalysisCancelledError
   >
 > => {
-  const read = await readJsonFileWithSource(path, signal, resources);
+  const read = await readJsonFileWithSource(path, signal, resources, operation);
   return read.ok ? ok(read.value.data) : read;
 };
 
@@ -67,6 +75,7 @@ export const readJsonFileWithSource = (
   path: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "read_evidence_file",
 ): Promise<
   Result<
     { readonly data: unknown; readonly path: string },
@@ -78,13 +87,14 @@ export const readJsonFileWithSource = (
     async (selected) => {
       const read = await readJsonInputFile(
         selected,
-        "read_evidence_file",
+        operation,
         signal,
         resources,
       );
       return read.ok ? ok({ data: read.value, path: selected }) : read;
     },
     signal,
+    operation,
   );
 
 /** Read selected JSON members through the same regular-file error boundary. */
@@ -93,6 +103,7 @@ export const readJsonObjectMembersFile = (
   scans: readonly ReadonlyMap<string, JsonObjectMemberReader>[],
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "read_evidence_file",
 ): Promise<
   Result<
     void,
@@ -102,87 +113,165 @@ export const readJsonObjectMembersFile = (
   readJsonFileInput(
     path,
     (selected) =>
-      readJsonObjectFile(
-        selected,
-        "read_evidence_file",
-        scans,
-        signal,
-        resources,
-      ),
+      readJsonObjectFile(selected, operation, scans, signal, resources),
     signal,
+    operation,
   );
+
+type JsonFileReadFailure =
+  | EvidenceFileError
+  | AnalysisResourceConstraintError
+  | AnalysisCancelledError;
+type DecodedJsonInput<Value> = Result<
+  Value,
+  AnalysisInputError | AnalysisResourceConstraintError
+>;
 
 const readJsonFileInput = async <Value>(
   path: string,
-  read: (
-    selected: string,
-  ) => Promise<
-    Result<
-      Value,
-      | import("../domain/analysisErrorCore.js").AnalysisInputError
-      | AnalysisResourceConstraintError
-    >
-  >,
+  read: (selected: string) => Promise<DecodedJsonInput<Value>>,
   signal?: AbortSignal,
-): Promise<
-  Result<
-    Value,
-    EvidenceFileError | AnalysisResourceConstraintError | AnalysisCancelledError
-  >
-> => {
+  operation = "read_evidence_file",
+): Promise<Result<Value, JsonFileReadFailure>> => {
   const requestedPath = absoluteCallerPath(path);
   try {
-    const decoded = await read(requestedPath);
-    if (!decoded.ok) {
-      if (decoded.error instanceof AnalysisResourceConstraintError)
-        return err(decoded.error);
-      return err(
-        new EvidenceFileError("read", "invalid-json", {
-          cause:
-            decoded.error.cause ??
-            new SyntaxError(
-              decoded.error.issues[0]?.message ?? decoded.error.message,
-            ),
-          path: requestedPath,
-        }),
-      );
-    }
-    return ok(decoded.value);
+    return decodedJsonFileResult(await read(requestedPath), requestedPath);
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
-    if (cause instanceof AnalysisResourceConstraintError) return err(cause);
-    if (cause instanceof JsonInputCancellationFailure)
+    // Caller reasons are opaque, including instances of lifecycle failure types.
+    if (signal?.aborted === true && cause === signal.reason)
+      return err(new AnalysisCancelledError(operation, { cause }));
+    if (cause instanceof RegularFileCleanupFailure)
       return err(
-        new AnalysisCancelledError("read_evidence_file", {
-          cause: cause.reason,
-        }),
+        jsonFileCleanupError(
+          cause as RegularFileCleanupFailure<DecodedJsonInput<Value>>,
+          requestedPath,
+          operation,
+          signal,
+        ),
       );
-    if (cause instanceof JsonInputPhysicalReadFailure)
-      return err(
-        new EvidenceFileError("read", "io", {
-          cause: cause.physicalCause,
-          path: requestedPath,
-        }),
-      );
-    if (isJsonReadCancellation(cause, signal))
-      return err(
-        new AnalysisCancelledError("read_evidence_file", {
-          cause: signal?.reason,
-        }),
-      );
-    return err(
-      new EvidenceFileError(
-        "read",
-        cause instanceof NonRegularFileReadError
-          ? "not-file"
-          : missingOrIo(cause),
-        {
-          cause,
-          path: requestedPath,
-        },
-      ),
-    );
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+      const primary =
+        cause.reason === "cancelled"
+          ? new AnalysisCancelledError(operation, {
+              cause:
+                cause.cancellation === undefined
+                  ? cause.cause
+                  : cause.cancellation.reason,
+              partialObservation: cause.partialObservation,
+            })
+          : undefined;
+      const error = new EvidenceFileError("read", "io", {
+        cause,
+        path: requestedPath,
+        cleanup: cause.cleanup,
+        partialObservation: cause.partialObservation,
+        cleanupPrimary: primary,
+        ...(primary === undefined
+          ? {}
+          : { diagnostics: { primary_error: projectAnalysisError(primary) } }),
+      });
+      bindRegularFileCleanup(cause, error);
+      return err(error);
+    }
+    return err(jsonFileReadFailure(cause, requestedPath, operation, signal));
   }
+};
+
+/** Parsing owns its typed refusal even when final descriptor cleanup fails. */
+const decodedJsonFileResult = <Value>(
+  decoded: DecodedJsonInput<Value>,
+  path: string,
+): Result<Value, JsonFileReadFailure> => {
+  if (decoded.ok) return decoded;
+  if (decoded.error instanceof AnalysisResourceConstraintError)
+    return err(decoded.error);
+  return err(
+    new EvidenceFileError("read", "invalid-json", {
+      cause:
+        decoded.error.cause ??
+        new SyntaxError(
+          decoded.error.issues[0]?.message ?? decoded.error.message,
+        ),
+      path,
+      ...(decoded.error.userMessage === undefined
+        ? {}
+        : { userMessage: decoded.error.userMessage }),
+      contentIssues: decoded.error.issues,
+    }),
+  );
+};
+
+const jsonFileReadFailure = (
+  cause: unknown,
+  path: string,
+  operation: string,
+  signal?: AbortSignal,
+): JsonFileReadFailure => {
+  if (cause instanceof AnalysisResourceConstraintError) return cause;
+  if (cause instanceof JsonInputCancellationFailure)
+    return new AnalysisCancelledError(operation, { cause: cause.reason });
+  if (cause instanceof JsonInputPhysicalReadFailure)
+    return new EvidenceFileError("read", "io", {
+      cause: cause.physicalCause,
+      path,
+    });
+  if (isJsonReadCancellation(cause, signal))
+    return new AnalysisCancelledError(operation, { cause: signal?.reason });
+  return new EvidenceFileError(
+    "read",
+    cause instanceof NonRegularFileReadError
+      ? "not-file"
+      : fileAccessFailureReason(cause),
+    { cause, path },
+  );
+};
+
+/** Translate the physical outcome once, binding the resulting Result to its owner. */
+const jsonFileCleanupError = <Value>(
+  failure: RegularFileCleanupFailure<DecodedJsonInput<Value>>,
+  path: string,
+  operation: string,
+  signal?: AbortSignal,
+): EvidenceFileError => {
+  const cleanup = new EvidenceFileError("read", "io", {
+    cause: failure,
+    path,
+    cleanup: {
+      reason:
+        failure.cleanupCause instanceof Error
+          ? failure.cleanupCause.message
+          : String(failure.cleanupCause),
+      resources: [failure.path],
+    },
+  });
+  bindRegularFileCleanup(failure, cleanup);
+  const cancellation = regularFileCancellation(failure);
+  let primary: AnalysisError | undefined;
+  if (failure.outcome.kind === "failed") {
+    primary =
+      cancellation === undefined
+        ? jsonFileReadFailure(failure.outcome.cause, path, operation, signal)
+        : new AnalysisCancelledError(operation, { cause: cancellation.reason });
+  } else {
+    const decoded = decodedJsonFileResult(failure.outcome.value, path);
+    if (!decoded.ok) primary = decoded.error;
+    else if (cancellation !== undefined)
+      primary = new AnalysisCancelledError(operation, {
+        cause: cancellation.reason,
+      });
+  }
+  if (primary === undefined) return cleanup;
+  return new EvidenceFileError("read", "io", {
+    path,
+    cause: new AggregateError(
+      [primary, cleanup],
+      "JSON read and cleanup failures",
+      { cause: primary },
+    ),
+    cleanupPrimary: primary,
+    cleanup: cleanup.cleanup,
+    diagnostics: { primary_error: projectAnalysisError(primary) },
+  }).bindCleanupDependencies([primary, cleanup]);
 };
 
 const isJsonReadCancellation = (
@@ -315,11 +404,15 @@ const writeTextPartsOwned = async (
           cause.lease,
         );
       return stagedCleanupFailure(
-        new EvidenceFileError("write", missingOrIo(cause.outcome.error), {
-          cause,
-          path: requestedPath,
-          cleanup,
-        }),
+        new EvidenceFileError(
+          "write",
+          fileAccessFailureReason(cause.outcome.error),
+          {
+            cause,
+            path: requestedPath,
+            cleanup,
+          },
+        ),
         cause.lease,
       );
     }
@@ -337,7 +430,7 @@ const writeTextPartsOwned = async (
         }),
       );
     return err(
-      new EvidenceFileError("write", missingOrIo(cause), {
+      new EvidenceFileError("write", fileAccessFailureReason(cause), {
         cause,
         path: requestedPath,
       }),
@@ -357,8 +450,11 @@ const stagedCleanupFailure = <
 };
 
 /** A missing path or parent is a selection error, not a permission failure. */
-const missingOrIo = (cause: unknown): "missing" | "io" => {
+const fileAccessFailureReason = (
+  cause: unknown,
+): "missing" | "io" | "path-limit" => {
   const code = fileErrorCode(cause);
+  if (code === "ENAMETOOLONG") return "path-limit";
   return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "io";
 };
 
@@ -369,15 +465,13 @@ const publishFile = async (
   resources: ArtifactResourceScope,
   cancellation?: TextWriteCancellation,
 ): Promise<number> => {
-  const stagingDirectory = await mkdtemp(
-    resolve(dirname(destination), ".rea-write-"),
+  const { owner, staged, file } = await acquireStagedFile(
+    dirname(destination),
+    resources,
+    cancellation,
   );
-  const owner = await OwnedStagedOutput.create(stagingDirectory);
   let outcome: Result<PublishedEvidenceFile, unknown>;
-  const staged = resolve(stagingDirectory, "content");
   try {
-    const file = await open(staged, "wx", 0o600);
-    owner.setFile(new OwnedFileHandle(file));
     let written: Result<number, unknown>;
     try {
       const bytes = await writeStagedParts(file, parts, cancellation);
@@ -423,6 +517,60 @@ const publishFile = async (
     );
   if (!outcome.ok) throw outcome.error;
   return outcome.value.bytes;
+};
+
+/** Keep staging on the destination filesystem without imposing a shorter path ceiling. */
+const acquireStagedFile = async (
+  destinationParent: string,
+  resources: ArtifactResourceScope,
+  cancellation?: TextWriteCancellation,
+): Promise<{
+  readonly owner: OwnedStagedOutput;
+  readonly staged: string;
+  readonly file: FileHandle;
+}> => {
+  const destinationDevice = (await lstat(destinationParent)).dev;
+  let parent = destinationParent;
+  for (;;) {
+    assertWriteActive(cancellation);
+    let failure: unknown;
+    let directory: string | undefined;
+    try {
+      directory = await mkdtemp(resolve(parent, ".rea-write-"));
+    } catch (cause: unknown) {
+      if (fileErrorCode(cause) !== "ENAMETOOLONG") throw cause;
+      failure = cause;
+    }
+    if (directory !== undefined) {
+      const owner = await OwnedStagedOutput.create(directory);
+      const staged = resolve(directory, "content");
+      try {
+        const file = await open(staged, "wx", 0o600);
+        owner.setFile(new OwnedFileHandle(file));
+        return { owner, staged, file };
+      } catch (cause: unknown) {
+        const released = await resources.release({
+          kind: "staged-output",
+          resource: owner.directory,
+          output: owner,
+        });
+        if (released.kind === "failed")
+          throw new StagedOutputCleanupFailure(
+            err(cause),
+            released.cause,
+            owner,
+            released.lease,
+          );
+        if (fileErrorCode(cause) !== "ENAMETOOLONG") throw cause;
+        failure = cause;
+      }
+    }
+    const ancestor = dirname(parent);
+    if (ancestor === parent) throw failure;
+    const metadata = await lstat(ancestor);
+    if (metadata.dev !== destinationDevice) throw failure;
+    parent = ancestor;
+  }
 };
 
 class StagedOutputCleanupFailure extends Error {

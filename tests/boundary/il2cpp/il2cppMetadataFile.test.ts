@@ -6,10 +6,12 @@ import { describe, expect, it } from "vitest";
 import {
   il2cppIndexWidth,
   il2cppMetadataRecordBytes,
-  readIl2cppMetadata,
-  readIl2cppMetadataForLinking,
   readIl2cppMetadataSteps,
 } from "../../../src/il2cpp/Il2cppMetadataFile.js";
+import {
+  readIl2cppMetadata,
+  readIl2cppMetadataForLinking,
+} from "../../fixtures/il2cpp/readers.js";
 import {
   createIl2cppMetadataFixture,
   FIXTURE_IMAGES,
@@ -408,38 +410,42 @@ describe("rejected IL2CPP metadata references", () => {
     );
   });
 
-  it("rejects a shifted string section and names that start inside another string", () => {
-    // Pulled back, the fixture's strings would overlap the literal data.
-    for (const [delta, reason] of [
-      [-1, "section-overlap"],
-      [1, "invalid-string"],
-    ] as const)
-      rejects(
-        mutated((fixture, bytes) => {
-          const strings = fixture.section("strings");
-          bytes.writeInt32LE(
-            strings.offset + delta,
-            fixture.header("strings", "offset"),
-          );
-          // Shrink a forward shift so it stays clear of the next section.
-          bytes.writeInt32LE(
-            strings.size - Math.max(delta, 0),
-            fixture.header("strings", "size"),
-          );
-        }),
-        reason,
-      );
+  it("rejects a string section overlapping literal data", () => {
     rejects(
-      mutated((fixture, bytes) =>
+      mutated((fixture, bytes) => {
         bytes.writeInt32LE(
-          fixture.stringOffset("Update") +
-            1 -
-            fixture.section("strings").offset,
-          fixture.record("methods", 0),
-        ),
-      ),
-      "invalid-string",
+          fixture.section("strings").offset - 1,
+          fixture.header("strings", "offset"),
+        );
+      }),
+      "section-overlap",
     );
+  });
+
+  it("decodes a valid string suffix from its byte offset", () => {
+    const fixture = createIl2cppMetadataFixture({
+      typeNames: { 0: "xPlayer" },
+    });
+    const bytes = Buffer.from(fixture.bytes);
+    const originalOffset = fixture.record("typeDefinitions", 0);
+    bytes.writeInt32LE(bytes.readInt32LE(originalOffset) + 1, originalOffset);
+
+    expect(readIl2cppMetadata(bytes).types[0]?.name).toBe("Player");
+  });
+
+  it("accepts a UTF-8 code-point boundary suffix and rejects a split code point", () => {
+    const fixture = createIl2cppMetadataFixture({
+      typeNames: { 0: "xéclair" },
+    });
+    const nameOffset = fixture.record("typeDefinitions", 0);
+    const sourceOffset = fixture.bytes.readInt32LE(nameOffset);
+    const validSuffix = Buffer.from(fixture.bytes);
+    validSuffix.writeInt32LE(sourceOffset + 1, nameOffset);
+    expect(readIl2cppMetadata(validSuffix).types[0]?.name).toBe("éclair");
+
+    const splitCodePoint = Buffer.from(fixture.bytes);
+    splitCodePoint.writeInt32LE(sourceOffset + 2, nameOffset);
+    rejects(splitCodePoint, "invalid-string");
   });
 
   it("rejects nesting cycles and self-nesting", () => {
@@ -576,9 +582,7 @@ describe("IL2CPP global-metadata versions 29 and 31", () => {
       mutated(
         (target, bytes) =>
           bytes.writeInt32LE(
-            target.stringOffset("Update") +
-              1 -
-              target.section("strings").offset,
+            target.section("strings").size + 1,
             target.record("methods", 0),
           ),
         fixture,

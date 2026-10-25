@@ -8,12 +8,100 @@ API access on this thread: moving dispatch to a worker can deadlock Hopper.
 import json
 import hmac
 import os
+import re
 import socket
 from typing import Any, Optional, Protocol, Sequence
 
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
 # The native label setter truncates NSString names at this UTF-16 extent.
 HOPPER_SYMBOL_NAME_UTF16_UNITS = 1024
+# Request JSON payload budget in bytes, excluding the trailing LF.
+# REA_BRIDGE_MAX_REQUEST_BYTES selects it. Unset stays 16777216.
+# 7464 is the authenticated Cutter frame of the largest bounded symbol name.
+# Cutter's 64-receipt recovery status is smaller with a null path. A path
+# that does not fit is null, not an older descriptor path.
+# 536870887 is Node's 536870888-character string ceiling minus the framing LF.
+# The ceiling is the encoded payload; JSON expansion is measured before it.
+_BRIDGE_MAX_REQUEST_BYTES_SETTING = "REA_BRIDGE_MAX_REQUEST_BYTES"
+DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024
+MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464
+MAXIMUM_BRIDGE_MAX_REQUEST_BYTES = 536870887
+
+
+def _bridge_max_request_bytes_constraint():
+    return (
+        "REA_BRIDGE_MAX_REQUEST_BYTES must be a positive decimal integer "
+        "from %d to %d bytes; the default is %d bytes (16 MiB). "
+        "A value below %d bytes cannot carry the largest admitted "
+        "symbol-name command, and a larger value is refused so the encoded "
+        "payload plus its framing LF stays one string under Node's "
+        "single-string ceiling."
+        % (
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+        )
+    )
+
+
+def _parse_bridge_max_request_bytes(raw):
+    """Refuse a non-decimal or out-of-range ceiling. Never fall back."""
+    constraint = _bridge_max_request_bytes_constraint()
+    if isinstance(raw, bool):
+        raise RuntimeError(constraint)
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str):
+        # ASCII digits only. str.isdigit() accepts numerals such as U+0668
+        # that the TypeScript setting rejects.
+        if re.fullmatch(r"[1-9][0-9]*", raw) is None:
+            raise RuntimeError(constraint)
+        value = int(raw)
+    else:
+        raise RuntimeError(constraint)
+    if (
+        value < MINIMUM_BRIDGE_MAX_REQUEST_BYTES
+        or value > MAXIMUM_BRIDGE_MAX_REQUEST_BYTES
+    ):
+        raise RuntimeError(constraint)
+    return value
+
+
+def _resolve_bridge_max_request_bytes():
+    """Prefer the bootstrap injection, then the process environment, then 16 MiB."""
+    injected = globals().get(_BRIDGE_MAX_REQUEST_BYTES_SETTING)
+    if injected is not None:
+        return _parse_bridge_max_request_bytes(injected), "setting"
+    raw = os.environ.get(_BRIDGE_MAX_REQUEST_BYTES_SETTING)
+    if raw is None:
+        return DEFAULT_BRIDGE_MAX_REQUEST_BYTES, "default"
+    return _parse_bridge_max_request_bytes(raw), "setting"
+
+
+MAX_REQUEST_BYTES, BRIDGE_MAX_REQUEST_BYTES_SOURCE = (
+    _resolve_bridge_max_request_bytes()
+)
+
+
+def _bridge_max_request_bytes_recovery():
+    return (
+        "The effective REA_BRIDGE_MAX_REQUEST_BYTES value is %d bytes "
+        "(source %s; default %d, floor %d, maximum %d). "
+        "Set REA_BRIDGE_MAX_REQUEST_BYTES in the environment that starts REA "
+        "to a decimal integer from %d to %d, then restart REA. "
+        "Restart Hopper or Cutter from that same environment so the bridge "
+        "uses this ceiling."
+        % (
+            MAX_REQUEST_BYTES,
+            BRIDGE_MAX_REQUEST_BYTES_SOURCE,
+            DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+        )
+    )
 _rea_session_document = None
 _search_inventory_cache = {}
 _pseudocode_cache = {}
@@ -236,20 +324,27 @@ def _name_matches(document, address, name):
     return observed == name or (not name and observed is None)
 
 
-def _bookmark_name(document, address):
-    getter = getattr(document, "getBookmarkName", None)
-    if not callable(getter):
+def _bookmark_api(document, name):
+    method = getattr(document, name, None)
+    if not callable(method):
         raise CapabilityUnavailableError(
-            "Hopper's public Python API does not expose getBookmarkName"
+            "Hopper's public Python API does not expose %s" % name
         )
-    return getter(address)
+    return method
 
 
-def _address(document, value=None):
-    """Keep explicit hexadecimal coordinates distinct from symbol names."""
+def _bookmark_name(document, address):
+    return _bookmark_api(document, "getBookmarkName")(address)
+
+
+def _address_selection(document, value=None):
+    """Own the coordinate and whether it was selected by symbol or address."""
     if value is None:
-        return document.getCurrentAddress()
+        return document.getCurrentAddress(), "cursor"
     _api_text(value, "Address")
+    if value.startswith("file-offset:"):
+        raise InvalidRequestError("Hopper does not support file-offset: selectors; select Ghidra for source-file coordinates or use a Hopper analysis address")
+    source = "address"
     if value.lower().startswith("0x"):
         try:
             address = int(value, 16)
@@ -260,6 +355,8 @@ def _address(document, value=None):
         # Prefer an observed symbol, retaining bare-hex compatibility only
         # when Hopper has no symbol with the supplied name.
         address = document.getAddressForName(value)
+        if address not in BAD_ADDRESSES:
+            source = "symbol"
         if address in BAD_ADDRESSES:
             try:
                 address = int(value, 16)
@@ -267,7 +364,11 @@ def _address(document, value=None):
                 raise InvalidRequestError("Unknown Hopper address or name: %s" % value) from error
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
-    return address
+    return address, source
+
+
+def _address(document, value=None):
+    return _address_selection(document, value)[0]
 
 
 def _segment(document, address):
@@ -278,10 +379,15 @@ def _segment(document, address):
 
 
 def _procedure(document, value=None):
-    address = document.getCurrentAddress() if value is None else _address(document, value)
+    address, source = _address_selection(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
         raise InvalidRequestError("No procedure exists at the requested address")
+    if source == "symbol" and address != result.getEntryPoint():
+        raise InvalidRequestError(
+            "Symbol %s at %s is inside procedure %s at %s; select its entry name/address or use resolve_containing_procedure for explicit containment"
+            % (value, _hex(address), _procedure_name(result), _hex(result.getEntryPoint()))
+        )
     return result
 
 
@@ -294,6 +400,7 @@ def _procedure_identity(procedure):
     return {
         "address": _hex(procedure.getEntryPoint()),
         "name": _procedure_name(procedure),
+        "symbol": None,
         "classification": None,
         "body": {
             "available": False,
@@ -740,6 +847,7 @@ def _dispatch(method, params):
             "version": "1.0.0",
             "run_id": REA_RUN_ID,
             "process_id": os.getpid(),
+            "max_request_bytes": MAX_REQUEST_BYTES,
         }
     if method in ("shutdown", "shutdown_document"):
         document = _session_document()
@@ -963,6 +1071,7 @@ def _dispatch(method, params):
             length = sum(max(0, _basic_block_end(procedure, block) - block.getStartingAddress()) for block in blocks)
             return {
                 "name": _procedure_name(procedure),
+                "symbol": None,
                 "entrypoint": _hex(procedure.getEntryPoint()),
                 "basicblock_count": procedure.getBasicBlockCount(),
                 "length": length,
@@ -1003,39 +1112,24 @@ def _dispatch(method, params):
         observed = getter(address)
         return observed == comment or (comment == "" and observed is None)
     if method == "list_bookmarks":
-        return [{"address": _hex(item), "name": _bookmark_name(document, item)} for item in document.getBookmarks()]
+        return [{"address": _hex(item), "name": _bookmark_name(document, item)} for item in _bookmark_api(document, "getBookmarks")()]
     if method == "set_bookmark":
         address = _address(document, params.get("address"))
         _segment(document, address)
         name = params.get("name")
         if name is not None:
             _api_text(name, "Bookmark name")
-        has_bookmark = getattr(document, "hasBookmarkAtAddress", None)
-        if not callable(has_bookmark):
-            raise CapabilityUnavailableError(
-                "Hopper's public Python API does not expose hasBookmarkAtAddress"
-            )
+        has_bookmark = _bookmark_api(document, "hasBookmarkAtAddress")
         exists = has_bookmark(address)
         if name is None and exists:
             # Omission means preserve the existing bookmark and its name.
             return True
-        if not callable(getattr(document, "getBookmarkName", None)):
-            raise CapabilityUnavailableError(
-                "Hopper's public Python API does not expose getBookmarkName"
-            )
+        _bookmark_api(document, "getBookmarkName")
         if name == "" and exists:
-            rename = getattr(document, "renameBookmarkAtAddress", None)
-            if not callable(rename):
-                raise CapabilityUnavailableError(
-                    "Hopper's public Python API does not expose renameBookmarkAtAddress"
-                )
+            rename = _bookmark_api(document, "renameBookmarkAtAddress")
             rename(address, name)
         else:
-            setter = getattr(document, "setBookmarkAtAddress", None)
-            if not callable(setter):
-                raise CapabilityUnavailableError(
-                    "Hopper's public Python API does not expose setBookmarkAtAddress"
-                )
+            setter = _bookmark_api(document, "setBookmarkAtAddress")
             setter(address, name)
         if not has_bookmark(address):
             return False
@@ -1047,10 +1141,12 @@ def _dispatch(method, params):
         address = _address(document, params.get("address"))
         # Permit removing a legacy orphan bookmark, but do not report success
         # for an unmapped address with no bookmark to remove.
-        if not document.hasBookmarkAtAddress(address):
+        has_bookmark = _bookmark_api(document, "hasBookmarkAtAddress")
+        remove_bookmark = _bookmark_api(document, "removeBookmarkAtAddress")
+        if not has_bookmark(address):
             _segment(document, address)
-        document.removeBookmarkAtAddress(address)
-        return not document.hasBookmarkAtAddress(address)
+        remove_bookmark(address)
+        return not has_bookmark(address)
     raise InvalidRequestError("Unknown bridge method")
 
 
@@ -1060,8 +1156,22 @@ def _serve_connection(connection):
     should_stop = False
     try:
         while True:
-            line = file.readline()
+            # Bound the read itself. The payload budget excludes LF, so permit
+            # one additional byte for the delimiter while still refusing an
+            # oversized unterminated peer without waiting for EOF.
+            line = file.readline(MAX_REQUEST_BYTES + 1)
             if not line:
+                break
+            if not line.endswith(b"\n"):
+                message = (
+                    "Bridge request exceeds the %d-byte payload limit. %s"
+                    % (MAX_REQUEST_BYTES, _bridge_max_request_bytes_recovery())
+                    if len(line) > MAX_REQUEST_BYTES
+                    else "Incomplete bridge request frame"
+                )
+                _write_message(file, {"id": 0, "error": _safe_diagnostic(
+                    InvalidRequestError(message)
+                )})
                 break
             request_id = None
             authenticated = False

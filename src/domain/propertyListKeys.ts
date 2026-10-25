@@ -1,3 +1,4 @@
+import { copyPlistUidIdentity } from "./apple/plistUid.js";
 import { parseOpenStep } from "plist";
 
 import { decodeXmlPropertyList } from "./propertyListXml.js";
@@ -7,10 +8,7 @@ import {
 } from "./apple/plistNumbers.js";
 import { UnknownPlistScalar } from "./apple/unknownPlistScalar.js";
 
-import {
-  MAX_PLIST_DEPTH,
-  plistNestingLimitMessage,
-} from "./apple/plistValue.js";
+import { MAX_PLIST_DEPTH, PlistNestingLimitError } from "./apple/plistValue.js";
 
 /** The dictionary key REA results cannot carry: validation strips it. */
 const PROTOTYPE_KEY = "__proto__";
@@ -47,13 +45,15 @@ export const omitPrototypeKeys = (
       item instanceof UnknownPlistScalar
     )
       return item;
-    return Object.fromEntries(
+    const projected = Object.fromEntries(
       Object.entries(item).flatMap(([name, entry]) => {
         if (name !== PROTOTYPE_KEY) return [[name, strip(entry)]];
         omitted += 1;
         return [];
       }),
     );
+    copyPlistUidIdentity(item, projected);
+    return projected;
   };
   const stripped = strip(value);
   return { value: stripped, omittedPrototypeKeys: omitted };
@@ -63,22 +63,25 @@ export const omitPrototypeKeys = (
  * Decode one validated XML DOM into values and numeric source facts.
  * Entries keyed `__proto__` are omitted and counted at the same boundary.
  */
-export const parseXmlPropertyList = (text: string): ParsedPropertyList => {
+export const parseXmlPropertyList = (
+  text: string,
+  maximumDepth = MAX_PLIST_DEPTH,
+): ParsedPropertyList => {
   // Preserve the pinned decoder's existing OpenStep autodetection, also used
   // by app Info.plist resolution.
-  const first = text.trimStart()[0];
+  const first = text[skipOpenStepTrivia(text, 0)];
   if (first === "{" || first === "(") {
     // The pinned decoder assigns a `__proto__` key to the object prototype, so
     // the entry is gone before the decoded value can be counted. Count keys in
     // the source instead; the rebuild still drops any prototype it replaced.
-    const prototypeKeys = scanOpenStep(text);
+    const prototypeKeys = scanOpenStep(text, maximumDepth);
     return {
       value: omitPrototypeKeys(parseOpenStep(text)).value,
       numberLiterals: createPlistNumberCollector().result(true),
       omittedPrototypeKeys: prototypeKeys,
     };
   }
-  const decoded = decodeXmlPropertyList(text);
+  const decoded = decodeXmlPropertyList(text, maximumDepth);
   return {
     ...omitPrototypeKeys(decoded.value),
     numberLiterals: decoded.numberLiterals,
@@ -120,7 +123,7 @@ const admitsOpenStepCloser = (
  * Bound OpenStep value nesting before the pinned decoder recursively reads it,
  * and count the dictionary keys that decode to `__proto__`.
  */
-const scanOpenStep = (text: string): number => {
+const scanOpenStep = (text: string, maximumDepth: number): number => {
   let prototypeKeys = 0;
   const containers: OpenStepContainer[] = [];
   const completeValue = (): void => {
@@ -134,8 +137,8 @@ const scanOpenStep = (text: string): number => {
             : "separator";
   };
   const assertDepth = (): void => {
-    if (containers.length > MAX_PLIST_DEPTH)
-      throw new RangeError(plistNestingLimitMessage());
+    if (containers.length > maximumDepth)
+      throw new PlistNestingLimitError(maximumDepth);
   };
   let cursor = 0;
   while (cursor < text.length) {
@@ -210,12 +213,17 @@ const isOpenStepPrototypeKey = (token: string): boolean => {
 
 /** Skip grammar trivia without interpreting delimiter examples inside comments. */
 const skipOpenStepTrivia = (text: string, cursor: number): number => {
-  if (/\s/u.test(text[cursor] ?? "")) return cursor + 1;
-  if (!text.startsWith("//", cursor) && !text.startsWith("/*", cursor))
-    return cursor;
-  const line = text[cursor + 1] === "/";
-  const end = text.indexOf(line ? "\n" : "*/", cursor + 2);
-  return end === -1 ? text.length : end + (line ? 1 : 2);
+  while (cursor < text.length) {
+    if (/\s/u.test(text[cursor] ?? "")) {
+      cursor += 1;
+      continue;
+    }
+    if (!text.startsWith("//", cursor) && !text.startsWith("/*", cursor)) break;
+    const line = text[cursor + 1] === "/";
+    const end = text.indexOf(line ? "\n" : "*/", cursor + 2);
+    cursor = end === -1 ? text.length : end + (line ? 1 : 2);
+  }
+  return cursor;
 };
 
 /** Read the extent of one opaque scalar; the pinned decoder still owns its value. */

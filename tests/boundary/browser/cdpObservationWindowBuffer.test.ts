@@ -74,13 +74,35 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
         },
       },
       {
+        method: "Network.requestWillBeSent",
+        sessionId: command.sessionId,
+        params: {
+          requestId: "failure-before-window",
+          type: "Document",
+          frameId: "frame-main",
+          timestamp: 18,
+          request: { url: `${origin}/document`, method: "GET" },
+        },
+      },
+      {
         method: "Network.loadingFailed",
         sessionId: command.sessionId,
         params: {
           requestId: "failure-before-window",
           timestamp: 19,
-          frameId: "frame-main",
+          type: "Document",
           errorText: "net::ERR_CONNECTION_REFUSED",
+        },
+      },
+      {
+        method: "Network.requestWillBeSent",
+        sessionId: command.sessionId,
+        params: {
+          requestId: "failure-window",
+          type: "Document",
+          frameId: "frame-main",
+          timestamp: 21,
+          request: { url: `${origin}/document`, method: "GET" },
         },
       },
       {
@@ -89,7 +111,7 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
         params: {
           requestId: "failure-window",
           timestamp: 22,
-          frameId: "frame-main",
+          type: "Document",
           errorText: "net::ERR_CONNECTION_REFUSED",
         },
       },

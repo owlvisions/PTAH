@@ -1,10 +1,21 @@
-import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
+import {
+  artifactFileCancellationCause,
+  ArtifactFileCancelled,
+  ArtifactFileCleanupFailure,
+  withArtifactRegularFile,
+} from "../../artifacts/ArtifactFileOperation.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { OwnedDirectoryHandle } from "../../filesystem/OwnedDirectoryHandle.js";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, opendir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { TextDecoder } from "node:util";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
 import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -13,8 +24,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import {
   NonRegularFileReadError,
-  openRegularFile,
-  RegularFileAdmissionFailure,
+  sameRegularFileState,
 } from "../../filesystem/RegularFile.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
 
@@ -48,19 +58,70 @@ const scanRecoveryFile = async (
   maximum: number,
   consume: (chunk: Buffer) => void,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ) => {
-  // A FIFO without a writer must be rejected before it can block the open.
-  const handle = await openRegularFile(path, {
-    symlinks: "reject",
-    signal,
-  }).catch((cause: unknown) => {
-    // A descriptor whose close failed stays owned by its error, even when
-    // cancellation was also requested.
-    if (cause instanceof RegularFileAdmissionFailure) throw cause;
-    const cancellation = regularFileCancellation(cause);
-    if (cancellation !== undefined)
+  try {
+    return await withArtifactRegularFile(
+      path,
+      resources ?? new ArtifactResourceScope(),
+      signal,
+      async ({ handle, initial: before }) => {
+        const hash = createHash("sha256");
+        if (before.size > maximum)
+          throw new RecoveryFileSizeError(
+            `Expected a regular file no larger than ${String(maximum)} bytes: ${path}`,
+            maximum,
+          );
+        let bytes = 0;
+        for await (const raw of handle.createReadStream({ autoClose: false })) {
+          checkRecoveryCancellation(signal);
+          const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+          bytes += chunk.length;
+          if (bytes > maximum)
+            throw new RecoveryFileSizeError(
+              `File exceeds ${String(maximum)} bytes: ${path}`,
+              maximum,
+            );
+          hash.update(chunk);
+          consume(chunk);
+        }
+        const after = await handle.stat();
+        const current = await lstat(path);
+        if (
+          before.size !== bytes ||
+          [after, current].some((state) => !sameRegularFileState(before, state))
+        )
+          throw new AnalysisArtifactChangedError(
+            OPERATION,
+            path,
+            `File identity changed while reading: ${path}`,
+          );
+        return { sha256: hash.digest("hex"), bytes };
+      },
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactFileCleanupFailure) throw cause;
+    if (cause instanceof ArtifactFileCancelled)
       throw new AnalysisCancelledError(OPERATION, {
-        cause: cancellation.reason,
+        cause: cause.fileCancellation.reason,
+        partialObservation: fileSnapshotPartialObservationSchema.parse(
+          Object.assign({}, cause.fileCancellation.outcome.value, {
+            kind: "file-snapshot-hash",
+            path,
+          }),
+        ),
+      });
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      throw new AnalysisCancelledError(OPERATION, {
+        cause: artifactFileCancellationCause(cause),
+      });
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "EACCES" || cause.code === "EPERM")
+    )
+      throw new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
+        cause,
       });
     if (cause instanceof NonRegularFileReadError)
       throw new AnalysisOutputError(
@@ -68,45 +129,6 @@ const scanRecoveryFile = async (
         `Expected a regular file no larger than ${String(maximum)} bytes: ${path}`,
       );
     throw cause;
-  });
-  const hash = createHash("sha256");
-  try {
-    const before = await handle.stat();
-    if (before.size > maximum)
-      throw new RecoveryFileSizeError(
-        `Expected a regular file no larger than ${String(maximum)} bytes: ${path}`,
-        maximum,
-      );
-    let bytes = 0;
-    for await (const raw of handle.createReadStream({ autoClose: false })) {
-      checkRecoveryCancellation(signal);
-      const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-      bytes += chunk.length;
-      if (bytes > maximum)
-        throw new RecoveryFileSizeError(
-          `File exceeds ${String(maximum)} bytes: ${path}`,
-          maximum,
-        );
-      hash.update(chunk);
-      consume(chunk);
-    }
-    const after = await handle.stat();
-    const current = await lstat(path);
-    if (
-      before.dev !== current.dev ||
-      before.ino !== current.ino ||
-      before.size !== bytes ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs ||
-      before.size !== after.size
-    )
-      throw new AnalysisOutputError(
-        OPERATION,
-        `File identity changed while reading: ${path}`,
-      );
-    return { sha256: hash.digest("hex"), bytes };
-  } finally {
-    await handle.close();
   }
 };
 
@@ -115,13 +137,15 @@ export const fingerprintRecoveryFile = async (
   path: string,
   maximum: number,
   signal?: AbortSignal,
-) => scanRecoveryFile(path, maximum, () => {}, signal);
+  resources?: ArtifactResourceScope,
+) => scanRecoveryFile(path, maximum, () => {}, signal, resources);
 
 /** Read only a regular file through one handle with a bounded, stable identity. */
 export const readRecoveryFile = async (
   path: string,
   maximum: number,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<Buffer> => {
   const chunks: Buffer[] = [];
   const result = await scanRecoveryFile(
@@ -129,6 +153,7 @@ export const readRecoveryFile = async (
     maximum,
     (chunk) => chunks.push(chunk),
     signal,
+    resources,
   );
   return Buffer.concat(chunks, result.bytes);
 };
@@ -148,6 +173,7 @@ const snapshotRecoveryInput = async (
   relativePath: string,
   maximum: number,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<RecoveryInputSnapshot> => {
   if (!isAbsolute(path))
     throw recoveryInputFailure(
@@ -156,9 +182,15 @@ const snapshotRecoveryInput = async (
     );
   let bytes: Buffer;
   try {
-    bytes = await readRecoveryFile(path, maximum, signal);
+    bytes = await readRecoveryFile(path, maximum, signal, resources);
   } catch (cause: unknown) {
-    if (cause instanceof AnalysisCancelledError) throw cause;
+    if (
+      cause instanceof AnalysisCancelledError ||
+      cause instanceof AnalysisAccessDeniedError ||
+      cause instanceof AnalysisArtifactChangedError ||
+      cause instanceof ArtifactFileCleanupFailure
+    )
+      throw cause;
     // The operation-wide input allowance is a deterministic byte budget, not
     // a malformed argument; the same selection fails again unchanged.
     if (cause instanceof RecoveryFileSizeError)
@@ -194,8 +226,25 @@ const snapshotRecoveryInput = async (
       },
     ]);
   }
-  await mkdir(dirname(snapshotPath), { recursive: true, mode: 0o700 });
-  await writeFile(snapshotPath, bytes, { flag: "wx", mode: 0o600 });
+  try {
+    await mkdir(dirname(snapshotPath), { recursive: true, mode: 0o700 });
+    await writeFile(snapshotPath, bytes, { flag: "wx", mode: 0o600 });
+  } catch (cause: unknown) {
+    // The snapshot directory starts empty, so a collision means another
+    // selected input already took this name: the same file under another
+    // spelling, or a name that differs only in a way this filesystem ignores.
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "EEXIST" || cause.code === "ENOTDIR")
+    )
+      throw recoveryInputFailure(
+        "additional_paths",
+        `Selected input ${path} collides with another selected input at ${relativePath} on this filesystem. Select each file once.`,
+        cause,
+      );
+    throw cause;
+  }
   return {
     path,
     snapshot_path: snapshotPath,
@@ -210,6 +259,7 @@ export const snapshotRecoveryInputs = async (
   paths: readonly [string, ...string[]],
   directory: string,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<readonly [RecoveryInputSnapshot, ...RecoveryInputSnapshot[]]> => {
   let commonDirectory = dirname(resolve(paths[0]));
   for (const path of paths) {
@@ -260,6 +310,7 @@ export const snapshotRecoveryInputs = async (
       relativePath,
       remaining,
       signal,
+      resources,
     );
     snapshots.push(snapshot);
     remaining -= snapshot.bytes;
@@ -275,6 +326,7 @@ export const snapshotRecoveryInputs = async (
 export const inventoryRecoveryFiles = async (
   root: string,
   signal?: AbortSignal,
+  resources: ArtifactResourceScope = new ArtifactResourceScope(),
 ): Promise<
   readonly { relativePath: string; path: string; bytes: number }[]
 > => {
@@ -289,9 +341,15 @@ export const inventoryRecoveryFiles = async (
         `Unsafe staging directory: ${directory}`,
       );
     const handle = await opendir(directory);
+    const owner = new OwnedDirectoryHandle(handle);
     const children: string[] = [];
+    let outcome:
+      | { readonly kind: "completed" }
+      | { readonly kind: "failed"; readonly cause: unknown };
     try {
-      for await (const entry of handle) {
+      for (;;) {
+        const entry = await handle.read();
+        if (entry === null) break;
         checkRecoveryCancellation(signal);
         entries++;
         if (entries > RECOVERY_LIMITS.outputEntries)
@@ -304,9 +362,32 @@ export const inventoryRecoveryFiles = async (
           );
         children.push(entry.name);
       }
-    } finally {
-      await handle.close().catch(() => undefined);
+      outcome = { kind: "completed" };
+    } catch (cause: unknown) {
+      outcome = { kind: "failed", cause };
     }
+    const cleanup = await resources.release({
+      kind: "directory-handle",
+      handle: owner,
+      resource: directory,
+    });
+    if (cleanup.kind === "failed") {
+      const failure = resources.cleanupFailure(outcome, [cleanup]);
+      if (outcome.kind === "completed" && signal?.aborted === true)
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Recovery inventory cancelled during directory close",
+          {
+            cause: failure,
+            cancellation: { reason: signal.reason },
+            cleanup: failure.cleanup,
+            cleanupLeases: failure.cleanupLeases,
+          },
+        );
+      throw failure;
+    }
+    if (outcome.kind === "failed") throw outcome.cause;
+    checkRecoveryCancellation(signal);
     for (const name of children) {
       checkRecoveryCancellation(signal);
       const relativePath = prefix === "" ? name : `${prefix}/${name}`;
@@ -352,7 +433,8 @@ export const recoveryFailureMessage = (cause: unknown): string =>
 
 /** Cancellation remains distinct from malformed source or provider output. */
 export const checkRecoveryCancellation = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true) throw new AnalysisCancelledError(OPERATION);
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
 };
 
 /** Keep both tool invocations within one operation's execution budget. */

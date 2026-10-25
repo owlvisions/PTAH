@@ -48,7 +48,9 @@ or absence:
 - `compare_artifacts` compares inventory pages by occurrence path, content,
   metadata, and graph relations.
 - `compare_functions` compares explicit function Evidence, not fuzzy
-  whole-binary matches.
+  whole-binary matches. It rejects an `analyze_function` summary reply; pass
+  the summary's `parent_evidence_id` as a `retained-evidence` reference or
+  the complete dossier.
 - `compare_bundles` compares canonical bundle membership and unknown history.
 - `find_changed_behavior` combines existing comparisons; static differences
   remain candidates, not causal proof.
@@ -93,10 +95,32 @@ Use `view: {kind: "environment-state"}` with the manifest's `template_rules` to
 extract the data those reads observed instead: entity types and identity
 fields, entities with recorded values, documents, and per-tool render plans
 checked against the recordings. The state comes only from reads before the
-first related write; types, identity and list membership are inferences.
+first related write; types, identity and list membership are inferences. The
+view also gives each state-changing tool a write plan, served only when a later
+recorded read confirms its effect and none contradicts it.
 `rea environment-serve manifest.json --evidence capture.json` derives that
-state at startup, answers read tools from it and serves `data/reset`,
-`data/add` and `data/get` on `/agentenv`; write tools are not served. It
-replays the capture instead with `--replay-only` or when the state is
-unavailable (not derivable, or a catalog over the discovery budget), and its
-stopped document's `state` says which applied.
+state at startup, answers read tools from it, serves the write tools whose plan
+is served, each applying its effect to that state, and serves `data/reset`,
+`data/add` and `data/get` on `/agentenv`; other write tools are not served, and
+each plan states why in its `reason`. It replays the capture instead with
+`--replay-only` or when the state is unavailable (not derivable, or a catalog
+over the discovery budget), and its stopped document's `state` says which
+applied.
+Use `view: {kind: "environment-coverage"}` with the same rules to see what an
+environment built from a capture would serve: read tools answered from the
+state or replayed with their reason, and each write tool served or withheld
+with a hint about what to record next; it does not apply the serve-time
+catalog and state size checks. `rea environment-build <capture.har> <dir>`
+inspects, projects and exports in one step and prints the same coverage, or
+`null` when the bundle serves replay.
+
+For a PE/ELF export question, `inspect_native_exports` accepts `detail: "summary"`
+and retains the complete table. Query `inspect_analysis_view` with
+`view: {kind: "native-exports", collection: "exports", names: ["selected_name"],
+fields: ["name"], offset: 0, limit: 32}` and the reported parent Evidence ID.
+All same-name versions and aliases survive; use `source_index` with the parent ID
+for stable identity. `collection: "issues"` pages interpretation failures. Page
+coverage describes selected retained rows; `summary.coverage` or `exports.coverage`
+still describes the source table, so an empty partial page does not prove absence.
+CLI `inspect-native-exports --detail summary --evidence_output PATH` saves the
+complete bundle for later `inspect-analysis-view --evidence-bundle PATH` requests.

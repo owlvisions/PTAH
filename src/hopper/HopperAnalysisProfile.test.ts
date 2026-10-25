@@ -1,3 +1,5 @@
+import { machoTargetSelectionSchema } from "../domain/apple/machoTargetSelection.js";
+import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createHash } from "node:crypto";
 import { PassThrough } from "node:stream";
 import { writeFile } from "node:fs/promises";
@@ -96,6 +98,11 @@ it("prepares a verified thin arm64e slice for a FAT32 system container", async (
   if (!result.ok) throw new Error(result.error.message);
   const parameters = result.value.profile?.parameters;
   expect(parameters).toMatchObject({
+    function_coordinate_context: createFunctionCoordinateContext(
+      { loader_arguments: ["-l", "Mach-O", "--aarch64"] },
+      // The same typed selected-image fact is used by the producer and comparator.
+      machoTargetSelectionSchema.parse(parameters?.target_selection),
+    ),
     macho_container: "fat32",
     prepared_image: {
       method: "fat32_thin_slice",
@@ -157,6 +164,16 @@ it("commits a thin header selection only for derived Hopper loader arguments", a
     cpu_subtype: 0x80000002,
     container_table_sha256: null,
   });
+  expect(
+    resolved.value.profile?.parameters.function_coordinate_context,
+  ).toEqual(
+    createFunctionCoordinateContext(
+      { loader_arguments: ["-l", "Mach-O", "--aarch64"] },
+      machoTargetSelectionSchema.parse(
+        resolved.value.profile?.parameters.target_selection,
+      ),
+    ),
+  );
   expect(resolved.value.profile?.parameters.prepared_image).toEqual({
     method: "thin_verified_copy",
     byte_length: thin.length,
@@ -175,6 +192,9 @@ it("commits a thin header selection only for derived Hopper loader arguments", a
     "target_selection",
   );
 
+  expect(overridden.value.profile?.parameters).not.toHaveProperty(
+    "function_coordinate_context",
+  );
   const changedSameSize = Buffer.from(thin);
   changedSameSize.writeUInt8(
     changedSameSize.readUInt8(changedSameSize.length - 1) ^ 1,
@@ -327,4 +347,41 @@ it("keeps failed Mach-O preflight cleanup attached to the supplied profile owner
   allowClose = true;
   await owner.close();
   expect(resolved.error.cleanupIncomplete).toBe(false);
+});
+
+it("preserves launcher fingerprint filesystem failures instead of an absent profile", async () => {
+  const failure = Object.assign(
+    new Error("EACCES: fixture launcher read denied"),
+    { code: "EACCES" },
+  );
+  const stream = new PassThrough();
+  vi.mocked(createReadStream).mockReturnValueOnce(
+    stream as unknown as ReturnType<typeof createReadStream>,
+  );
+  const resolving = resolveHopperAnalysisProfile(
+    {
+      path: "/fixture/input",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "x86_64",
+      availableArchitectures: ["x86_64"],
+    },
+    {
+      launcherPath: "/fixture/hopper",
+      loaderArgsOverride: [],
+      provider: { id: "hopper", name: "Hopper", version: null },
+      resourceScope: inspectionResources.owner,
+    },
+  );
+  stream.destroy(failure);
+  const result = await resolving;
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ProviderAdapterError",
+      cause: failure,
+      diagnostics: { launcher_path: "/fixture/hopper", system_code: "EACCES" },
+    },
+  });
 });

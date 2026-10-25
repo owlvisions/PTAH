@@ -1,12 +1,14 @@
 import type { GpuLocation, GpuObject } from "../domain/gpu/gpuCodeObjects.js";
 import type { GpuSource } from "./GpuSource.js";
-export interface GpuPayloadTarget {
+import type { AmdGpuTargetIdentity } from "./AmdGpuTarget.js";
+export type GpuPayloadTarget = {
   readonly value: string | null;
-  readonly key: string | null;
-  readonly scope: "exact" | "cuda-base";
   readonly cudaHeader?: GpuObject["cuda_target_header"];
   readonly limitation?: string;
-}
+} & (
+  | { readonly scope: "exact" | "cuda-base"; readonly key: string | null }
+  | { readonly scope: "amdgpu"; readonly identity: AmdGpuTargetIdentity | null }
+);
 export const gpuLocation = (
   source: GpuSource,
   offset: number,

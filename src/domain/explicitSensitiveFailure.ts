@@ -93,6 +93,7 @@ const redactFailure = (
   };
   const context = {
     cause: error,
+    ...(error.limit === undefined ? {} : { limit: error.limit }),
     ...(error.cleanupPrimary === undefined
       ? {}
       : {
@@ -163,6 +164,9 @@ const redactFailure = (
         ...(issue.expected === undefined
           ? {}
           : { expected: visit(issue.expected) }),
+        ...(issue.observed === undefined
+          ? {}
+          : { observed: visit(issue.observed) }),
       })),
     );
   if (error instanceof AnalysisOutputError)

@@ -31,3 +31,14 @@ export const reconstructedPycHeader = (magic: Buffer): Buffer => {
   magic.copy(header, 0, 0, 4);
   return header;
 };
+
+/** TYPE_CODE with or without FLAG_REF; a pyc magic takes precedence. */
+export const isHeaderlessPythonCode = (prefix: Buffer): boolean =>
+  prefix.length === 4 &&
+  !(prefix[2] === 0x0d && prefix[3] === 0x0a) &&
+  (prefix[0] === 0x63 || prefix[0] === 0xe3);
+
+export interface CArchiveBytecodeHeader {
+  readonly header: Buffer | undefined;
+  readonly limitation: string | undefined;
+}

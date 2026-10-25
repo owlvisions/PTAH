@@ -5,14 +5,12 @@ import {
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
-import type {
-  AnalysisCapturedOutput,
-  AnalysisError,
-} from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   execFileBytes,
+  execFileFailureCapturedOutput,
   ExecFileOutputCancelledError,
   execFileOutputFailure,
   type ExecFileOutputFailure,
@@ -39,23 +37,6 @@ const LOCAL_FILE_DIAGNOSTICS = [
   ["reading", " locally failed:"],
 ] as const;
 
-/** Project parsed command-owner facts without reinterpreting the rejection. */
-export const adbCommandCapturedOutput = (
-  failure: ExecFileOutputFailure,
-): AnalysisCapturedOutput => ({
-  stdout: failure.stdout,
-  stderr: failure.stderr,
-  ...(failure.stdoutBytes === undefined
-    ? {}
-    : { stdout_bytes: failure.stdoutBytes }),
-  ...(failure.stderrBytes === undefined
-    ? {}
-    : { stderr_bytes: failure.stderrBytes }),
-  exit_code: typeof failure.code === "number" ? failure.code : null,
-  signal: failure.signal,
-  truncated: failure.outputTruncated,
-});
-
 /** Parsed command failure owned by this adapter, separate from its public tag. */
 class AdbProtocolError extends AnalysisProtocolError {
   constructor(
@@ -63,9 +44,18 @@ class AdbProtocolError extends AnalysisProtocolError {
     readonly commandFailure: ExecFileOutputFailure,
     cause: unknown,
   ) {
-    super(message, { cause });
+    super(message, {
+      cause,
+      capturedOutput: execFileFailureCapturedOutput(commandFailure),
+    });
   }
 }
+
+/** Return the retained process result only for command failures owned here. */
+export const adbCommandOutputFailure = (
+  error: AnalysisError,
+): ExecFileOutputFailure | undefined =>
+  error instanceof AdbProtocolError ? error.commandFailure : undefined;
 
 /** adb joins shell operands into a remote POSIX command; quote at that boundary. */
 const quoteShellOperand = (value: string): string =>
@@ -131,7 +121,7 @@ export const runAdbCapture = async (
           cause: cause.cause,
           ...(failure === undefined
             ? {}
-            : { capturedOutput: adbCommandCapturedOutput(failure) }),
+            : { capturedOutput: execFileFailureCapturedOutput(failure) }),
         }),
       );
     if (failure === undefined)
@@ -282,11 +272,36 @@ export const probeAdbPathExistence = async (
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
 ): Promise<Result<boolean, AnalysisError>> => {
+  return probeAdbPath(operation, serial, path, binary, limits, signal, "-e");
+};
+
+/** Only the clean true/false result of test -d establishes directory status. */
+export const probeAdbPathDirectory = async (
+  operation: string,
+  serial: string,
+  path: string,
+  binary: string,
+  limits: AdbRunLimits,
+  signal: AbortSignal | undefined,
+): Promise<Result<boolean, AnalysisError>> =>
+  probeAdbPath(operation, serial, path, binary, limits, signal, "-d");
+
+const probeAdbPath = async (
+  operation: string,
+  serial: string,
+  path: string,
+  binary: string,
+  limits: AdbRunLimits,
+  signal: AbortSignal | undefined,
+  predicate: "-d" | "-e",
+): Promise<Result<boolean, AnalysisError>> => {
+  const fact =
+    predicate === "-d" ? "destination_directory" : "destination_existence";
   const probed = await runAdbCapture(
     operation,
     { device: serial, path },
     binary,
-    adbArguments(serial, ["shell", "test", "-e", path]),
+    adbArguments(serial, ["shell", "test", predicate, path]),
     { ...limits, volatileOutput: true },
     signal,
   );
@@ -295,9 +310,9 @@ export const probeAdbPathExistence = async (
       return ok(true);
     return err(
       new AnalysisProtocolError(
-        "The ADB path existence probe returned unexpected output; destination existence is unknown",
+        `The ADB path ${predicate === "-d" ? "directory" : "existence"} probe returned unexpected output; destination status is unknown`,
         {
-          diagnostics: { destination_existence: "unknown" },
+          diagnostics: { [fact]: "unknown" },
           capturedOutput: {
             stdout: probed.value.stdout.toString("utf8"),
             stderr: probed.value.stderr.toString("utf8"),
@@ -327,8 +342,8 @@ export const probeAdbPathExistence = async (
   return err(
     new AnalysisProtocolError(error.message, {
       cause: error.cause,
-      diagnostics: { destination_existence: "unknown" },
-      capturedOutput: adbCommandCapturedOutput(failure),
+      diagnostics: { [fact]: "unknown" },
+      capturedOutput: execFileFailureCapturedOutput(failure),
     }),
   );
 };

@@ -8,9 +8,42 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect } from "vitest";
 
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
+import { digestCanonicalValue } from "../../src/domain/canonicalDigest.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { harmonyApplicationProjectionResultSchema } from "../../src/domain/harmony/harmonyApplication.js";
+import {
+  harmonyApplicationProjectionResultSchema,
+  type HarmonyApplicationProjectionResult,
+} from "../../src/domain/harmony/harmonyApplication.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
+
+const expectProjectionParity = (
+  graph: HarmonyApplicationProjectionResult,
+  cliReply: unknown,
+  sources: { readonly mcp: string; readonly cli: string },
+) => {
+  const cliGraph = harmonyApplicationProjectionResultSchema.parse(
+    parseEvidence(cliReply).normalized_result,
+  );
+  expect(graph.source_evidence_ids).toEqual([sources.mcp]);
+  expect(cliGraph.source_evidence_ids).toEqual([sources.cli]);
+  // Projection identity includes the selected source Evidence. Bind each
+  // adapter's identity before comparing its otherwise identical semantics.
+  for (const projection of [graph, cliGraph]) {
+    const { projection_id, ...content } = projection;
+    expect(projection_id).toBe(
+      `hmp_${digestCanonicalValue(content, "HarmonyOS application projection")}`,
+    );
+  }
+  const mappedGraph = {
+    ...graph,
+    source_evidence_ids: [sources.cli],
+  };
+  const { projection_id: _mcpProjectionId, ...mappedContent } = mappedGraph;
+  expect(cliGraph).toEqual({
+    ...mappedContent,
+    projection_id: `hmp_${digestCanonicalValue(mappedContent, "HarmonyOS application projection")}`,
+  });
+};
 
 test("preserves Harmony archive formats through the public CLI/MCP lifecycle", async ({
   cli,
@@ -138,11 +171,10 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
         environment,
       });
       expect(cliProjection.exitCode, cliProjection.stderr).toBe(0);
-      expect(
-        harmonyApplicationProjectionResultSchema.parse(
-          parseEvidence(cliProjection.json).normalized_result,
-        ),
-      ).toEqual(graph);
+      expectProjectionParity(graph, cliProjection.json, {
+        mcp: inventoryEvidence.evidence_id,
+        cli: cliEvidence.evidence_id,
+      });
       const closed = await client.callTool({
         name: "close_binary",
         arguments: {},
@@ -156,7 +188,7 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       expect(empty.structuredContent).toMatchObject({
         result: { open: false },
       });
-      expect(await readFile(path)).toEqual(Buffer.from(bytes));
+      expect(Buffer.compare(await readFile(path), Buffer.from(bytes))).toBe(0);
     }
   } finally {
     await client.close();

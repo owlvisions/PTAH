@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { HOPPER_DOWNLOAD_BYTES } from "./HopperDownload.js";
+import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 
 /** Vendor endpoints, shared by installation and existing-build inspection. */
 export const HOPPER_RELEASES_URL =
@@ -92,8 +93,7 @@ export const parseLinuxHopperRelease = (
     url.origin !== "https://www.hopperapp.com" ||
     url.username !== "" ||
     url.password !== "" ||
-    url.search !== "" ||
-    url.hash !== "" ||
+    urlDeclaresQueryOrFragment(url) ||
     !url.pathname.startsWith("/downloader/public/Hopper-") ||
     !url.pathname.endsWith(`-Linux-demo${suffixes[family]}`)
   )

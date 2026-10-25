@@ -5,6 +5,7 @@ import { parseBinary } from "plist";
 import { z } from "zod";
 
 import { preflightPropertyListDecode } from "../artifacts/apple/PropertyListDecodeBudget.js";
+import { decodeBinaryPlistUids } from "../artifacts/apple/PlistScalars.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import {
@@ -77,12 +78,16 @@ export const resolveAppBundleExecutable = async (
   try {
     const layout = await presentLayout(path);
     if (layout !== undefined)
-      return resolveLayoutExecutable(path, layout, fileSystem);
+      return await resolveLayoutExecutable(path, layout, fileSystem);
     const wrapped = await wrappedBundle(path);
     if (wrapped !== undefined) {
       const wrappedLayout = await presentLayout(wrapped);
       if (wrappedLayout !== undefined)
-        return resolveLayoutExecutable(wrapped, wrappedLayout, fileSystem);
+        return await resolveLayoutExecutable(
+          wrapped,
+          wrappedLayout,
+          fileSystem,
+        );
     }
   } catch (cause: unknown) {
     if (cause instanceof BinaryTargetError) return err(cause);
@@ -107,10 +112,12 @@ export const resolveAppBundleExecutable = async (
  * Resolve only the root and Info.plist layout needed for read-only resource
  * inspection. This intentionally does not require or guess CFBundleExecutable.
  */
-export const resolveAppBundleResourceRoot = async (
+export const findAppBundleResourceRoot = async (
   path: string,
   options: { readonly cwd?: string } = {},
-): Promise<Result<ResolvedAppBundleResourceRoot, BinaryTargetError>> => {
+): Promise<
+  Result<ResolvedAppBundleResourceRoot | undefined, BinaryTargetError>
+> => {
   const callerPath = absoluteCallerPath(
     path,
     options.cwd === undefined ? {} : { cwd: options.cwd },
@@ -124,13 +131,7 @@ export const resolveAppBundleResourceRoot = async (
         : undefined;
     const root = wrapped ?? canonicalInput;
     const layout = directLayout ?? (await presentLayout(root));
-    if (layout === undefined)
-      return err(
-        new BinaryTargetError(
-          callerPath,
-          `app resource root has no supported Info.plist layout: ${callerPath}`,
-        ),
-      );
+    if (layout === undefined) return ok(undefined);
     const canonicalPath = await realpath(root);
     return ok({
       callerPath,
@@ -140,12 +141,30 @@ export const resolveAppBundleResourceRoot = async (
       executableSha256: null,
     });
   } catch (cause: unknown) {
+    if (cause instanceof BinaryTargetError) return err(cause);
     return err(
       new BinaryTargetError(callerPath, errorReason(cause, callerPath), {
         cause,
       }),
     );
   }
+};
+
+/** Require a discovered bundle layout while preserving typed read failures. */
+export const resolveAppBundleResourceRoot = async (
+  path: string,
+  options: { readonly cwd?: string } = {},
+): Promise<Result<ResolvedAppBundleResourceRoot, BinaryTargetError>> => {
+  const found = await findAppBundleResourceRoot(path, options);
+  if (!found.ok) return found;
+  if (found.value !== undefined) return ok(found.value);
+  const callerPath = absoluteCallerPath(path, options);
+  return err(
+    new BinaryTargetError(
+      callerPath,
+      `app resource root has no supported Info.plist layout: ${callerPath}`,
+    ),
+  );
 };
 
 const presentLayout = async (
@@ -335,10 +354,14 @@ const executableEntrySchema = z.looseObject({ CFBundleExecutable: z.string() });
 
 /** Decode a binary plist in-process, so no host plist tool is required. */
 const parseBinaryPlistExecutable = (plist: Buffer): string => {
-  preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES);
+  const plan = preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES);
   // `plist` assigns a `__proto__` key as the prototype; copying drops it, as
   // the XML path does.
-  return executableName(omitPrototypeKeys(parseBinary(plist)).value);
+  return executableName(
+    omitPrototypeKeys(
+      parseBinary(decodeBinaryPlistUids(plist, plan.uidOffsetsToNormalize)),
+    ).value,
+  );
 };
 
 const isSafeExecutableName = (name: string): boolean =>

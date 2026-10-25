@@ -7,10 +7,7 @@ import {
   type DirectoryArtifactEntry,
 } from "./DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import {
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
-} from "./ArtifactFileOperation.js";
+import { artifactFileCompletion } from "./ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
@@ -33,7 +30,7 @@ import { projectDesktopApplication } from "../domain/desktopApplicationProjectio
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { err, ok } from "../domain/result.js";
 import { createDesktopApplicationEvidence } from "../domain/desktopApplicationEvidence.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -271,6 +268,12 @@ const scanDirectory = async (
           kind: omission.kind,
         });
       },
+      onCoverage: (coverage) => {
+        if (coverage.examinedEntries !== undefined)
+          entries = coverage.examinedEntries;
+        if (coverage.status !== "complete") partial = true;
+        limitations.push(...coverage.limitations);
+      },
     })) {
       entries++;
       abortIfNeeded(signal);
@@ -324,10 +327,7 @@ const scanDirectory = async (
         row.read_status = "unavailable";
         row.issues.push(cause.message);
         partial = true;
-        const completedRead =
-          cause instanceof ArtifactFileCancelled ||
-          (cause instanceof ArtifactFileCleanupFailure &&
-            cause.fileCleanupFailure.outcome.kind === "completed");
+        const completedRead = artifactFileCompletion(cause) !== undefined;
         if (completedRead)
           row.read_status = probeIssueCount === 0 ? "examined" : "partial";
         if (
@@ -476,6 +476,6 @@ const addPathFacts = (row: DesktopFile): string | null => {
 
 const probeSelected = (entry: DirectoryArtifactEntry): boolean =>
   entry.executable ||
-  /(?:\.(?:exe|dll|so|dylib|pck|utoc)|(?:^|\/)global-metadata\.dat|(?:^|\/)data\.win)$/iu.test(
+  /(?:\.(?:exe|dll|so|dylib|pck|utoc)|(?:^|\/)(?:global-metadata\.dat|data\.win|game\.(?:unx|ios)))$/iu.test(
     entry.path,
   );

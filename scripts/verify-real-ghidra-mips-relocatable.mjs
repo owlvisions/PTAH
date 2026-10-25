@@ -194,7 +194,7 @@ async function verifyFixture(byteOrder, kernelModule) {
       "Missing call to the external function",
     );
     const dossier = functionDossierSchema.parse(
-      await call("analyze_function", { procedure: entry }),
+      await call("analyze_function", { procedure: entry, detail: "complete" }),
     );
     for (const name of [
       "rea_mips_rel_leaf",
@@ -207,6 +207,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     const scaled = functionDossierSchema.parse(
       await call("analyze_function", {
         procedure: named("rea_mips_rel_scaled"),
+        detail: "complete",
       }),
     );
     assert.match(scaled.pseudocode, /\bpowf\(1\.5,2\.5\)/u);

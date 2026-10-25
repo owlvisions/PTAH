@@ -58,6 +58,7 @@ export const addJavaScriptHtmlRoles = (
         sourcePath: html.path,
         context: "html-reference",
         files: context.filesByPath,
+        jsonDocuments: context.analysis.jsonDocuments,
         directoryPaths: context.directoryPaths,
         unanalyzedFiles: context.unanalyzedFiles,
         htmlBaseHref: script.base_href,

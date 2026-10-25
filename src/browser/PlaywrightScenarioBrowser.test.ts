@@ -1109,6 +1109,7 @@ it("applies command_timeout_ms to the primary connect handshake when service wor
     reason: "timeout",
     userMessage: expect.stringContaining("50 ms command_timeout_ms"),
     remediationAction: expect.stringContaining("capture-browser-scenario JSON"),
+    diagnostics: { phase: "handshake", command_timeout_ms: 50 },
   });
   expect(
     (failure as { remediationAction?: string }).remediationAction,
@@ -1201,7 +1202,13 @@ it("closes a context that launches after its deadline before removing the profil
     () => undefined,
     (cause: unknown) => cause,
   );
-  expect(failure).toMatchObject({ reason: "timeout" });
+  expect(failure).toMatchObject({
+    reason: "timeout",
+    userMessage: expect.stringContaining(
+      "Browser launch and persistent-context startup",
+    ),
+    diagnostics: { phase: "launch", command_timeout_ms: 40 },
+  });
   expect(
     (failure as { remediationAction?: string }).remediationAction,
   ).not.toContain("--command-timeout-ms");
@@ -1321,4 +1328,139 @@ it("restores an environment mutation that completes after its deadline", async (
     "Emulation.clearDeviceMetricsOverride",
   );
   expect(browser.close).toHaveBeenCalledOnce();
+});
+
+it.each([
+  new Error("Timeout unrelated launch diagnostic"),
+  Object.assign(new Error("unrelated launch failure"), {
+    name: "TimeoutError",
+  }),
+])(
+  "preserves a launch failure without inferring a Playwright deadline: %s",
+  async (failure) => {
+    const scenario = browserScenarioSchema.parse({
+      browser: {
+        mode: "launch",
+        executable_path: process.execPath,
+        headless: true,
+      },
+      start_url: { url: "https://example.test" },
+      command_timeout_ms: 4_321,
+      actions: scenarioActions,
+    });
+    let profilePath: string | undefined;
+    await expect(
+      openPlaywrightScenarioBrowser(
+        scenario,
+        {},
+        {
+          launcher: {
+            connectOverCDP: async () => {
+              throw new Error("Unexpected connection");
+            },
+            launchPersistentContext: async (profile) => {
+              profilePath = profile;
+              throw failure;
+            },
+          },
+        },
+      ),
+    ).rejects.toBe(failure);
+    expect(profilePath).toBeDefined();
+    await expect(access(profilePath!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it("normalizes a genuine Playwright launch timeout and releases its profile", async () => {
+  const { errors } = await import("playwright-core");
+  const failure = new errors.TimeoutError("native launch deadline");
+  const scenario = browserScenarioSchema.parse({
+    browser: {
+      mode: "launch",
+      executable_path: process.execPath,
+      headless: true,
+    },
+    start_url: { url: "https://example.test" },
+    command_timeout_ms: 4_321,
+    actions: scenarioActions,
+  });
+  let profilePath: string | undefined;
+  await expect(
+    openPlaywrightScenarioBrowser(
+      scenario,
+      {},
+      {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (profile) => {
+            profilePath = profile;
+            throw failure;
+          },
+        },
+      },
+    ),
+  ).rejects.toMatchObject({
+    reason: "timeout",
+    userMessage: expect.stringContaining("4321 ms command_timeout_ms"),
+    cause: failure,
+    diagnostics: {
+      phase: "launch",
+      command_timeout_ms: 4_321,
+      producer_message: "native launch deadline",
+    },
+  });
+  expect(profilePath).toBeDefined();
+  await expect(access(profilePath!)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("keeps discovered transport credentials out of projected handshake timeouts", async () => {
+  const { errors } = await import("playwright-core");
+  // A credential-free HTTP endpoint may discover an authenticated WebSocket.
+  // Native Playwright timeout logs include the discovered transport spelling.
+  const native = new errors.TimeoutError(
+    "WebSocket timeout: ws://fixture-user:fixture-password@127.0.0.1:9222/devtools/browser/discovered",
+  );
+  const scenario = browserScenarioSchema.parse({
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "discovered-timeout",
+    },
+    start_url: { url: "https://example.test" },
+    environment: { service_workers: "allow" },
+    command_timeout_ms: 50,
+    actions: scenarioActions,
+  });
+  const failure = await openPlaywrightScenarioBrowser(
+    scenario,
+    {},
+    {
+      launcher: {
+        connectOverCDP: async () => {
+          throw native;
+        },
+        launchPersistentContext: async () => {
+          throw new Error("Unexpected launch");
+        },
+      },
+    },
+  ).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
+    reason: "timeout",
+    cause: native,
+    diagnostics: { phase: "handshake", command_timeout_ms: 50 },
+  });
+  if (!(failure instanceof AnalysisError))
+    throw new Error("Expected typed timeout");
+  expect(failure.diagnostics).not.toHaveProperty("producer_message");
+  const projected = JSON.stringify(projectAnalysisError(failure));
+  expect(projected).not.toContain("fixture-user");
+  expect(projected).not.toContain("fixture-password");
 });

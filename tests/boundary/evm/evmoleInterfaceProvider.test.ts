@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -377,6 +377,7 @@ it
     "success",
     "format",
     "unsupported",
+    "output-limit",
     "wrong-version",
     "wrong-decoded-carrier",
     "broken-reply",
@@ -409,11 +410,14 @@ it
           scenario === "broken-reply"
             ? "broken"
             : JSON.stringify(
-                ["format", "unsupported"].includes(scenario)
+                ["format", "unsupported", "output-limit"].includes(scenario)
                   ? {
                       ok: false,
                       reason: scenario,
-                      message: "Malformed hex carrier.",
+                      message:
+                        scenario === "output-limit"
+                          ? "Complete interface evidence exceeds the 16 MiB reply budget."
+                          : "Malformed hex carrier.",
                     }
                   : {
                       ok: true,
@@ -465,7 +469,9 @@ it
               ? "AnalysisInputError"
               : scenario === "unsupported"
                 ? "AnalysisUnsupportedTargetError"
-                : "AnalysisOutputError",
+                : scenario === "output-limit"
+                  ? "AnalysisResourceConstraintError"
+                  : "AnalysisOutputError",
         },
       });
     if (!result.ok)
@@ -478,6 +484,91 @@ it
           },
         },
       });
+    expect(await readFile(path, "utf8")).toBe("0x60006000f3\n");
+    await expect(access(ownedRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "retains raw metadata and ordered duplicate selector inferences after worker admission",
+  async () => {
+    const { path } = await fixture();
+    const raw = {
+      metadata: {
+        bytecodeOffset: 1,
+        cborLength: 2,
+        entries: [
+          {
+            key: "reported",
+            value: { type: "integer", value: 9007199254740992 },
+          },
+        ],
+      },
+      functions: [
+        { selector: "aabbccdd", bytecodeOffset: 1, dispatch: "abi" },
+        {
+          selector: "aabbccdd",
+          bytecodeOffset: 2,
+          dispatch: "fallback",
+          arguments: "uint256",
+          stateMutability: "view",
+        },
+      ],
+    };
+    let ownedRoot = "";
+    const provider = new EvmoleInterfaceProvider({}, async (spawn) => {
+      ownedRoot = spawn.cwd ?? "";
+      const requestPath = spawn.arguments.at(-1);
+      if (requestPath === undefined) throw new Error("request missing");
+      const request = requestSchema.parse(
+        JSON.parse(await readFile(requestPath, "utf8")),
+      );
+      const bytes = Buffer.from("60006000f3", "hex");
+      await writeFile(
+        request.reply_path,
+        JSON.stringify({
+          ok: true,
+          version: "0.9.3",
+          bytecode: {
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            bytes: bytes.length,
+            hex: bytes.toString("hex"),
+          },
+          raw,
+        }),
+      );
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        command: process.execPath,
+        arguments: ["-e", 'process.stderr.write("upstream warning")'],
+      });
+    });
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ path, encoding: "hex" });
+    if (!result.ok) throw result.error;
+    const report = evmInterfaceSchema.parse(result.value.result);
+    expect(report.functions).toEqual([
+      {
+        selector: "0xaabbccdd",
+        bytecode_offset: 1,
+        dispatch: "abi",
+        inferred_arguments: null,
+        inferred_state_mutability: null,
+      },
+      {
+        selector: "0xaabbccdd",
+        bytecode_offset: 2,
+        dispatch: "fallback",
+        inferred_arguments: "uint256",
+        inferred_state_mutability: "view",
+      },
+    ]);
+    expect(result.value.rawResult).toEqual(raw);
+    expect(report.diagnostics).toEqual({
+      stdout: "",
+      stderr: "upstream warning",
+      truncated: false,
+    });
     expect(await readFile(path, "utf8")).toBe("0x60006000f3\n");
     await expect(access(ownedRoot)).rejects.toMatchObject({ code: "ENOENT" });
   },
@@ -562,6 +653,41 @@ it.runIf(!unsupportedHost)(
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
   },
 );
+it.runIf(!unsupportedHost)(
+  "classifies selected carrier path-resolution errnos as invalid input",
+  async () => {
+    const { root } = await fixture();
+    const loop = join(root, "loop");
+    await symlink("loop", loop);
+    const cases = [
+      { code: "ELOOP", path: join(loop, "carrier.bin") },
+      { code: "ENAMETOOLONG", path: join(root, "x".repeat(256)) },
+    ] as const;
+    const service = new EvmInterfaceService(new EvmoleInterfaceProvider({}));
+    try {
+      for (const { code, path } of cases) {
+        const result = await service.inspect({ path, encoding: "raw" });
+        if (result.ok) throw new Error(`Expected ${code} path failure`);
+        expect(result.error._tag).toBe("AnalysisInputError");
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: expect.stringContaining(code),
+              },
+            ],
+          },
+        });
+      }
+    } finally {
+      await service.close();
+    }
+  },
+);
+
 it.runIf(unsupportedHost)(
   "reports unverified host coverage before acquiring a provider",
   async () => {
@@ -754,7 +880,10 @@ it
     const output = { stdout: "", stderr: "upstream warning", truncated: false };
     expect(projectAnalysisError(result.error)).toMatchObject({
       category:
-        scenario === "late-cancellation" ? "cancelled" : "execution_failure",
+        scenario === "late-cancellation" ||
+        scenario === "cancelled-cleanup-failure"
+          ? "cancelled"
+          : "execution_failure",
       details:
         scenario === "late-cancellation"
           ? { captured_output: output }
@@ -765,7 +894,7 @@ it
     expect(evidence.subject?.digest.sha256).toBe(
       createHash("sha256").update(source).digest("hex"),
     );
-    expect(await readFile(path)).toEqual(source);
+    expect(Buffer.compare(await readFile(path), source)).toBe(0);
     expect(evidence).toMatchObject({
       operation: "inspect_evm_interface",
       parameters: { path, encoding: "hex" },

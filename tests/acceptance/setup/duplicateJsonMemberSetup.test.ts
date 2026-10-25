@@ -275,10 +275,7 @@ cliTest(
       peer: { command: ["/usr/bin/true"] },
       rea: {
         type: "local",
-        command:
-          process.platform === "win32"
-            ? [process.execPath, launcher, "mcp"]
-            : [launcher, "mcp"],
+        command: [process.execPath, launcher, "mcp"],
       },
     });
   },

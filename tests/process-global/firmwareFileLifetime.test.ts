@@ -443,7 +443,10 @@ it.each([null, "caller cancellation", new Error("caller cancellation")])(
       engine: "binwalk",
       operation: "inspect_firmware_regions",
     });
-    expect(error).toBeInstanceOf(AnalysisCancelledError);
+    expect(
+      error,
+      error instanceof Error ? error.stack : String(error),
+    ).toBeInstanceOf(AnalysisCancelledError);
     expect(error.cause).toBe(reason);
     await files.close();
   },
@@ -729,14 +732,17 @@ it("preserves primitive cancellation before publication commit and rolls back th
   const fixture = await publication(controller.signal);
   const create = SafeOutputTree.create;
   vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {
-    const tree = await create(...args);
+    const tree = await create.call(SafeOutputTree, ...args);
     controller.abort(null);
     return tree;
   });
   const error = await publishFirmwareExtraction(fixture.context).catch(
     (cause: unknown) => cause,
   );
-  expect(error).toBeInstanceOf(AnalysisCancelledError);
+  expect(
+    error,
+    error instanceof Error ? error.stack : String(error),
+  ).toBeInstanceOf(AnalysisCancelledError);
   if (error instanceof AnalysisCancelledError) expect(error.cause).toBeNull();
   await expect(access(fixture.context.outputDirectory)).rejects.toMatchObject({
     code: "ENOENT",
@@ -765,8 +771,10 @@ it.each(["caller", "deadline"])(
         : undefined,
     );
     const create = SafeOutputTree.create;
+    let outputTree: SafeOutputTree | undefined;
     vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {
-      const tree = await create(...args);
+      const tree = await create.call(SafeOutputTree, ...args);
+      outputTree = tree;
       fault.selected = tree.outputRoot;
       fault.onSync = () => controller.abort(reason);
       return tree;
@@ -774,9 +782,13 @@ it.each(["caller", "deadline"])(
     const error = await publishFirmwareExtraction(fixture.context).catch(
       (cause: unknown) => cause,
     );
+    expect(outputTree?.published).toBe(false);
     if (!(error instanceof AnalysisError))
       throw new Error("Expected typed tree failure");
-    expect(error.cleanupIncomplete).toBe(true);
+    expect(
+      error.cleanupIncomplete,
+      JSON.stringify(projectAnalysisError(error)),
+    ).toBe(true);
     expect(error.diagnostics?.primary_error).toMatchObject({
       code: "cleanup_incomplete",
       details: {

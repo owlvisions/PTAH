@@ -9,6 +9,10 @@ import {
   compactToolAvailability,
 } from "../application/CapabilityInventory.js";
 import { toolContract } from "../contracts/toolContracts.js";
+import {
+  BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
+  type BinarySessionDetail,
+} from "../contracts/sessionStatusContract.js";
 import type {
   ClientFeatureAvailability,
   ToolAvailability,
@@ -95,7 +99,10 @@ export const registerSessionStatusTool = (
           options,
           context.mcpReq.signal,
         );
-        status = await session.status({ signal: context.mcpReq.signal });
+        status = await session.status({
+          signal: context.mcpReq.signal,
+          detail: input.detail,
+        });
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) throw cause;
         return server.delivery.toCallToolResult(err(cause), contract);
@@ -143,6 +150,7 @@ export const registerSessionStatusTool = (
         {
           ok: true,
           value: projectSessionStatus({
+            detail: input.detail,
             status: statusObject,
             toolAvailability,
             serverIdentity,
@@ -156,6 +164,7 @@ export const registerSessionStatusTool = (
 };
 
 const projectSessionStatus = (options: {
+  readonly detail: BinarySessionDetail;
   readonly status: Readonly<
     Record<string, import("../domain/jsonValue.js").JsonValue>
   >;
@@ -165,7 +174,14 @@ const projectSessionStatus = (options: {
 }) =>
   jsonObjectSchema.parse({
     ...options.status,
-    tool_availability: compactToolAvailability(options.toolAvailability),
+    detail: options.detail,
+    ...(options.detail === "summary"
+      ? { omitted_fields: [...BINARY_SESSION_SUMMARY_OMITTED_FIELDS] }
+      : {}),
+    tool_availability: compactToolAvailability(
+      options.toolAvailability,
+      options.detail,
+    ),
     client_features: options.clientFeatures,
     server_identity: options.serverIdentity,
   });

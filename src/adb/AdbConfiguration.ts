@@ -7,6 +7,7 @@ import { isAbsolute } from "node:path";
 
 import {
   execFileOutput,
+  execFileFailureCapturedOutput,
   ExecFileOutputCancelledError,
   execFileOutputFailure,
 } from "../process/ExecFileOutput.js";
@@ -14,7 +15,6 @@ import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { adbCommandCapturedOutput } from "./AdbCommand.js";
 
 /** Environment key selecting the caller's adb binary. */
 export const ADB_BINARY_ENV = "REA_ADB_PATH";
@@ -51,6 +51,7 @@ export const resolveAdbBinary = (
 export type AdbConfigurationFailureCode =
   | "not_absolute"
   | "binary_missing"
+  | "binary_not_executable"
   | "version_unresolved";
 
 export class AdbConfigurationFailure extends Error {
@@ -127,7 +128,7 @@ export const inspectAdbClient = async (
         cause: cause.cause,
         ...(failure === undefined
           ? {}
-          : { capturedOutput: adbCommandCapturedOutput(failure) }),
+          : { capturedOutput: execFileFailureCapturedOutput(failure) }),
       });
     const diagnostics = {
       selected_binary: selection.binary,
@@ -139,7 +140,7 @@ export const inspectAdbClient = async (
       diagnostics,
       ...(failure === undefined
         ? {}
-        : { capturedOutput: adbCommandCapturedOutput(failure) }),
+        : { capturedOutput: execFileFailureCapturedOutput(failure) }),
     };
     if (failure?.outputTruncated === true) {
       throw new AnalysisResourceConstraintError(
@@ -173,6 +174,18 @@ export const inspectAdbClient = async (
         },
         { cause },
       );
+    if (failure?.code === "EACCES" || failure?.code === "EPERM")
+      throw new AdbConfigurationFailure(
+        "binary_not_executable",
+        `Execution of the selected adb binary was denied (${failure.code}): ${selection.binary}`,
+        {
+          selected_binary: selection.binary,
+          path_source: selection.pathSource,
+          filesystem_error: failure.code,
+          remediation: `Check file type and execute permission for ${ADB_BINARY_ENV} or select an executable adb binary`,
+        },
+        { cause },
+      );
     throw new AdbConfigurationFailure(
       "version_unresolved",
       "The selected adb binary did not report a usable version",
@@ -196,7 +209,7 @@ const rejectionCodeOf = (
 ): ProviderRejectionCode =>
   code === "binary_missing"
     ? "executable_missing"
-    : code === "not_absolute"
+    : code === "not_absolute" || code === "binary_not_executable"
       ? "not_configured"
       : "version_unresolved";
 

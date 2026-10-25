@@ -11,7 +11,7 @@ import { compareProcessEvidenceFiles } from "../../../src/application/process/Pr
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { processTraceCaptureFixture } from "../../../src/domain/process/processCapture.fixture.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -25,7 +25,7 @@ const captureEvidence = (side: "left" | "right") =>
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
-    result: jsonValueSchema.parse(capture),
+    result: capture,
     confidence: "observed",
     authority: "controlled-replay",
     locations: [{ kind: "artifact-path", path: `/fixture/${side}` }],

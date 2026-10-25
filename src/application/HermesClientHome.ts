@@ -168,7 +168,9 @@ export const resolveHermesClientHome = (
       join(stickyRoot, "active_profile"),
       `Invalid saved Hermes profile ${JSON.stringify(name)}. Run 'hermes profile use default' or repair active_profile.`,
     );
-  const selected = join(root, "profiles", canonical);
+  // Hermes resolves both sticky selection and named profiles from its default
+  // root (including overrides beneath the native home), never mixed roots.
+  const selected = join(stickyRoot, "profiles", canonical);
   if (!liveProfile(selected))
     throw new HermesClientPathError(
       selected,

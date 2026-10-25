@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, rename, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 
 import { z } from "zod";
 import {
@@ -12,7 +12,7 @@ import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
 } from "../artifacts/ArtifactReader.js";
-import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   hashStableFile,
@@ -29,10 +29,8 @@ import { verifyDetachedPgpSignature } from "../process/DetachedPgpSignature.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
-import {
-  acquireHopperReleaseCacheLease,
-  type HopperTargetLease,
-} from "../process/HopperLease.js";
+import { acquireHopperReleaseCacheLease } from "../process/HopperLease.js";
+import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   downloadHopperPackage,
   HOPPER_DOWNLOAD_BYTES,
@@ -47,10 +45,7 @@ import {
   type LinuxHopperRelease,
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
-import {
-  RegularFileCleanupFailure as RegularFileReadCleanupFailure,
-  withRegularFile,
-} from "./RegularFileRead.js";
+import { withRegularFile } from "./RegularFileRead.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */
 const RELEASE_METADATA_BYTES = 1024 * 1024;
@@ -96,38 +91,6 @@ const retainProof = <T>(cache: Map<string, T>, key: string, proof: T): void => {
   cache.set(key, proof);
   const oldest = cache.keys().next().value;
   if (cache.size > 8 && oldest !== undefined) cache.delete(oldest);
-};
-
-/** One owner for the selected cache location, shared with the approval plan. */
-export const linuxHopperReleaseCacheDirectory = (
-  environment: Readonly<NodeJS.ProcessEnv>,
-): Result<string, HopperReleaseError> => {
-  try {
-    const supplied = environment.XDG_CACHE_HOME || undefined;
-    if (supplied !== undefined && !isAbsolute(supplied))
-      return err(
-        new HopperReleaseError(
-          "verification_unavailable",
-          "XDG_CACHE_HOME must be an absolute filesystem path.",
-        ),
-      );
-    return ok(
-      join(
-        supplied ??
-          join(homeDirectoryFromEnvironment(environment, "linux"), ".cache"),
-        "rea",
-        "hopper-releases",
-      ),
-    );
-  } catch (cause: unknown) {
-    return err(
-      new HopperReleaseError(
-        "verification_unavailable",
-        "The Hopper release cache location could not be resolved.",
-        { cause },
-      ),
-    );
-  }
 };
 
 /** Authenticated package facts shared by setup, doctor, and the launch boundary. */
@@ -447,7 +410,7 @@ export class LinuxHopperPublisher {
   async #acquireCacheLease(
     digest: string,
     signal?: AbortSignal,
-  ): Promise<HopperTargetLease> {
+  ): Promise<OwnedLease> {
     const deadline = performance.now() + 120_000;
     const runId = randomUUID();
     let delay = 25;
@@ -809,7 +772,7 @@ export class LinuxHopperPublisher {
           { cause },
         );
       }
-      return this.#verifyArchive(
+      return await this.#verifyArchive(
         parsed.data.family,
         release.value,
         join(root, "archive"),
@@ -940,7 +903,7 @@ export class LinuxHopperPublisher {
     ).catch((cause: unknown) => {
       if (
         resources === this.#resources &&
-        cause instanceof RegularFileReadCleanupFailure
+        cause instanceof RegularFileCleanupFailure
       )
         pendingCleanup.add(resources);
       throw cause;

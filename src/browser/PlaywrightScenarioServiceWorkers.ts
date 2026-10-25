@@ -8,16 +8,14 @@ import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   selectedCdpCommandTimeoutMs,
 } from "../domain/browserDeadline.js";
-import {
-  AnalysisCancelledError,
-  AnalysisTimeoutError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import { CdpConnection } from "./CdpConnection.js";
+import { CdpTargetSessionOwner } from "./CdpTargetSessionOwner.js";
 import { withCdpDiscoveryDeadline } from "./CdpEndpoint.js";
 import {
   attachCdpTargetSession,
+  failCdpOpenAfterCleanup,
   openCdpEndpoint,
   type CdpTargetSession,
 } from "./CdpTargetSession.js";
@@ -44,47 +42,6 @@ const serviceWorkerPolicyCheckTimeout = (): AnalysisTimeoutError => {
   });
 };
 
-const withServiceWorkerPolicyDeadline = <Value>(
-  work: () => Promise<Value>,
-  signal: AbortSignal,
-): Promise<Value> => {
-  if (signal.aborted)
-    return Promise.reject(
-      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-    );
-  return new Promise<Value>((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      fail(serviceWorkerPolicyCheckTimeout());
-    }, SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS);
-    timer.unref();
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", onAbort);
-    };
-    const succeed = (value: Value): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(value);
-    };
-    const fail = (error: unknown): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    };
-    const onAbort = (): void => {
-      fail(new AnalysisCancelledError(OPERATION, { cause: signal.reason }));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    if (signal.aborted) {
-      onAbort();
-      return;
-    }
-    void work().then(succeed, fail);
-  });
-};
 const scriptResponse = z.object({ identifier: z.string() });
 const restorationResponse = z.object({
   result: z.object({ value: z.literal("policy_owned").nullable() }),
@@ -104,6 +61,7 @@ type PolicyTarget = {
 
 /** Owns only its frame scripts and registration wrappers, never caller-owned workers. */
 export class PlaywrightScenarioServiceWorkers {
+  readonly #transportOwner = new CdpTargetSessionOwner();
   private readonly marker = JSON.stringify(
     `rea-service-workers-${randomUUID()}`,
   );
@@ -136,9 +94,11 @@ export class PlaywrightScenarioServiceWorkers {
   }
 
   private async install(): Promise<void> {
-    await withServiceWorkerPolicyDeadline(
+    await withPlaywrightExecutionBoundary(
       () => this.assertBlocked(),
+      SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS,
       this.#setup.signal,
+      serviceWorkerPolicyCheckTimeout,
     );
     // Discovery stays on its fixed deadline. The following handshake and
     // Target.attachToTarget each use command_timeout_ms.
@@ -151,7 +111,7 @@ export class PlaywrightScenarioServiceWorkers {
           OPERATION,
           signal,
           undefined,
-          undefined,
+          this.#transportOwner,
           this.commandTimeoutMs,
         ),
     );
@@ -159,25 +119,46 @@ export class PlaywrightScenarioServiceWorkers {
       ({ id }) => id === this.targetId,
     );
     if (target === undefined) {
-      await opened.connection?.close();
-      throw new BrowserObservationError(OPERATION, "target_not_found");
+      const failure = new BrowserObservationError(
+        OPERATION,
+        "target_not_found",
+      );
+      if (opened.connection !== undefined)
+        return await failCdpOpenAfterCleanup(
+          opened.connection,
+          failure,
+          OPERATION,
+          this.#transportOwner,
+        );
+      throw failure;
     }
     const transport =
       opened.connection ??
-      (await CdpConnection.connect(
+      (await this.#transportOwner.connect(
         opened.discovery.webSocket.url,
         OPERATION,
-        this.#setup.signal,
+        { signal: this.#setup.signal },
+        target.id,
         { commandTimeoutMs: this.commandTimeoutMs },
       ));
     if (this.#closed)
       transport.beginCleanupGrace(POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS);
-    this.#session = await attachCdpTargetSession(
-      transport,
-      target,
-      OPERATION,
-      this.#setup.signal,
-    );
+    try {
+      this.#session = await attachCdpTargetSession(
+        transport,
+        target,
+        OPERATION,
+        this.#setup.signal,
+        this.#transportOwner,
+      );
+    } catch (cause: unknown) {
+      return await failCdpOpenAfterCleanup(
+        transport,
+        cause,
+        OPERATION,
+        this.#transportOwner,
+      );
+    }
     const connection = this.#session.connection;
     this.#removeListener = connection.onEvent((event) => {
       if (
@@ -451,12 +432,17 @@ export class PlaywrightScenarioServiceWorkers {
 
   private async restore(): Promise<void> {
     await this.#initialization?.catch(() => undefined);
+    await this.#transportOwner.retryPending();
     this.#session?.connection.beginCleanupGrace(
       POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS,
     );
     if (this.#released) return;
     const session = this.#session;
-    if (session === undefined) return;
+    if (session === undefined) {
+      await this.#transportOwner.close();
+      this.#released = true;
+      return;
+    }
     if (!this.page.isClosed()) {
       const mainFrame = this.page.mainFrame();
       // This owner exists even with empty storage seeds. Stopped navigation is
@@ -511,7 +497,8 @@ export class PlaywrightScenarioServiceWorkers {
       this.#detached = true;
     }
     this.#removeListener?.();
-    await session.connection.close();
+    await this.#transportOwner.finish(session.connection);
+    await this.#transportOwner.close();
     this.#released = true;
   }
 }

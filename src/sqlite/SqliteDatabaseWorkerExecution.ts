@@ -1,6 +1,5 @@
 import {
   bindArtifactFileCleanup,
-  ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { randomUUID } from "node:crypto";
@@ -47,6 +46,7 @@ const replySchema = z.union([
       "format",
       "selection",
       "column-selection",
+      "row-evaluation",
       "unsupported",
       "unavailable",
       "output-limit",
@@ -59,6 +59,13 @@ const replySchema = z.union([
     reason: z.literal("column-evaluation"),
     message: z.string(),
     readable_columns: z.array(z.string()),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    reason: z.literal("column-limit"),
+    message: z.string(),
+    selected_columns: z.int().positive(),
+    engine_column_limit: z.int().positive(),
   }),
 ]);
 /** Replaceable launcher retains the shared owned-process supervision boundary. */
@@ -103,6 +110,19 @@ const rejectedReply = (
       },
     );
   }
+  if (reply.reason === "row-evaluation")
+    return new AnalysisCapabilityUnavailableError(
+      "sqlite",
+      operation,
+      reply.message,
+      {
+        capturedOutput,
+        userMessage: reply.message,
+        diagnostics: { selected_path: selectedPath },
+        remediationAction:
+          "SQLite read the selected schema but could not prepare or evaluate the requested rows. REA's private connection loads no extensions, application functions or application collations. The SQLite reason may identify a missing dependency; an unidentified query failure does not establish database corruption. Omit table and use schema_scope: database to inspect stored declarations. Obtaining the requested values may require the application's supported consistent export. Do not repeat the unchanged row request.",
+      },
+    );
   if (reply.reason === "memory")
     return new AnalysisResourceConstraintError(
       operation,
@@ -111,7 +131,7 @@ const rejectedReply = (
       {
         javascript_heap_bytes: 256 * 1024 * 1024,
       },
-      { capturedOutput },
+      { capturedOutput, diagnostics: { selected_path: selectedPath } },
     );
   if (reply.reason === "output-limit")
     return new AnalysisResourceConstraintError(
@@ -124,9 +144,26 @@ const rejectedReply = (
       },
       {
         capturedOutput,
+        diagnostics: { selected_path: selectedPath },
         retryable: false,
         remediationAction:
           "The SQLite value/record and worker JSON reply allowances are fixed at 16 MiB; worker_timeout_ms and client deadlines do not raise them. If it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database. This worker refusal leaves no completed Evidence to retrieve. Do not repeat the unchanged request or truncate required database bytes.",
+      },
+    );
+  if (reply.reason === "column-limit")
+    return new AnalysisResourceConstraintError(
+      operation,
+      "capacity",
+      reply.message,
+      {
+        selected_result_columns: reply.selected_columns,
+        engine_result_column_limit: reply.engine_column_limit,
+      },
+      {
+        capturedOutput,
+        diagnostics: { selected_path: selectedPath },
+        retryable: false,
+        remediationAction: `The selected database is readable; only the combined projection exceeded this connection's native result-column limit. Request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database. The limit belongs to SQLite's connection, so worker_timeout_ms and client deadlines do not raise it. Do not repeat the unchanged request.`,
       },
     );
   const argument = rejectedArgument[reply.reason];
@@ -219,17 +256,11 @@ export const executeSqliteDatabaseWorker = async (request: {
     };
     if (
       cause instanceof ArtifactReaderFailure &&
-      (cause.reason === "cancelled" ||
-        (cause instanceof ArtifactFileCleanupFailure &&
-          cause.fileCleanupFailure.outcome.kind === "completed" &&
-          request.signal?.aborted))
+      cause.reason === "cancelled"
     ) {
       const error = new AnalysisCancelledError(operation, {
         ...options,
-        cause:
-          cause.reason === "cancelled"
-            ? artifactFileCancellationCause(cause)
-            : request.signal?.reason,
+        cause: artifactFileCancellationCause(cause),
       });
       bindArtifactFileCleanup(cause, error);
       throw error;

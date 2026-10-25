@@ -512,7 +512,7 @@ const activeTargetReasons = async (
 const assertLiveIdentity = async (client: Client): Promise<void> => {
   const identity = await client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   const status = z
     .object({ result: sessionProvider })

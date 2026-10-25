@@ -1,4 +1,8 @@
 import {
+  JsonSchemaReferences,
+  type JsonSchemaScope,
+} from "./jsonSchemaReferences.js";
+import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
@@ -24,7 +28,20 @@ const jsonValueTypes = [
 ];
 // An empty item schema accepts every JSON value, including arbitrarily nested
 // arrays, while satisfying clients that require `items` for array types.
+// Gemini rejects `items` beside a type list; the compact catalog test fails
+// if a tool would advertise this presentation.
 const jsonValueSchema = () => ({ type: [...jsonValueTypes], items: {} });
+
+const enumValueTypes = (values: readonly unknown[]): readonly string[] => [
+  ...new Set(
+    values.map((value) => {
+      if (value === null) return "null";
+      if (Array.isArray(value)) return "array";
+      if (typeof value === "object") return "object";
+      return typeof value;
+    }),
+  ),
+];
 
 export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
 
@@ -124,69 +141,119 @@ const stripChildAnnotations = (child: unknown): unknown => {
   return kept;
 };
 
-const resolveLocalReference = (
-  root: Record<string, unknown>,
-  reference: string,
-): unknown => {
-  if (reference === "#") return root;
-  if (!reference.startsWith("#/")) return undefined;
-  let value: unknown = root;
-  for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (!isSchemaObject(value) || !Object.hasOwn(value, key)) return undefined;
-    value = value[key];
-  }
-  return value;
-};
-
 /** Stop serialization at the budget before allocating an expanded schema. */
 const inlineWithinBudget = (
   root: Record<string, unknown>,
   budgetBytes: number,
 ): Record<string, unknown> | undefined => {
+  const references = new JsonSchemaReferences(root);
+  const identity = Object.fromEntries(
+    ["$id", "$anchor", "$schema"].flatMap((key) =>
+      Object.hasOwn(root, key) ? [[key, root[key]]] : [],
+    ),
+  );
+  const identityBytes =
+    Object.keys(identity).length === 0 ? 0 : serializedBytes(identity) - 2;
+  if (identityBytes > budgetBytes) return undefined;
   let resolved = true;
   function* serialize(
     value: unknown,
     position: "schema" | "map" | "data",
-    active: ReadonlySet<string>,
+    scope: JsonSchemaScope | undefined,
+    active: ReadonlyMap<JsonSchemaScope, ReadonlySet<string>>,
   ): Generator<string> {
     if (Array.isArray(value)) {
       yield "[";
       for (const [index, child] of value.entries()) {
         if (index > 0) yield ",";
-        yield* serialize(child, position, active);
+        yield* serialize(child, position, scope, active);
       }
       yield "]";
     } else if (isSchemaObject(value)) {
+      const currentScope =
+        position === "schema" ? references.enter(value, scope) : scope;
+      if (
+        position === "schema" &&
+        (currentScope === undefined ||
+          currentScope.dialect !== references.rootScope.dialect ||
+          [
+            "$dynamicRef",
+            "$recursiveRef",
+            "$dynamicAnchor",
+            "$recursiveAnchor",
+          ].some((key) => Object.hasOwn(value, key)))
+      ) {
+        resolved = false;
+        return;
+      }
       if (position === "schema" && Object.keys(value).length === 0) {
         yield JSON.stringify(jsonValueSchema());
         return;
       }
       if (position === "schema" && typeof value.$ref === "string") {
-        const target = resolveLocalReference(root, value.$ref);
-        if (target === undefined || active.has(value.$ref)) {
+        const target = references.resolve(currentScope, value.$ref);
+        if (
+          target.kind !== "target" ||
+          currentScope === undefined ||
+          active.get(currentScope)?.has(value.$ref)
+        ) {
           resolved = false;
           return;
         }
-        const { $ref, ...siblings } = value;
-        // Reference siblings are independent constraints in draft 2020-12.
-        // Merging their keys into the target would overwrite validation rules.
-        yield* serialize(
-          Object.keys(siblings).length === 0
-            ? target
-            : { allOf: [target, siblings] },
-          "schema",
-          new Set([...active, $ref]),
+        const {
+          $ref,
+          $id: _id,
+          $anchor: _anchor,
+          $schema: _schema,
+          ...siblings
+        } = value;
+        const nextActive = new Map(active);
+        nextActive.set(
+          currentScope,
+          new Set([...(active.get(currentScope) ?? []), $ref]),
         );
+        // Draft 7 ignores siblings, while clients such as Ajv also apply them.
+        // Do not label either interpretation an equivalent inline advertisement.
+        if (
+          currentScope.dialect === "draft-07" &&
+          Object.keys(siblings).length > 0
+        ) {
+          resolved = false;
+          return;
+        }
+        const expanded =
+          Object.keys(siblings).length === 0
+            ? target.value
+            : { allOf: [target.value, siblings] };
+        yield* serialize(expanded, "schema", currentScope, nextActive);
         return;
       }
       yield "{";
       let first = true;
       for (const [key, child] of Object.entries(value)) {
-        if (position === "schema" && definitionKeys.has(key)) continue;
+        if (
+          position === "schema" &&
+          (definitionKeys.has(key) ||
+            key === "$id" ||
+            key === "$anchor" ||
+            key === "$schema")
+        )
+          continue;
         if (!first) yield ",";
         first = false;
         yield JSON.stringify(key) + ":";
+        // `not: {}` forbids a value; no client infers a type for a value it
+        // must omit, and the any-value list would place `items` beside a
+        // non-array type, which Gemini function declarations reject.
+        if (
+          position === "schema" &&
+          key === "not" &&
+          isSchemaObject(child) &&
+          Object.keys(child).length === 0
+        ) {
+          yield "{}";
+          continue;
+        }
         const childPosition =
           position === "map"
             ? "schema"
@@ -196,7 +263,7 @@ const inlineWithinBudget = (
                   (schemaArrays.has(key) || schemaChildren.has(key))
                 ? "schema"
                 : "data";
-        yield* serialize(child, childPosition, active);
+        yield* serialize(child, childPosition, currentScope, active);
       }
       yield "}";
     } else {
@@ -204,31 +271,47 @@ const inlineWithinBudget = (
     }
   }
   const chunks: string[] = [];
-  let bytes = 0;
-  for (const chunk of serialize(root, "schema", new Set())) {
+  let bytes = identityBytes;
+  for (const chunk of serialize(
+    root,
+    "schema",
+    references.rootScope,
+    new Map(),
+  )) {
     bytes += Buffer.byteLength(chunk, "utf8");
     if (bytes > budgetBytes || !resolved) return undefined;
     chunks.push(chunk);
   }
-  return resolved
-    ? (JSON.parse(chunks.join("")) as Record<string, unknown>)
-    : undefined;
+  if (!resolved) return undefined;
+  const expanded: unknown = JSON.parse(chunks.join(""));
+  if (!isSchemaObject(expanded)) return undefined;
+  // Every emitted dependency is now static and reference-free. Nested resource
+  // identifiers/anchors can leave without duplicating identities at call sites.
+  const schema = { ...identity, ...expanded };
+  return serializedBytes(schema) <= budgetBytes ? schema : undefined;
 };
 
 /** Preserve every possible type, including referenced and nullable unions. */
 const detectedTypes = (
   schema: unknown,
-  root: Record<string, unknown>,
-  active: ReadonlySet<string> = new Set(),
+  references: JsonSchemaReferences,
+  inherited: JsonSchemaScope | undefined,
+  active: ReadonlySet<object> = new Set(),
 ): readonly string[] | undefined => {
   if (!isSchemaObject(schema)) return undefined;
+  const scope = references.enter(schema, inherited);
+  if (scope === undefined) return undefined;
   if (typeof schema.$ref === "string") {
-    if (active.has(schema.$ref)) return undefined;
-    return detectedTypes(
-      resolveLocalReference(root, schema.$ref),
-      root,
-      new Set([...active, schema.$ref]),
-    );
+    if (active.has(schema)) return undefined;
+    const target = references.resolve(scope, schema.$ref);
+    return target.kind === "target"
+      ? detectedTypes(
+          target.value,
+          references,
+          scope,
+          new Set([...active, schema]),
+        )
+      : undefined;
   }
   if (typeof schema.type === "string") return [schema.type];
   if (
@@ -236,6 +319,11 @@ const detectedTypes = (
     schema.type.every((type) => typeof type === "string")
   )
     return schema.type;
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    const enumTypes = enumValueTypes(schema.enum);
+    if (enumTypes.every((type) => jsonValueTypes.includes(type)))
+      return enumTypes;
+  }
   const alternatives = Array.isArray(schema.anyOf)
     ? schema.anyOf
     : Array.isArray(schema.oneOf)
@@ -243,10 +331,221 @@ const detectedTypes = (
       : [];
   if (alternatives.length === 0) return undefined;
   const types = alternatives.map((branch) =>
-    detectedTypes(branch, root, active),
+    detectedTypes(branch, references, scope, active),
   );
   if (types.some((type) => type === undefined)) return undefined;
   return [...new Set(types.flatMap((type) => type ?? []))];
+};
+
+interface ScopedSchema {
+  readonly schema: Record<string, unknown>;
+  readonly scope: JsonSchemaScope;
+}
+
+/**
+ * Collect the item schema of every array alternative. Tuples, boolean item
+ * schemas and unresolved references are unknown because one item type would
+ * not describe every accepted element.
+ */
+const arrayItemAlternatives = (
+  schema: unknown,
+  references: JsonSchemaReferences,
+  inherited: JsonSchemaScope | undefined,
+  active: ReadonlySet<object> = new Set(),
+): readonly ScopedSchema[] | undefined => {
+  if (!isSchemaObject(schema)) return undefined;
+  const scope = references.enter(schema, inherited);
+  if (scope === undefined) return undefined;
+  if (typeof schema.$ref === "string") {
+    if (active.has(schema)) return undefined;
+    const target = references.resolve(scope, schema.$ref);
+    return target.kind === "target"
+      ? arrayItemAlternatives(
+          target.value,
+          references,
+          scope,
+          new Set([...active, schema]),
+        )
+      : undefined;
+  }
+  const types =
+    typeof schema.type === "string"
+      ? [schema.type]
+      : Array.isArray(schema.type)
+        ? schema.type
+        : undefined;
+  if (types !== undefined) {
+    if (!types.includes("array")) return [];
+    return isSchemaObject(schema.items) && schema.prefixItems === undefined
+      ? [{ schema: schema.items, scope }]
+      : undefined;
+  }
+  const alternatives = Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : [];
+  if (alternatives.length === 0) return undefined;
+  const nested = alternatives.map((branch) =>
+    arrayItemAlternatives(branch, references, scope, active),
+  );
+  return nested.some((items) => items === undefined)
+    ? undefined
+    : nested.flatMap((items) => items ?? []);
+};
+
+/** Nested arrays beyond this level advertise an unconstrained item schema. */
+const REDUCED_ITEM_MAX_DEPTH = 3;
+
+/**
+ * Advertise the element types the canonical item schemas accept. Gemini
+ * function declarations permit `items` only beside the single `array` type,
+ * so an element that may be an array alongside other types, or whose type is
+ * unknown, uses the empty schema: it accepts every element and still gives
+ * clients that require `items` an item schema.
+ */
+const reducedItemSchema = (
+  alternatives: readonly ScopedSchema[] | undefined,
+  references: JsonSchemaReferences,
+  depth = 1,
+): Record<string, unknown> => {
+  if (
+    alternatives === undefined ||
+    alternatives.length === 0 ||
+    depth > REDUCED_ITEM_MAX_DEPTH
+  )
+    return {};
+  const types: string[] = [];
+  for (const { schema, scope } of alternatives) {
+    const detected = detectedTypes(schema, references, scope);
+    if (detected === undefined || detected.length === 0) return {};
+    types.push(...detected);
+  }
+  const unique = [...new Set(types)];
+  if (!unique.includes("array"))
+    return { type: unique.length === 1 ? unique[0] : unique };
+  if (unique.length > 1) return {};
+  const nested: ScopedSchema[] = [];
+  for (const { schema, scope } of alternatives) {
+    const items = arrayItemAlternatives(schema, references, scope);
+    if (items === undefined) return { type: "array", items: {} };
+    nested.push(...items);
+  }
+  return {
+    type: "array",
+    items: reducedItemSchema(nested, references, depth + 1),
+  };
+};
+
+/** Give homogeneous array-item unions the type required by strict gateways. */
+const typeArrayItemUnions = (
+  schema: Record<string, unknown>,
+): Record<string, unknown> => {
+  const references = new JsonSchemaReferences(schema);
+  const visit = (node: unknown): unknown => {
+    const rebuilt = rebuildSchemaPositions(node, visit);
+    if (!isSchemaObject(rebuilt) || rebuilt.type !== "array") return rebuilt;
+    const items = rebuilt.items;
+    if (
+      !isSchemaObject(items) ||
+      items.type !== undefined ||
+      (!Array.isArray(items.oneOf) && !Array.isArray(items.anyOf))
+    )
+      return rebuilt;
+    const types = detectedTypes(items, references, references.rootScope);
+    return types?.length === 1
+      ? { ...rebuilt, items: { ...items, type: types[0] } }
+      : rebuilt;
+  };
+  return visit(schema) as Record<string, unknown>;
+};
+
+/**
+ * Strict gateways reject some nested combinators, primitive enums without a
+ * type, and array items whose union has no explicit type. Homogeneous item
+ * unions gain their shared type; remaining incompatible shapes use the shallow
+ * projection while canonical runtime validation stays intact.
+ */
+const hasGatewayIncompatibleShape = (schema: unknown): boolean => {
+  if (Array.isArray(schema)) return schema.some(hasGatewayIncompatibleShape);
+  if (!isSchemaObject(schema)) return false;
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length === 0) return true;
+  if (
+    schema.type === "array" &&
+    isSchemaObject(schema.items) &&
+    schema.items.type === undefined &&
+    (Array.isArray(schema.items.oneOf) || Array.isArray(schema.items.anyOf))
+  )
+    return true;
+  if (Array.isArray(schema.required) && isSchemaObject(schema.properties)) {
+    for (const name of schema.required) {
+      const property = schema.properties[name];
+      if (isSchemaObject(property) && containsGatewayCombinator(property))
+        return true;
+    }
+  }
+  if (
+    Array.isArray(schema.enum) &&
+    schema.enum.length > 0 &&
+    schema.type === undefined
+  ) {
+    const types = enumValueTypes(schema.enum);
+    if (
+      types.length === 1 &&
+      types.every((type) =>
+        ["string", "number", "boolean", "null"].includes(type),
+      )
+    )
+      return true;
+  }
+  return schemaChildrenAndMaps(schema).some(hasGatewayIncompatibleShape);
+};
+
+const containsGatewayCombinator = (schema: unknown): boolean => {
+  if (Array.isArray(schema)) return schema.some(containsGatewayCombinator);
+  if (!isSchemaObject(schema)) return false;
+  if (schema.oneOf !== undefined || schema.allOf !== undefined) return true;
+  return schemaChildrenAndMaps(schema).some(containsGatewayCombinator);
+};
+
+/** Traverse only schema-valued positions; property names remain opaque data. */
+const schemaChildrenAndMaps = (
+  schema: Readonly<Record<string, unknown>>,
+): readonly unknown[] =>
+  Object.entries(schema).flatMap(([key, value]) => {
+    if (schemaMaps.has(key) && isSchemaObject(value))
+      return Object.values(value);
+    if (schemaArrays.has(key) && Array.isArray(value)) return value;
+    if (schemaChildren.has(key)) return Array.isArray(value) ? value : [value];
+    return [];
+  });
+
+/**
+ * Present a reduced property's reference-resolved types. Reduced inputs omit
+ * nested validation, but clients still require an item schema for an array
+ * declaration, and Gemini accepts `items` only beside the single `array` type,
+ * so a property that may be an array or another type lists typed branches.
+ */
+const reducedPropertyTypes = (
+  value: unknown,
+  references: JsonSchemaReferences,
+): Record<string, unknown> => {
+  const types = detectedTypes(value, references, references.rootScope);
+  if (types === undefined || types.length === 0) return {};
+  if (!types.includes("array"))
+    return { type: types.length === 1 ? types[0] : types };
+  const array = {
+    type: "array",
+    items: reducedItemSchema(
+      arrayItemAlternatives(value, references, references.rootScope),
+      references,
+    ),
+  };
+  return types.length === 1
+    ? array
+    : {
+        anyOf: types.map((type) => (type === "array" ? array : { type })),
+      };
 };
 
 const REDUCED_ANNOTATION =
@@ -281,23 +580,16 @@ const reduceToShallowProperties = (
   ]
     .filter((text) => text !== undefined)
     .join(" ");
+  const references = new JsonSchemaReferences(schema);
   const shallow = Object.fromEntries(
     Object.entries(properties).map(([name, value]) => {
-      const types = detectedTypes(value, schema);
-      const type = types?.length === 1 ? types[0] : types;
       const description =
         isSchemaObject(value) && typeof value.description === "string"
           ? { description: value.description }
           : {};
       return [
         name,
-        {
-          ...(type === undefined ? {} : { type }),
-          // Reduced inputs intentionally omit nested validation, but clients
-          // still require an item schema to accept an array declaration.
-          ...(types?.includes("array") ? { items: jsonValueSchema() } : {}),
-          ...description,
-        },
+        { ...reducedPropertyTypes(value, references), ...description },
       ];
     }),
   );
@@ -329,8 +621,15 @@ export const compactAdvertisedInputSchema = (
   schema: Record<string, unknown>,
   budgetBytes: number,
 ): CompactedInputSchema => {
-  const inline = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
-  if (inline !== undefined && schemaDepth(inline) <= COMPACT_SCHEMA_MAX_DEPTH)
+  const expanded = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
+  const inline =
+    expanded === undefined ? undefined : typeArrayItemUnions(expanded);
+  if (
+    inline !== undefined &&
+    serializedBytes(inline) <= budgetBytes &&
+    schemaDepth(inline) <= COMPACT_SCHEMA_MAX_DEPTH &&
+    !hasGatewayIncompatibleShape(inline)
+  )
     return { schema: inline, presentation: "inline" };
   const reduced = reduceToShallowProperties(schema);
   if (serializedBytes(reduced) <= budgetBytes)

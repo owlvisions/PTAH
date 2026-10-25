@@ -33,6 +33,8 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -123,6 +125,7 @@ export interface FridaInstrumentationManagerOptions {
 export class FridaInstrumentationManager implements FridaInstrumentationPort {
   readonly #sessions = new Map<string, ManagedSession>();
   readonly #pendingStartups = new Set<PendingStartupCleanup>();
+  readonly #cleanupLeases = new WeakMap<object, AnalysisCleanupLease>();
   readonly #sessionQueues = new Map<string, Promise<void>>();
   readonly #sessionClosures = new Map<
     string,
@@ -130,7 +133,12 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   >();
   readonly #remoteDevices = new Map<
     string,
-    { references: number; optionsDigest: string; device: Promise<Device> }
+    {
+      id: string;
+      references: number;
+      optionsDigest: string;
+      device: Promise<Device>;
+    }
   >();
   readonly #remoteQueues = new Map<string, Promise<void>>();
   readonly #deviceManagerLoader: () => Promise<DeviceManager>;
@@ -202,9 +210,19 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
           cleanupError = sanitizeError(cleanupCause, remote);
         }
       }
-      return err(
-        providerError("list_frida_devices", cause, remote, cleanupError),
+      const failure = providerError(
+        "list_frida_devices",
+        cause,
+        remote,
+        cleanupError,
       );
+      const reference =
+        remote === undefined
+          ? undefined
+          : this.#remoteDevices.get(remote.address);
+      if (reference !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(reference, failure);
+      return err(failure);
     }
   }
 
@@ -262,14 +280,19 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
           cleanupError = sanitizeError(cleanupCause, selector.remote);
         }
       }
-      return err(
-        providerError(
-          "list_frida_processes",
-          cause,
-          selector.remote,
-          cleanupError,
-        ),
+      const failure = providerError(
+        "list_frida_processes",
+        cause,
+        selector.remote,
+        cleanupError,
       );
+      const reference =
+        selector.remote === undefined
+          ? undefined
+          : this.#remoteDevices.get(selector.remote.address);
+      if (reference !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(reference, failure);
+      return err(failure);
     }
   }
 
@@ -345,6 +368,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       return ok(sessionObservation(managed));
     } catch (cause: unknown) {
       let cleanupFailures: readonly string[] = [];
+      let pendingCleanup: PendingStartupCleanup | undefined;
       if (
         manager !== undefined &&
         device !== undefined &&
@@ -363,16 +387,18 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         // Keep the original provider handles until every acquired resource is
         // released, including failures before a session can be registered.
         this.#pendingStartups.add(pending);
+        pendingCleanup = pending;
         cleanupFailures = await this.#cleanupStartup(pending);
       }
-      return err(
-        providerError(
-          "start_frida_session",
-          cause,
-          input.remote,
-          cleanupFailures.join("; ") || undefined,
-        ),
+      const failure = providerError(
+        "start_frida_session",
+        cause,
+        input.remote,
+        cleanupFailures.join("; ") || undefined,
       );
+      if (pendingCleanup !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(pendingCleanup, failure);
+      return err(failure);
     }
   }
 
@@ -486,15 +512,17 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       if (entry === undefined) managed.scriptCaptures.delete(scriptId);
       else cleanupReason = await this.#releaseScript(managed, entry);
     }
-    if (nativeFailure !== undefined && cancellation === undefined)
-      return err(
-        providerError(
-          "load_frida_script",
-          nativeFailure.cause,
-          managed.remote,
-          cleanupReason,
-        ),
+    if (nativeFailure !== undefined && cancellation === undefined) {
+      const failure = providerError(
+        "load_frida_script",
+        nativeFailure.cause,
+        managed.remote,
+        cleanupReason,
       );
+      if (entry !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(entry, failure);
+      return err(failure);
+    }
     const observation: FridaScriptObservation = {
       scriptId,
       sourceKind: source.sourceKind,
@@ -504,31 +532,33 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       messages: capture.messages.toArray(),
       messagesTruncated: capture.truncated,
     };
-    if (cancellation !== undefined)
-      return err(
-        new FridaScriptLoadCancelledError(observation, {
-          cause: cancellation.reason,
-          scriptHandleAcquired: entry !== undefined,
-          ...(nativeFailure === undefined
-            ? {}
-            : {
-                diagnostics: {
-                  native_failure: sanitizeError(
-                    nativeFailure.cause,
-                    managed.remote,
-                  ),
-                },
-              }),
-          ...(cleanupReason === undefined
-            ? {}
-            : {
-                cleanup: {
-                  reason: cleanupReason,
-                  resources: [sessionId, scriptId],
-                },
-              }),
-        }),
-      );
+    if (cancellation !== undefined) {
+      const failure = new FridaScriptLoadCancelledError(observation, {
+        cause: cancellation.reason,
+        scriptHandleAcquired: entry !== undefined,
+        ...(nativeFailure === undefined
+          ? {}
+          : {
+              diagnostics: {
+                native_failure: sanitizeError(
+                  nativeFailure.cause,
+                  managed.remote,
+                ),
+              },
+            }),
+        ...(cleanupReason === undefined
+          ? {}
+          : {
+              cleanup: {
+                reason: cleanupReason,
+                resources: [sessionId, scriptId],
+              },
+            }),
+      });
+      if (entry !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(entry, failure);
+      return err(failure);
+    }
     return ok(observation);
   }
 
@@ -558,10 +588,19 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       return err(unknownFridaSession("resume_frida_session", sessionId));
     if (managed.mode !== "spawn" || managed.targetResumeObserved)
       return err(
-        new AnalysisCapabilityUnavailableError(
-          "frida",
+        new AnalysisInputError(
           "resume_frida_session",
-          "Only a paused process spawned by this session can be resumed.",
+          {
+            userMessage:
+              "Only a paused process spawned by this session can be resumed.",
+          },
+          [
+            {
+              path: ["session_id"],
+              reason: "invalid_value",
+              message: "Select a paused process spawned by this session.",
+            },
+          ],
         ),
       );
     const pendingScripts = [...managed.scripts.values()].filter(
@@ -624,16 +663,18 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     if (entry === undefined)
       return err(unknownFridaScript("unload_frida_script", scriptId));
     const cleanupReason = await this.#releaseScript(managed, entry);
-    return cleanupReason === undefined
-      ? ok(null)
-      : err(
-          providerError(
-            "unload_frida_script",
-            new Error(cleanupReason),
-            managed.remote,
-            cleanupReason,
-          ),
-        );
+    if (cleanupReason === undefined) return ok(null);
+    return err(
+      this.#retainCleanupFailure(
+        entry,
+        providerError(
+          "unload_frida_script",
+          new Error(cleanupReason),
+          managed.remote,
+          cleanupReason,
+        ),
+      ),
+    );
   }
 
   async #releaseScript(
@@ -660,6 +701,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     }
     managed.scripts.delete(entry.id);
     managed.scriptCaptures.delete(entry.id);
+    await this.#resolveCleanupFailures(entry);
     return undefined;
   }
 
@@ -768,19 +810,23 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     }
     if (failures.length > 0)
       return err(
-        new AnalysisCapabilityUnavailableError(
-          "frida",
-          "close_frida_session",
-          failures[0] ?? "Frida session cleanup failed",
-          {
-            cleanup: {
-              reason: failures.join("; "),
-              resources: [sessionId],
+        this.#retainCleanupFailure(
+          managed,
+          new AnalysisCapabilityUnavailableError(
+            "frida",
+            "close_frida_session",
+            failures[0] ?? "Frida session cleanup failed",
+            {
+              cleanup: {
+                reason: failures.join("; "),
+                resources: [sessionId],
+              },
             },
-          },
+          ),
         ),
       );
     this.#sessions.delete(sessionId);
+    await this.#resolveCleanupFailures(managed);
     return ok({ targetResumeObserved });
   }
 
@@ -795,21 +841,34 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
 
   async #closeAll(): Promise<void> {
     await Promise.allSettled(this.#operations);
-    const startupFailures = (
-      await Promise.all(
-        [...this.#pendingStartups].map((pending) =>
-          this.#cleanupStartup(pending),
-        ),
-      )
-    ).flat();
+    const startupFailures = await Promise.all(
+      [...this.#pendingStartups].map(async (pending) => {
+        const reasons = await this.#cleanupStartup(pending);
+        return reasons.length === 0
+          ? []
+          : [
+              this.#retainCleanupFailure(
+                pending,
+                new ProviderCleanupError(
+                  "frida",
+                  [pending.id],
+                  {
+                    reason: reasons.join("; "),
+                  },
+                  { operation: "frida_cleanup" },
+                ),
+              ),
+            ];
+      }),
+    );
     const results = await Promise.all(
       [...this.#sessions.keys()].map((sessionId) =>
         this.closeSession(sessionId),
       ),
     );
     const failures = [
-      ...startupFailures,
-      ...results.flatMap((result) => (result.ok ? [] : [result.error.message])),
+      ...startupFailures.flat(),
+      ...results.flatMap((result) => (result.ok ? [] : [result.error])),
     ];
     const manager = this.#deviceManager;
     if (manager !== undefined) {
@@ -817,18 +876,37 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         if (reference.references !== 0) continue;
         try {
           await this.#releaseRemote(manager, address);
-        } catch {
+        } catch (cause) {
           failures.push(
-            "Unable to close remote Frida connection during shutdown",
+            this.#retainCleanupFailure(
+              reference,
+              new ProviderCleanupError(
+                "frida",
+                [address],
+                {
+                  reason:
+                    "Unable to close remote Frida connection during shutdown",
+                },
+                { cause, operation: "frida_cleanup" },
+              ),
+            ),
           );
         }
       }
     }
     if (failures.length > 0)
-      throw new AggregateError(
-        failures,
-        "Frida session cleanup was incomplete",
-      );
+      throw new ProviderCleanupError(
+        "frida",
+        failures.flatMap((failure) => failure.cleanupResources),
+        { reason: "Frida session cleanup was incomplete" },
+        {
+          operation: "frida_cleanup",
+          cause: new AggregateError(
+            failures,
+            "Frida session cleanup was incomplete",
+          ),
+        },
+      ).bindCleanupDependencies(failures);
   }
 
   #cleanupStartup(pending: PendingStartupCleanup): Promise<readonly string[]> {
@@ -857,8 +935,34 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       const remoteFailure = await this.#releaseManagedRemote(pending);
       if (remoteFailure !== undefined) return [remoteFailure];
       this.#pendingStartups.delete(pending);
+      await this.#resolveCleanupFailures(pending);
       return [];
     });
+  }
+
+  #retainCleanupFailure<Failure extends AnalysisError>(
+    owner: { readonly id: string },
+    failure: Failure,
+  ): Failure {
+    const lease = this.#cleanupLease(owner);
+    failure.bindCleanupResourceOwner(lease);
+    lease.bindCleanupError(failure);
+    return failure;
+  }
+
+  #cleanupLease(owner: { readonly id: string }): AnalysisCleanupLease {
+    let lease = this.#cleanupLeases.get(owner);
+    if (lease === undefined) {
+      // The manager confirms native release before settling this private lease;
+      // its callback must not re-enter the session or remote cleanup lock.
+      lease = new AnalysisCleanupLease(async () => {}, [owner.id]);
+      this.#cleanupLeases.set(owner, lease);
+    }
+    return lease;
+  }
+
+  async #resolveCleanupFailures(owner: { readonly id: string }): Promise<void> {
+    await this.#cleanupLease(owner).release();
   }
 
   async #releaseManagedRemote(
@@ -1188,7 +1292,12 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
           remote.address,
           remoteOptions(remote),
         );
-        reference = { references: 1, optionsDigest, device };
+        reference = {
+          id: remote.address,
+          references: 1,
+          optionsDigest,
+          device,
+        };
         this.#remoteDevices.set(remote.address, reference);
       }
       try {
@@ -1220,6 +1329,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         return;
       }
       await manager.removeRemoteDevice(address);
+      await this.#resolveCleanupFailures(reference);
       if (this.#remoteDevices.get(address) === reference)
         this.#remoteDevices.delete(address);
     });

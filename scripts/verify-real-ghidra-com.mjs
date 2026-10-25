@@ -141,7 +141,10 @@ try {
   assert.ok(procedures.some((p) => p.address === fixture.entry));
   assert.ok(procedures.some((p) => p.address === fixture.near));
   const dossier = functionDossierSchema.parse(
-    await call("analyze_function", { procedure: fixture.entry }),
+    await call("analyze_function", {
+      procedure: fixture.entry,
+      detail: "complete",
+    }),
   );
   assert.ok(dossier.pseudocode.trim().length > 0);
   assert.equal(dossier.procedure.body.available, true);
@@ -203,8 +206,12 @@ try {
   );
   assert.ok((await call("list_names")).some((p) => p.value === changes.name));
   assert.equal(
-    (await call("analyze_function", { procedure: fixture.entry })).procedure
-      .name,
+    (
+      await call("analyze_function", {
+        procedure: fixture.entry,
+        detail: "complete",
+      })
+    ).procedure.name,
     changes.name,
   );
   const rejected = await client.callTool({

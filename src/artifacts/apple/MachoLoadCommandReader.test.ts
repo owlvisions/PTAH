@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   CPU,
@@ -31,11 +31,74 @@ import {
   readMachoImage,
 } from "./MachoLoadCommandReader.js";
 import { traceDylibResolution } from "./DylibResolutionReader.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
 
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
+
+it("retains unknown executable-root traversal after a complete callback and keeps known image facts", async () => {
+  const root = await createTestTempDirectory("rea-dylib-traversal-callback-");
+  const bytes = machoImage({ commands: [buildVersionCommand(1)] });
+  const path = join(root, "main");
+  await writeFile(path, bytes);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const reason = "Controlled producer executable-root uncertainty";
+  const entries = DirectoryArtifactReader.prototype.entries;
+  const spy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "entries")
+    .mockImplementation(async function* (
+      this: DirectoryArtifactReader,
+      signal,
+      options,
+    ) {
+      yield* entries.call(this, signal, options);
+      if (typeof options === "function") return;
+      options?.onCoverage?.({
+        status: "unknown",
+        examinedEntries: 1,
+        limitations: [reason],
+      });
+      options?.onCoverage?.({
+        status: "complete",
+        examinedEntries: 1,
+        limitations: [],
+      });
+    });
+  try {
+    const trace = await traceDylibResolution({
+      rootPath: root,
+      targetPath: path,
+      targetSha256: digest,
+      enumerateRoots: true,
+      parameters: {},
+    });
+    expect(trace.coverage).toMatchObject({
+      status: "partial",
+      unparsed_images: [],
+      roots_without_architecture: [],
+    });
+    expect(trace.roots).toEqual([{ image: "main", architecture: "arm64" }]);
+    expect(trace.images).toContainEqual(
+      expect.objectContaining({
+        path: "main",
+        sha256: digest,
+        parse_status: "parsed",
+        slices: [
+          expect.objectContaining({
+            architecture: "arm64",
+            file_type: "execute",
+            platform: 1,
+          }),
+        ],
+      }),
+    );
+    expect(trace.limitations).toContain(reason);
+  } finally {
+    spy.mockRestore();
+  }
+});
 
 // Legacy `LC_VERSION_MIN_*` commands carry no simulator flag: per dyld
 // rules Intel images are simulator, ARM images are device (tvOS simulator
@@ -45,6 +108,7 @@ it.each([
   { command: LC.VERSION_MIN_IPHONEOS, cpu: CPU.i386, platform: 7 },
   { command: LC.VERSION_MIN_IPHONEOS, cpu: CPU.x86_64, platform: 7 },
   { command: LC.VERSION_MIN_IPHONEOS, cpu: CPU.arm64, platform: 2 },
+  { command: LC.VERSION_MIN_TVOS, cpu: CPU.i386, platform: 3 },
   { command: LC.VERSION_MIN_TVOS, cpu: CPU.x86_64, platform: 8 },
   { command: LC.VERSION_MIN_TVOS, cpu: CPU.arm64, platform: 3 },
   { command: LC.VERSION_MIN_WATCHOS, cpu: CPU.i386, platform: 9 },
@@ -140,6 +204,107 @@ it("uses legacy simulator and device platform facts when resolving dylibs", asyn
       ]),
     }),
   );
+});
+
+it("selects the ARMv7s FAT dylib slice before ARMv7 independent of FAT order", async () => {
+  const workspace = await createTestTempDirectory("rea-macho-arm-fat-order-");
+  const armv7 = { type: 12, subtype: 9 };
+  const armv7s = { type: 12, subtype: 11 };
+  const app = machoImage({
+    cpu: armv7s,
+    wide: false,
+    commands: [
+      versionMinCommand(LC.VERSION_MIN_IPHONEOS),
+      dylibCommand(LC.LOAD_DYLIB, "@loader_path/lib.dylib"),
+    ],
+  });
+  const generic = machoImage({
+    cpu: armv7,
+    wide: false,
+    fileType: FILE_TYPE.dylib,
+    commands: [
+      versionMinCommand(LC.VERSION_MIN_IPHONEOS),
+      dylibCommand(LC.LOAD_DYLIB, "@loader_path/generic-child.dylib"),
+    ],
+  });
+  const specialized = machoImage({
+    cpu: armv7s,
+    wide: false,
+    fileType: FILE_TYPE.dylib,
+    commands: [
+      versionMinCommand(LC.VERSION_MIN_IPHONEOS),
+      dylibCommand(LC.LOAD_DYLIB, "@loader_path/specialized-child.dylib"),
+    ],
+  });
+  const child = machoImage({
+    cpu: armv7,
+    wide: false,
+    fileType: FILE_TYPE.dylib,
+    commands: [versionMinCommand(LC.VERSION_MIN_IPHONEOS)],
+  });
+  const traceWithSlices = async (
+    name: string,
+    slices: readonly { cpu: typeof armv7; bytes: Uint8Array }[],
+  ) => {
+    const root = join(workspace, name);
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, "App"), app);
+    await writeFile(join(root, "lib.dylib"), fatImage(slices));
+    await writeFile(join(root, "generic-child.dylib"), child);
+    await writeFile(join(root, "specialized-child.dylib"), child);
+    return traceDylibResolution({
+      rootPath: root,
+      targetPath: join(root, "App"),
+      targetSha256: createHash("sha256").update(app).digest("hex"),
+      enumerateRoots: false,
+      parameters: { roots: ["App"] },
+    });
+  };
+
+  for (const [name, slices] of [
+    [
+      "generic-first",
+      [
+        { cpu: armv7, bytes: generic },
+        { cpu: armv7s, bytes: specialized },
+      ],
+    ],
+    [
+      "specialized-first",
+      [
+        { cpu: armv7s, bytes: specialized },
+        { cpu: armv7, bytes: generic },
+      ],
+    ],
+  ] as const) {
+    const trace = await traceWithSlices(name, slices);
+    expect(
+      trace.images.find(({ path }) => path === "App")?.slices[0],
+    ).toMatchObject({
+      architecture: "arm",
+      cpu_type: armv7s.type,
+      cpu_subtype: armv7s.subtype,
+    });
+    expect(trace.edges.find(({ loader }) => loader === "App")).toMatchObject({
+      resolution: { status: "resolved", image: "lib.dylib" },
+    });
+    expect(
+      trace.edges.find(({ loader }) => loader === "lib.dylib"),
+    ).toMatchObject({
+      install_name: "@loader_path/specialized-child.dylib",
+      resolution: { status: "resolved", image: "specialized-child.dylib" },
+    });
+  }
+
+  const fallback = await traceWithSlices("armv7-fallback", [
+    { cpu: armv7, bytes: generic },
+  ]);
+  expect(
+    fallback.edges.find(({ loader }) => loader === "lib.dylib"),
+  ).toMatchObject({
+    install_name: "@loader_path/generic-child.dylib",
+    resolution: { status: "resolved", image: "generic-child.dylib" },
+  });
 });
 
 it.each([false, true] as const)(
@@ -573,6 +738,23 @@ it("selects matching arm64e subtype slices when tracing a mixed FAT image", asyn
     ["architecture-missing", "unresolved"],
     ["resolved", "resolved"],
   ]);
+});
+
+it("keeps Apple's hidden ARM64 FAT row outside the raw declared slice list", async () => {
+  const armv7 = { type: 12, subtype: 9 };
+  const bytes = Buffer.from(
+    fatImage([
+      { cpu: armv7, bytes: machoImage({ cpu: armv7 }) },
+      { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+    ]),
+  );
+  bytes.writeUInt32BE(1, 4);
+  const facts = await readMachoImage(readerOf(bytes), bytes.length);
+  expect(facts).toMatchObject({
+    status: "parsed",
+    slices: [{ architecture: "arm" }],
+    hiddenSlices: [{ architecture: "arm64", cpu_type: CPU.arm64.type }],
+  });
 });
 
 describe("Mach-O load command reader: decodes thin-image load commands", () => {
@@ -1383,6 +1565,27 @@ describe("Mach-O load command reader: reads and validates universal binary slice
       ]);
     }
   });
+
+  it.each([
+    [1, "arm64v8"],
+    [2, "arm64e"],
+    [12, "arm64e.x1"],
+    [0x8000000c, "arm64e.x1"],
+    [0x81000002, "arm64e"],
+  ] as const)(
+    "names ARM64 subtype %i as %s without losing source bits",
+    async (subtype, architecture) => {
+      const facts = await read(
+        machoImage({ cpu: { type: CPU.arm64.type, subtype } }),
+      );
+      expect(facts).toMatchObject({
+        status: "parsed",
+        slices: [
+          expect.objectContaining({ architecture, cpu_subtype: subtype }),
+        ],
+      });
+    },
+  );
 
   it("retains physical slice identity and declared build platform", async () => {
     const thin = machoImage({ commands: [buildVersionCommand(7)] });

@@ -100,7 +100,11 @@ const summarizeModel = (
         }) => row,
       ),
     chat_template_present: metadata.some(
-      (row) => row.key === "tokenizer.chat_template",
+      (row) =>
+        row.type === "STRING" &&
+        typeof row.value === "string" &&
+        (row.key === "tokenizer.chat_template" ||
+          row.key.startsWith("tokenizer.chat_template.")),
     ),
   };
 };
@@ -139,10 +143,13 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     typeof key === "object" &&
     isImmutableJsonSnapshot(key);
   const cached = reusable ? checked.get(key) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(modelArtifactSchema, parent);
-  if (!parsed.ok) return parsed;
-  const report = reusable ? (key as ModelArtifact) : parsed.value;
+  let report: ModelArtifact;
+  if (cached !== undefined) report = cached.report;
+  else {
+    const parsed = parseAnalysisViewResult(modelArtifactSchema, parent);
+    if (!parsed.ok) return parsed;
+    report = reusable ? (key as ModelArtifact) : parsed.value;
+  }
   if (
     parent.subject != null &&
     (parent.subject.local_path !== report.artifact.path ||
@@ -158,6 +165,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
         },
       ]),
     );
+  if (cached !== undefined) return ok(cached);
   const summary = summarizeModel(report);
   const {
     artifact: _artifact,

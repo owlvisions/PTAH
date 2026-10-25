@@ -1,7 +1,7 @@
 import {
-  reportLifecycleEnd,
-  reportLifecycleStart,
-} from "./lifecycleProgress.js";
+  reportOperationEnd,
+  reportOperationStart,
+} from "./operationProgress.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -83,9 +83,9 @@ export const registerCloseLifecycleTool = ({
         const closing = logToolExecution(logger, closeContract.name, () =>
           closeWithResources(() => session.close({ progress })),
         );
-        await reportLifecycleStart(progress, closeContract.name);
+        await reportOperationStart(progress, closeContract.name);
         const closed = await closing;
-        await reportLifecycleEnd(progress, closeContract.name, closed.ok);
+        await reportOperationEnd(progress, closeContract.name, closed.ok);
         return server.delivery.toCallToolResult(closed, closeContract);
       }
       const closing = logToolExecution(logger, closeContract.name, () =>
@@ -95,13 +95,13 @@ export const registerCloseLifecycleTool = ({
           }),
         ),
       );
-      await reportLifecycleStart(
+      await reportOperationStart(
         progress,
         closeContract.name,
         "saving snapshot; closing provider",
       );
       const closed = await closing;
-      await reportLifecycleEnd(progress, closeContract.name, closed.ok);
+      await reportOperationEnd(progress, closeContract.name, closed.ok);
       return server.delivery.toCallToolResult(
         closed.ok ? ok({ ...closed.value }) : closed,
         closeContract,

@@ -1,3 +1,4 @@
+import { javascriptRouteDeliveryOptions } from "./cli/javascriptRouteDelivery.js";
 import { z } from "incur";
 import { webRuntimeCommandTimeoutSchema } from "./domain/browserDeadline.js";
 import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/javascriptAnalysisResourceControls.js";
@@ -72,6 +73,7 @@ export const electronPageInspectionOptions = z.object({
 });
 
 export const javascriptApplicationOptions = z.object({
+  ...javascriptRouteDeliveryOptions,
   maxSemanticNodes:
     javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes,
   maxSemanticNodesPerFile:
@@ -85,6 +87,13 @@ export const javascriptApplicationOptions = z.object({
     .optional()
     .describe(
       "Exact inventoried file path relative to the application root; repeat to select several. No implicit dependencies.",
+    ),
+  sourcePathsJson: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Inline JSON array or JSON file path of exact inventoried file paths relative to the application root, selected after any --source-path values. Use a file for selections that exceed the host command-line limit.",
     ),
   maxHeapMb: javaScriptAnalysisResourceControlsSchema.shape.max_heap_mb,
   analysisTimeoutMs:

@@ -3,6 +3,7 @@ import { Writable } from "node:stream";
 import { Cli } from "incur";
 import { describe, expect, it } from "vitest";
 
+import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import {
   createCliResultOutput,
   streamCliCommandResults,
@@ -29,7 +30,10 @@ describe("CLI formatting stage admission", () => {
             { cta: { commands: [{ command: "next" }] } },
           ),
       });
-      const output = createCliResultOutput(["fixture"], new Writable());
+      const output = createCliResultOutput(
+        parseCliOutputArguments(["fixture"]),
+        new Writable(),
+      );
       if (output === undefined) throw new Error("Missing output owner");
       if (wrapped) streamCliCommandResults(cli, output);
       let reply = "";
@@ -75,7 +79,10 @@ describe("CLI formatting stage admission", () => {
   });
 
   it("declines errors before a result or from a different failure class", async () => {
-    const output = createCliResultOutput([], new Writable());
+    const output = createCliResultOutput(
+      parseCliOutputArguments([]),
+      new Writable(),
+    );
     expect(output).toBeDefined();
     expect(
       await output?.recoverFormattingFailure(
@@ -99,7 +106,10 @@ describe("CLI formatting stage admission", () => {
         throw new RangeError("Invalid string length");
       },
     });
-    const output = createCliResultOutput([], new Writable());
+    const output = createCliResultOutput(
+      parseCliOutputArguments([]),
+      new Writable(),
+    );
     if (output === undefined) throw new Error("Missing output owner");
     streamCliCommandResults(cli, output);
     let text = "";
@@ -120,10 +130,41 @@ describe("CLI formatting stage admission", () => {
 });
 
 describe("CLI formatting recovery outcomes", () => {
+  it("formats a recovered Markdown result through the CLI Markdown owner", async () => {
+    const cause = new RangeError("Invalid string length");
+    const chunks: Buffer[] = [];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(["--format", "md"]),
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      }),
+    );
+    const value = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw cause;
+        },
+      },
+    );
+
+    expect(await output?.write(value, { ...metadata, format: "md" })).toBe(
+      true,
+    );
+    expect(output?.error).toMatchObject({ code: "resource_constraint" });
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toContain("resource_constraint");
+    expect(text).toContain("original result was not written");
+    expect(output?.failed).toBe(false);
+  });
+
   it("retains ownership if the recovery document cannot be written", async () => {
     const cause = new RangeError("Invalid string length");
     const output = createCliResultOutput(
-      [],
+      parseCliOutputArguments([]),
       new Writable({
         write(_chunk, _encoding, callback) {
           callback(cause);
@@ -140,7 +181,7 @@ describe("CLI formatting recovery outcomes", () => {
   it("does not replace a failed destination, even for the same RangeError", async () => {
     const cause = new RangeError("Invalid string length");
     const output = createCliResultOutput(
-      ["--json"],
+      parseCliOutputArguments(["--json"]),
       new Writable({
         write(_chunk, _encoding, callback) {
           callback(cause);
@@ -158,7 +199,7 @@ describe("CLI formatting recovery outcomes", () => {
   it("retains the original failure identity and ignores large details on recovery", async () => {
     const chunks: Buffer[] = [];
     const output = createCliResultOutput(
-      [],
+      parseCliOutputArguments([]),
       new Writable({
         write(chunk: Buffer, _encoding, callback) {
           chunks.push(chunk);

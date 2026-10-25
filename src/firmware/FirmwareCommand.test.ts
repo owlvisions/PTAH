@@ -8,6 +8,7 @@ import { expect, it as test, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import { FirmwareFileAccess } from "./FirmwareFiles.js";
 import {
   resolveFirmwareCommand,
@@ -16,6 +17,7 @@ import {
 import {
   spawnOwnedProviderProcess,
   type ProviderProcessHandle,
+  type OwnedProviderProcessSpawnOptions,
 } from "../process/ProviderProcess.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
@@ -38,6 +40,7 @@ it.each([
         : { caller: "opaque admission cancellation" };
     const retainCleanup = vi.fn();
     const failure: unknown = await runFirmwareCommand({
+      fileSizeCeiling: Number.MAX_SAFE_INTEGER,
       engine: "binwalk",
       operation: "inspect_firmware_regions",
       command: "/usr/bin/true",
@@ -88,6 +91,7 @@ it("does not relabel an unrelated launch failure when a deadline also fires", as
   const failure = new Error("distinct launch refusal");
   await expect(
     runFirmwareCommand({
+      fileSizeCeiling: Number.MAX_SAFE_INTEGER,
       engine: "binwalk",
       operation: "inspect_firmware_regions",
       command: "/usr/bin/true",
@@ -226,6 +230,7 @@ it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
   }, 15);
   const analysis = new AbortController();
   const failure: unknown = await runFirmwareCommand({
+    fileSizeCeiling: Number.MAX_SAFE_INTEGER,
     engine: "binwalk",
     operation: "inspect_firmware_regions",
     command: "/opt/binwalk",
@@ -278,3 +283,55 @@ const executableFixture = async (root: string, name: string) => {
   await chmod(path, 0o700);
   return path;
 };
+
+test.each([
+  {
+    selected: 1,
+    inherited: Number.MAX_SAFE_INTEGER,
+    expected: 8 * 1024 * 1024,
+  },
+  {
+    selected: 16 * 1024 * 1024,
+    inherited: Number.MAX_SAFE_INTEGER,
+    expected: 16 * 1024 * 1024,
+  },
+  { selected: 16 * 1024 * 1024, inherited: 1024, expected: 1024 },
+])(
+  "separates payload $selected from metadata file headroom and inherited ceiling $inherited",
+  async ({ selected, inherited, expected }) => {
+    const root = await createTestTempDirectory("rea-firmware-file-policy-");
+    const refused = new Error("stop after inspecting launch policy");
+    const launcher = vi.fn(
+      async (options: OwnedProviderProcessSpawnOptions) => {
+        expect(options.arguments).toContain(`--fsize=${expected}:${expected}`);
+        expect(options.arguments).toContain(
+          `--as=${FIRMWARE_LIMITS.addressSpaceBytes}:${FIRMWARE_LIMITS.addressSpaceBytes}`,
+        );
+        throw refused;
+      },
+    );
+    await expect(
+      runFirmwareCommand({
+        engine: "unblob",
+        operation: "extract_firmware",
+        command: "/synthetic/unblob",
+        limiter: "/synthetic/prlimit",
+        fileSizeCeiling: inherited,
+        args: [],
+        cwd: root,
+        environment: {},
+        signal: new AbortController().signal,
+        deadline: {
+          phase: "analysis",
+          signal: new AbortController().signal,
+          timeoutMs: 120_000,
+          expiresAtMs: performance.now() + 120_000,
+        },
+        launcher,
+        outputBudget: { root, bytes: selected, entries: 10 },
+        retainCleanup: vi.fn(),
+      }),
+    ).rejects.toBe(refused);
+    expect(launcher).toHaveBeenCalledOnce();
+  },
+);

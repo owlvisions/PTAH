@@ -127,9 +127,11 @@ export class WebModuleTraceService {
     if (!bound.ok) return bound;
     const selected = bound.value;
     const importerUrl = input.importer_url ?? selected.url;
-    const importerAdmission = admitContext(importerUrl, ["importer_url"]);
-    if (!importerAdmission.ok) return importerAdmission;
-    const syntax = collectWebModuleImports(data.source);
+    if (input.importer_url === undefined) {
+      const importerAdmission = admitContext(importerUrl);
+      if (!importerAdmission.ok) return importerAdmission;
+    }
+    const syntax = collectWebModuleImports(data.source, data.sourceFile.path);
     const literals = syntax.imports
       .filter((reference) => reference.specifier !== null)
       .map((reference) => reference.specifier ?? "");
@@ -259,7 +261,7 @@ export class WebModuleTraceService {
       },
       {
         operation: OPERATION,
-        parameters: jsonObjectSchema.parse(input),
+        parameters: input,
         result: normalized.data,
         rawResult: resolution?.rawResult ?? null,
         confidence: "derived",
@@ -285,34 +287,50 @@ export class WebModuleTraceService {
 
 const admitContext = (
   value: string,
-  path: readonly string[],
+  path?: readonly string[],
 ): Result<null, AnalysisError> => {
+  const reportedUnavailable = () =>
+    err(
+      new AnalysisCapabilityUnavailableError(
+        "web-module-resolution",
+        OPERATION,
+        "reported_source_context_unavailable",
+        {
+          userMessage:
+            "The manifest's reported source URL is not a usable HTTP(S) module context. Select importer_url explicitly for this script.",
+        },
+      ),
+    );
   let url: URL;
   try {
     url = new URL(value);
   } catch (cause: unknown) {
     void cause;
+    if (path === undefined) return reportedUnavailable();
     return invalid(
       path,
       "Expected an absolute context URL. Select importer_url explicitly when the reported source URL is unknown.",
     );
   }
-  if (url.username !== "" || url.password !== "")
+  if (url.username !== "" || url.password !== "") {
+    if (path === undefined) return reportedUnavailable();
     return invalid(
       path,
       "Module context URLs must not contain username/password userinfo.",
     );
-  if (url.protocol !== "http:" && url.protocol !== "https:")
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
     return err(
       new AnalysisCapabilityUnavailableError(
         "web-module-resolution",
         OPERATION,
         "unsupported_context_scheme",
         {
-          userMessage: `${path.join(".")} ${value} uses unsupported ${url.protocol} context. This trace currently supports HTTP(S) importer/map contexts; select a supported context explicitly when appropriate.`,
+          userMessage: `${path?.join(".") ?? "The reported source URL"} ${value} uses unsupported ${url.protocol} context. This trace currently supports HTTP(S) importer/map contexts; select a supported context explicitly when appropriate.`,
         },
       ),
     );
+  }
   return ok(null);
 };
 const invalid = (path: readonly string[], message: string) =>

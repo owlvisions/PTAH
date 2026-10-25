@@ -21,8 +21,8 @@ import {
   type EnvironmentBundleOptions,
 } from "./environmentBundle.js";
 import type { EnvironmentSource } from "./environmentSource.js";
-import { prepareServedState } from "./environmentState.js";
-import { environmentToolAnswer } from "./environmentStateAnswer.js";
+import { prepareServedState, servedCatalog } from "./environmentState.js";
+import { environmentToolAnswer } from "./environmentToolAnswer.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 
 const fixture = environmentServeFixture();
@@ -218,7 +218,9 @@ describe("planEnvironmentBundle", () => {
     expect(readme).not.toContain("agent-env run grafana-example");
     expect(readme).toContain("## What the environment serves");
     expect(readme).not.toContain("What replay means");
-    expect(readme).toContain("write tools are not served yet");
+    expect(readme).toContain(
+      "write tools are served only where the capture's later reads confirmed\ntheir effect",
+    );
     expect(readme).toContain(
       "`rea environment-serve --replay-only` serves pure replay",
     );
@@ -386,21 +388,51 @@ describe("planEnvironmentBundle without a state", () => {
   });
 
   it("serves and predicts replay when the state's catalog exceeds the discovery budget that replay's fits", () => {
-    // Read tools only, so leaving out write tools saves nothing while each state description is longer.
-    // 300 sits between the two catalogs on this fixture: replay still fits and the state catalog does not.
+    // Locate the state admission boundary instead of pinning a count to description sizes.
     const reads = servedSource.manifest.tools.filter(
       ({ method }) => method === "GET",
     );
-    const tools = Array.from({ length: 300 }, (_, index) => {
-      const tool = reads[index % reads.length]!;
-      return index < reads.length
-        ? tool
-        : { ...tool, name: `${tool.name}_${String(index)}` };
-    });
-    const source = {
+    expect(reads.length).toBeGreaterThan(0);
+    const sourceAt = (count: number): EnvironmentSource => ({
       ...servedSource,
-      manifest: { ...servedSource.manifest, tools },
-    };
+      manifest: {
+        ...servedSource.manifest,
+        tools: Array.from({ length: count }, (_, index) => {
+          const tool = reads[index % reads.length]!;
+          return index < reads.length
+            ? tool
+            : { ...tool, name: `${tool.name}_${String(index)}` };
+        }),
+      },
+    });
+    const stateFits = (count: number): boolean =>
+      servedCatalog(
+        sourceAt(count),
+        { writes: new Map() },
+        servedSource.manifest.name,
+      ).ok;
+    let fitting = 0;
+    let exceeding = reads.length;
+    // This fixture ceiling bounds setup if catalog admission stops refusing.
+    const fixtureToolLimit = 4096;
+    while (exceeding < fixtureToolLimit && stateFits(exceeding)) {
+      fitting = exceeding;
+      exceeding = Math.min(exceeding * 2, fixtureToolLimit);
+    }
+    expect(
+      stateFits(exceeding),
+      "State discovery must exceed its budget within the fixture safety ceiling",
+    ).toBe(false);
+    while (exceeding - fitting > 1) {
+      const middle = Math.floor((fitting + exceeding) / 2);
+      if (stateFits(middle)) fitting = middle;
+      else exceeding = middle;
+    }
+    const source = sourceAt(exceeding);
+    expect(
+      servedCatalog(source, undefined, source.manifest.name).ok,
+      "The fixture must fit replay discovery while exceeding state discovery",
+    ).toBe(true);
     const prepared = prepareServedState(source, fixture.capture);
     expect(prepared.state).toBeUndefined();
     expect(prepared.report).toMatchObject({
@@ -417,7 +449,7 @@ describe("planEnvironmentBundle without a state", () => {
       served: false,
       code: "resource_constraint",
     });
-    expect(planned.value.toolCount).toBe(300);
+    expect(planned.value.toolCount).toBe(source.manifest.tools.length);
     expect(planned.value.check).toEqual({
       tool: "get_annotations",
       recordOrdinal: 25,

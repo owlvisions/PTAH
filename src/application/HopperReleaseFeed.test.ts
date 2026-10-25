@@ -46,6 +46,10 @@ describe("Linux Hopper release feed boundary", () => {
         "https://other.example/downloader/public/Hopper-99.2.1-Linux-demo.deb",
     },
     { filename: release.filename + "?token=caller" },
+    { filename: release.filename + "?" },
+    { filename: release.filename + "#" },
+    { filename: release.filename + "?#" },
+    { filename: release.filename + "#selection" },
     {
       filename: release.filename.replace("https://", "https://user:password@"),
     },

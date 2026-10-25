@@ -1,10 +1,37 @@
 import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
 import { readPeImage } from "./PeImage.js";
+import { pe } from "../../domain/binaryTarget.fixture.js";
+import { BinaryFormatFailure } from "./BinaryContainer.js";
 import {
   createGoBinaryFixture,
   setGoPeVirtualSize,
 } from "../../../tests/fixtures/go/image.js";
+
+it("classifies a confirmed overlapping PE as an unsupported layout", () => {
+  try {
+    readPeImage(pe(0x014c, 4));
+    throw new Error("Expected an unsupported PE layout");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(BinaryFormatFailure);
+    expect(cause).toMatchObject({ kind: "unsupported" });
+    expect((cause as Error).message).toContain("overlapping PE header");
+  }
+});
+
+it("reports complete DOS MZ images as outside the PE reader", () => {
+  const bytes = Buffer.alloc(128);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt16LE(128, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes.writeUInt16LE(2, 6);
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt16LE(28, 24);
+  bytes.write("ABCD", 60, "ascii");
+  expect(() => readPeImage(bytes)).toThrow(
+    "DOS MZ images are outside the supported ELF, PE and thin Mach-O formats",
+  );
+});
 
 it.each([32, 64] as const)(
   "uses raw-size fallback for PE%d Go build-info and keeps RVA mappings intact",
@@ -84,5 +111,47 @@ it.each(["inline", "pointer"] as const)(
     });
     expect(container).not.toHaveProperty("data_ranges");
     expect(readGoBinaryImage(fixture.bytes).build_info).toBeNull();
+  },
+);
+
+it.each([
+  [0x014c, 0x7b79, "386", 32],
+  [0x8664, 0x7b79, "amd64", 64],
+  [0x01c0, 0x4644, "arm", 32],
+  [0xaa64, 0x4644, "arm64", 64],
+] as const)(
+  "shares managed PE machine identity for %s with override %s",
+  (machine, override, architecture, bits) => {
+    const bytes = pe(machine, 64, 0x2002, true);
+    bytes.writeUInt16LE(machine ^ override, 68);
+    expect(readPeImage(bytes)).toMatchObject({
+      pe_machine: machine ^ override,
+      architecture,
+      bits,
+    });
+  },
+);
+
+it.each([0x014c, 0x8664] as const)(
+  "rejects a contradictory optional-header width for COFF machine %s",
+  (machine) => {
+    const bytes = pe(machine);
+    bytes.writeUInt16LE(machine === 0x014c ? 0x20b : 0x10b, 88);
+    expect(() => readPeImage(bytes)).toThrow(
+      "PE optional-header magic does not match its architecture",
+    );
+  },
+);
+
+it.each([0xffff, 0x8664 ^ 0x7b79])(
+  "retains raw unknown machine %s without managed override proof",
+  (machine) => {
+    const bytes = pe(0x8664);
+    bytes.writeUInt16LE(machine, 68);
+    expect(readPeImage(bytes)).toMatchObject({
+      pe_machine: machine,
+      architecture: `pe-machine-${machine}`,
+      bits: 64,
+    });
   },
 );

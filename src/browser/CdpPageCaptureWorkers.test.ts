@@ -125,3 +125,49 @@ describe("web worker target inventory", () => {
     );
   });
 });
+
+it.each([`${origin}/worker.js`, ""])(
+  "keeps an unattributed worker unavailable rather than policy filtered: %s",
+  async (url) => {
+    const result = await capture({
+      targetInfos: [
+        { targetId: "worker", type: "worker", url, attached: false },
+      ],
+    });
+    expect(result.workers).toEqual([]);
+    expect(result.completeness).toMatchObject({
+      status: "attach_limited",
+      conditions: ["attach_limited"],
+      unavailable_sections: ["workers"],
+      policy_filtered_sections: [],
+      excluded: [
+        { section: "workers", reason: "unattributed_target", count: 1 },
+      ],
+    });
+  },
+);
+
+it.each([{ openerId: "" }, { parentFrameId: null }])(
+  "retains invalid supplied relationship coverage: %j",
+  async (relationship) => {
+    const result = await capture({
+      targetInfos: [
+        {
+          targetId: "worker",
+          type: "worker",
+          url: `${origin}/worker.js`,
+          attached: false,
+          ...relationship,
+        },
+      ],
+    });
+    expect(result.workers).toEqual([]);
+    expect(result.completeness).toMatchObject({
+      unavailable_sections: ["workers"],
+      policy_filtered_sections: [],
+      excluded: [
+        { section: "workers", reason: "invalid_protocol_value", count: 1 },
+      ],
+    });
+  },
+);

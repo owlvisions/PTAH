@@ -1,10 +1,13 @@
 import * as t from "@babel/types";
+import { javaScriptProgramStrictness } from "./javascriptSourceParser.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
   semanticEffectTiming,
   semanticBindingEffectFollowsCapture,
+  semanticBindingEffectFollowsRead,
+  semanticReadPrecedesEffectWithinActivation,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   isUnshadowedGlobal,
@@ -62,7 +65,7 @@ export const createSemanticOpaqueGlobalObserver = (
   let invocationSite: t.Node | undefined;
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
-      const paths = ambientPaths(node, invocationSite);
+      const paths = ambientPaths(node, invocationSite).paths;
       const path = paths.find((path) => path[1] === "eval") ?? paths[0];
       if (path?.[0] !== "global" || path.some((key) => key === null))
         return undefined;
@@ -133,6 +136,17 @@ export const semanticBindingMayHaveOpaqueEffect = (
           read,
           effect,
           state.parentsByNode,
+        ) &&
+        // Rebinding a freshly initialized local is activation-specific;
+        // mutations to the referenced object may persist across calls.
+        !(
+          kind === "binding" &&
+          semanticBindingEffectFollowsRead(
+            binding,
+            read,
+            effect,
+            state.parentsByNode,
+          )
         ))
     )
       return true;
@@ -185,7 +199,13 @@ export const semanticOpaqueNameMayHaveChanged = (
           (binding === undefined ||
             resolveSemanticBindingState(state, effect, binding.name)
               ?.bindingId === binding.bindingId) &&
-          semanticEffectTiming(read, effect, state) !== "after",
+          semanticEffectTiming(read, effect, state) !== "after" &&
+          // A sloppy-eval name belongs to this activation, not a prior call.
+          !semanticReadPrecedesEffectWithinActivation(
+            read,
+            effect,
+            state.parentsByNode,
+          ),
       )
     )
       return true;
@@ -238,11 +258,13 @@ const strictEval = (
     node !== undefined;
     node = state.parentsByNode.get(node)
   ) {
-    if (t.isClass(node) || (t.isProgram(node) && node.sourceType === "module"))
+    if (
+      t.isClass(node) ||
+      (t.isProgram(node) && javaScriptProgramStrictness(node) === "strict")
+    )
       return true;
-    const directives = t.isProgram(node)
-      ? node.directives
-      : t.isFunction(node) && t.isBlockStatement(node.body)
+    const directives =
+      t.isFunction(node) && t.isBlockStatement(node.body)
         ? node.body.directives
         : [];
     if (directives.some(({ value }) => value.value === "use strict"))

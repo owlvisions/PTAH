@@ -133,15 +133,50 @@ describe("portable PE resource parsing", () => {
     const fixture = peResourceFixture(false, []);
     expect(await parse(fixture.bytes)).toMatchObject({
       directory: { rva: 0x2000 },
+      directories: [{ path: [], entry_locations: [] }],
       resources: [],
       coverage: { resources: 0, examined_entries: 0 },
     });
     fixture.bytes.fill(0, fixture.directoryAt, fixture.directoryAt + 8);
     expect(await parse(fixture.bytes)).toMatchObject({
       directory: null,
+      directories: [],
       resources: [],
     });
   });
+
+  it.each([10, 11, "named type"])(
+    "retains identity and incoming entry ranges for empty branch %s",
+    async (type) => {
+      const fixture = peResourceFixture(false, [
+        { type, name: 7, language: 1033, payload: Buffer.from("control") },
+      ]);
+      const populated = peResourcesSchema.parse(await parse(fixture.bytes));
+      expect(populated.resources[0]?.type).toMatchObject(
+        typeof type === "number"
+          ? { kind: "id", id: type }
+          : { kind: "name", name: type },
+      );
+      // Empty the type directory while retaining its incoming root entry.
+      const typeDirectory = fixture.directoryOffsets[1]!;
+      fixture.bytes.writeUInt16LE(0, typeDirectory + 12);
+      fixture.bytes.writeUInt16LE(0, typeDirectory + 14);
+      const report = peResourcesSchema.parse(await parse(fixture.bytes));
+      expect(report.resources).toEqual([]);
+      expect(report.directories.map(({ path }) => path)).toEqual([
+        [],
+        [populated.resources[0]!.type],
+      ]);
+      expect(report.directories[1]?.entry_locations).toEqual([
+        populated.resources[0]!.entry_locations[0],
+      ]);
+      expect(report.coverage).toEqual({
+        status: "complete",
+        examined_entries: 1,
+        resources: 0,
+      });
+    },
+  );
 
   it.each([
     [

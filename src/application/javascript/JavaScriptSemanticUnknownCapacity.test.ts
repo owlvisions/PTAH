@@ -1,3 +1,4 @@
+import { javaScriptSemanticQueryInputSchema } from "../../domain/javascript/javascriptSemanticQuerySchemas.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -83,10 +84,13 @@ it("bounds unknowns independently of retained nodes and accounts for examined om
   );
   expect(javaScriptSemanticGraphSchema.parse(graph)).toEqual(graph);
   expect(
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "property", name: "missing" },
-      direction: "backward-provenance",
-    }),
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "property", name: "missing" },
+        direction: "backward-provenance",
+      }),
+    ),
   ).toMatchObject({ status: "partial", coverage: { status: "partial" } });
 });
 

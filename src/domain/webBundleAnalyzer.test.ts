@@ -1,21 +1,23 @@
+import {
+  projectAnalysisView,
+  analysisViewRequestSchema,
+} from "./analysisView/analysisView.js";
 import { describe, expect, it } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
 import { analyzeJavaScriptStaticSource } from "./javascript/javascriptStaticAnalysis.js";
-import {
-  analyzeCapturedWebBundle,
-  analyzeCapturedWebScript,
-} from "./webBundleAnalyzer.js";
+import { analyzeCapturedWebScript } from "./webBundleAnalyzer.js";
+import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
 import { buildCapturedWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
-import { isIncludedScript } from "./webBundleAnalyzerInspection.js";
+import { isIncludedScript } from "./webBundleAnalyzerState.js";
 import { webBundleScriptAnalysisSchema } from "./webBundleScriptAnalysis.js";
 import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
 it("retains standalone GraphQL Source operations in captured scripts", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
     const source = {
       body: "query GetUser { user { id } }",
@@ -53,7 +55,7 @@ it.each([
     if (good === undefined) throw new Error("Missing valid script fixture");
     captured.scripts.items.push({ ...good, script_key: "valid-script" });
     captured.scripts.total += 1;
-    const result = analyzeCapturedWebBundle(captured);
+    const result = analyzeWebBundleFixture(captured);
     expect(result.completeness).toMatchObject({
       status: "partial",
       parsed_scripts: parsed,
@@ -94,7 +96,7 @@ it.each([
   "shares Map receiver certainty with application analysis: %s",
   (source, candidate) => {
     const input = source + " fetch('/network');";
-    const result = analyzeCapturedWebBundle(inspection(input));
+    const result = analyzeWebBundleFixture(inspection(input));
     expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
       "/network",
     ]);
@@ -136,7 +138,7 @@ it("discloses widened returned-reference effects only for the affected script", 
   if (independent === undefined) throw new Error("Missing independent script");
   captured.scripts.items.push({ ...independent, script_key: "independent" });
   captured.scripts.total += 1;
-  const result = analyzeCapturedWebBundle(captured);
+  const result = analyzeWebBundleFixture(captured);
   expect(result.completeness).toMatchObject({
     status: "partial",
     parsed_scripts: 2,
@@ -221,7 +223,7 @@ it.each([
 ])(
   "preserves WebMCP facts through $label",
   ({ source, name, description, properties, coverage }) => {
-    const result = analyzeCapturedWebBundle(inspection(source));
+    const result = analyzeWebBundleFixture(inspection(source));
 
     expect(result.observations.webmcp_declarations).toEqual([
       expect.objectContaining({
@@ -266,7 +268,7 @@ it.each([
 ])(
   "preserves rightmost uncertainty for $label",
   ({ source, name, description, properties, coverage }) => {
-    const result = analyzeCapturedWebBundle(inspection(source));
+    const result = analyzeWebBundleFixture(inspection(source));
 
     expect(result.observations.webmcp_declarations).toEqual([
       expect.objectContaining({
@@ -371,7 +373,7 @@ it.each([
 ])(
   "preserves WebMCP schema ownership for $label",
   ({ source, name, properties, coverage }) => {
-    const result = analyzeCapturedWebBundle(inspection(source));
+    const result = analyzeWebBundleFixture(inspection(source));
 
     expect(result.observations.webmcp_declarations).toEqual([
       expect.objectContaining({
@@ -404,7 +406,7 @@ describe("web bundle analyzer", () => {
       });
       const __webpack_require__ = () => createApp(routes, lazy);
     `;
-    const result = analyzeCapturedWebBundle(inspection(source));
+    const result = analyzeWebBundleFixture(inspection(source));
 
     expect(result.observations.chunks.edges).toEqual(
       expect.arrayContaining([
@@ -447,14 +449,14 @@ describe("web bundle analyzer", () => {
 
   it("reports parser gaps without imposing a finding cap", () => {
     const malformed = inspection("function broken( {");
-    const failed = analyzeCapturedWebBundle(malformed);
+    const failed = analyzeWebBundleFixture(malformed);
     expect(failed.completeness).toMatchObject({
       status: "partial",
       parse_failures: 1,
     });
     expect(failed.unknowns[0]?.dimension).toBe("javascript_ast");
 
-    const analyzed = analyzeCapturedWebBundle(
+    const analyzed = analyzeWebBundleFixture(
       inspection("fetch('/one'); fetch('/two'); fetch('/three');"),
     );
     expect(analyzed.observations.endpoints).toHaveLength(3);
@@ -463,7 +465,7 @@ describe("web bundle analyzer", () => {
 
   it("analyzes AST nodes after the former fixed node ceiling", () => {
     const source = `${";".repeat(250_001)}fetch('/last');`;
-    const result = analyzeCapturedWebBundle(inspection(source));
+    const result = analyzeWebBundleFixture(inspection(source));
 
     expect(result.observations.endpoints).toContainEqual(
       expect.objectContaining({ value: "/last" }),
@@ -477,7 +479,7 @@ describe("web bundle analyzer", () => {
     const name = "tool".repeat(100);
     const description = "untrusted declaration ".repeat(150);
     const propertyName = "property".repeat(100);
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection(`
         import "${specifier}";
         document.modelContext.registerTool({
@@ -501,7 +503,7 @@ describe("web bundle analyzer", () => {
 
 describe("web bundle source-map coverage", () => {
   it("reports unavailable source maps as partial without dropping requested maps", () => {
-    const analysis = analyzeCapturedWebBundle(inspection("export {};"), {
+    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
       status: "unavailable",
       requested: 1,
       processed: 1,
@@ -530,7 +532,7 @@ describe("web bundle source-map coverage", () => {
   });
 
   it("keeps map-less captured source complete when no maps were requested", () => {
-    const analysis = analyzeCapturedWebBundle(inspection("export {};"), {
+    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
       status: "not_requested",
       requested: 0,
       processed: 0,
@@ -542,7 +544,7 @@ describe("web bundle source-map coverage", () => {
   });
 
   it("rejects inconsistent source-map coverage counts", () => {
-    const result = analyzeCapturedWebBundle(inspection("export {};"));
+    const result = analyzeWebBundleFixture(inspection("export {};"));
     expect(
       webBundleAnalysisSchema.safeParse({
         ...result,
@@ -560,7 +562,7 @@ describe("web bundle source-map coverage", () => {
 
 describe("web bundle static-analysis parity", () => {
   it("recognizes endpoints through nested dynamic receivers like static analysis", () => {
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection('window[recv].fetch("/nested-fetch");'),
     );
     expect(result.observations.endpoints).toContainEqual(
@@ -569,7 +571,7 @@ describe("web bundle static-analysis parity", () => {
   });
 
   it("reads open endpoints only from XMLHttpRequest method and URL pairs", () => {
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection(`
         xhr.open("GET", "/xhr-get");
         xhr.open("post", "https://xhr.example.test/submit");
@@ -628,7 +630,7 @@ describe("web bundle API classification parity", () => {
       indexedDB.open("GET", "/storage-named-xhr");
     `;
     expect(
-      analyzeCapturedWebBundle(inspection(source)).observations.endpoints.map(
+      analyzeWebBundleFixture(inspection(source)).observations.endpoints.map(
         ({ value }) => value,
       ),
     ).toEqual(["/storage-named-xhr"]);
@@ -645,7 +647,7 @@ describe("web bundle API classification parity", () => {
   });
 
   it("uses lexical receiver facts for overloaded open calls", () => {
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection(`
         const popup = window;
         popup.open(url, "/preview");
@@ -672,7 +674,7 @@ describe("web bundle API classification parity", () => {
       const xhr = new XMLHttpRequest();
       xhr?.open(method, "/api");
     `;
-    const bundle = analyzeCapturedWebBundle(inspection(source));
+    const bundle = analyzeWebBundleFixture(inspection(source));
     expect(bundle.observations.endpoints.map(({ value }) => value)).toEqual([
       "/api",
     ]);
@@ -686,7 +688,7 @@ describe("web bundle API classification parity", () => {
   });
 
   it("keeps HTTP-method-named reads of provable keyed collections out of endpoints", () => {
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection(`
         axios.get("https://api.example.test/users");
         api.get("users");
@@ -724,7 +726,7 @@ describe("web bundle API classification parity", () => {
   });
 
   it("keeps undici header-store reads out of endpoint observations", () => {
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection(`
         response.headersList.get("location", true);
         request.headersList.delete("authorization");
@@ -825,7 +827,7 @@ describe("web bundle explicit request reference forms", () => {
       "POST",
       "X",
     ].sort();
-    const web = analyzeCapturedWebBundle(inspection(source));
+    const web = analyzeWebBundleFixture(inspection(source));
     expect(web.observations.endpoints.map(({ value }) => value).sort()).toEqual(
       expected,
     );
@@ -865,7 +867,7 @@ describe("web bundle endpoint candidate classification", () => {
       xhr.open(method, "login");
       xhr.open("GET", "ping");
     `;
-    const result = analyzeCapturedWebBundle(inspection(source));
+    const result = analyzeWebBundleFixture(inspection(source));
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
     ).toEqual(["login", "ping"]);
@@ -915,7 +917,7 @@ describe("web bundle endpoint candidate classification", () => {
     const first = captured.scripts.items[0];
     if (first === undefined) throw new Error("Missing captured script fixture");
     const secondKey = `scr_${"2".repeat(64)}`;
-    const result = analyzeCapturedWebBundle({
+    const result = analyzeWebBundleFixture({
       ...captured,
       scripts: {
         total: 2,
@@ -1007,7 +1009,7 @@ describe("web bundle configuration and navigation parity", () => {
       "shadowed",
       "users",
     ];
-    const web = analyzeCapturedWebBundle(inspection(source));
+    const web = analyzeWebBundleFixture(inspection(source));
     expect(web.observations.endpoints).toEqual([]);
     expect(
       web.inferences
@@ -1032,7 +1034,7 @@ describe("web bundle configuration and navigation parity", () => {
       api.get("users");
     `;
     const analyze = (source: string) => {
-      const web = analyzeCapturedWebBundle(inspection(source));
+      const web = analyzeWebBundleFixture(inspection(source));
       const staticAnalysis = analyzeJavaScriptStaticSource(source);
       return {
         web: {
@@ -1086,7 +1088,7 @@ describe("web bundle configuration and navigation parity", () => {
   });
 
   it("recognizes loadURL endpoints like static analysis", () => {
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection('window.win.loadURL("https://embedded.test/app");'),
     );
     expect(result.observations.endpoints).toContainEqual(
@@ -1096,8 +1098,19 @@ describe("web bundle configuration and navigation parity", () => {
 });
 
 describe("web bundle artifact metadata", () => {
+  it("retains only a validated HTTP target origin", () => {
+    expect(
+      analyzeWebBundleFixture(inspection("export {};")).capture.target_origin,
+    ).toBe(origin);
+
+    const nonHttp = inspection("export {};");
+    nonHttp.target.url = "ftp://host/app";
+    nonHttp.target.origin = "ftp://host";
+    expect(analyzeWebBundleFixture(nonHttp).capture.target_origin).toBeNull();
+  });
+
   it("preserves long provider media types in artifact summaries", () => {
-    const result = analyzeCapturedWebBundle(inspection("export {};"));
+    const result = analyzeWebBundleFixture(inspection("export {};"));
     const mediaType = `application/${"x".repeat(300)}`;
     const artifact = result.capture.source_artifacts[0] ?? {
       sha256: "0".repeat(64),
@@ -1122,7 +1135,7 @@ describe("web bundle artifact metadata", () => {
 describe("deep captured web bundle syntax", () => {
   it("retains evidence after a parser-admitted deep property chain", () => {
     const source = `const value = root${".next".repeat(12_000)};\nimport "./last.js";\nfetch("/after");`;
-    const result = analyzeCapturedWebBundle(inspection(source));
+    const result = analyzeWebBundleFixture(inspection(source));
     expect(result.completeness).toMatchObject({
       status: "complete",
       parsed_scripts: 1,
@@ -1515,7 +1528,7 @@ it("rejects a failed parse that claims visited nodes or derived facts", () => {
 });
 
 it("recognizes expression-free template literals as route properties", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
       const routes = [
         { path: \`score-board\`, component: ScoreBoard },
@@ -1532,7 +1545,7 @@ it("recognizes expression-free template literals as route properties", () => {
 });
 
 it("uses the shared parser for decorated captured scripts", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`@sealed class Widget {} fetch('/decorated');`),
   );
 
@@ -1547,7 +1560,7 @@ it("uses the shared parser for decorated captured scripts", () => {
 });
 
 it("keeps bare module locations unresolved without inventing URL-relative paths", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
     import "package-name";
     import("@scope/package");
@@ -1575,7 +1588,7 @@ it("keeps bare module locations unresolved without inventing URL-relative paths"
 });
 
 it("retains each literal importScripts argument in source order", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(
       'importScripts("first.js", dynamicValue, "second.js", "first.js");',
     ),
@@ -1589,7 +1602,7 @@ it("retains each literal importScripts argument in source order", () => {
 
 describe("web metadata key semantics", () => {
   it("keeps computed metadata keys and overwrite order conservative", () => {
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection(`
       const path = "description";
       const routes = [{ [path]: "/not-a-route" }, { ["path"]: "/real" }];
@@ -1634,7 +1647,7 @@ describe("web metadata key semantics", () => {
   });
 
   it("projects only exact input schema property names", () => {
-    const result = analyzeCapturedWebBundle(
+    const result = analyzeWebBundleFixture(
       inspection(`
       document.modelContext.registerTool({
         name: "literal",
@@ -1715,7 +1728,7 @@ describe("web metadata key semantics", () => {
   });
 
   it("keeps missing coverage absent when parsing historical observations", () => {
-    const analyzed = analyzeCapturedWebBundle(
+    const analyzed = analyzeWebBundleFixture(
       inspection(
         `document.modelContext.registerTool({ name: "legacy", inputSchema: { properties: {} } });`,
       ),
@@ -1742,7 +1755,7 @@ describe("web metadata key semantics", () => {
 });
 
 it("retains WebMCP declarations through optional member and call chaining", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
       document.modelContext?.registerTool({ name: "optional member" });
       document.modelContext.registerTool?.({ name: "optional call" });
@@ -1762,7 +1775,7 @@ it("retains WebMCP declarations through optional member and call chaining", () =
 });
 
 it("reads expression-free template dynamic imports as chunk edges", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
         import(\`./lazy.js\`);
         import("./quoted.js");
@@ -1784,7 +1797,7 @@ it("reads expression-free template dynamic imports as chunk edges", () => {
 });
 
 it("does not infer call names from dynamic computed identifiers", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
         const fetch = "render";
         const require = "render";
@@ -1801,7 +1814,7 @@ it("does not infer call names from dynamic computed identifiers", () => {
 });
 
 it("retains direct and literal computed call names", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
         window.fetch("/direct");
         window["fetch"]("/literal");
@@ -1826,7 +1839,7 @@ it("retains direct and literal computed call names", () => {
 });
 
 it("requires WebMCP receiver and method names to occupy exact member segments", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
       navigator.modelContext.registerTool({ name: "navigator" });
       local.modelContext.registerTool({ name: "exact nested" });
@@ -1847,7 +1860,7 @@ it("requires WebMCP receiver and method names to occupy exact member segments", 
 });
 
 it("recognizes tRPC procedures and named GraphQL operations in captured scripts", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
       const n = createTRPCClient({ links: [httpBatchLink({ url: "/api/trpc" })] });
       e.invoice.list.useQuery({ competencia: "2026-09" });
@@ -1877,7 +1890,7 @@ it("keeps RPC lexical identity and bundled factory recognition in captured scrip
     "\nquery " +
     longOperation +
     " { users { id } }";
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
     function first() { const c = createTRPCClient({}); }
     function unrelated(c) { c.users.query("select 1"); }
@@ -1900,7 +1913,7 @@ it("keeps RPC lexical identity and bundled factory recognition in captured scrip
 });
 
 it("retains distinct WebMCP descriptions and names while deduplicating equivalent properties", () => {
-  const result = analyzeCapturedWebBundle(
+  const result = analyzeWebBundleFixture(
     inspection(`
       document.modelContext.registerTool({ name: "lookup", description: "first", inputSchema: { properties: { alpha: {} } } });
       document.modelContext.registerTool({ name: "lookup", description: "second", inputSchema: { properties: { alpha: {} } } });
@@ -1981,4 +1994,54 @@ it("retains distinct WebMCP descriptions and names while deduplicating equivalen
       ({ trust }) => trust === "page-declared-untrusted",
     ),
   ).toBe(true);
+});
+
+it("keeps known capture omissions in compact route summaries and queryable gap facts", () => {
+  const captured = inspection("createBrowserRouter([{path:'/reports'}]);");
+  captured.completeness.excluded.push(
+    { section: "scripts", reason: "resource_budget_exhausted", count: 3 },
+    {
+      section: "script_sources",
+      reason: "resource_budget_exhausted",
+      count: null,
+    },
+  );
+  const report = analyzeWebBundleFixture(captured),
+    parent = {
+      evidenceId: `ev_${"a".repeat(64)}`,
+      operation: "analyze_web_bundle",
+      normalizedResult: report,
+      limitations: report.limitations,
+      subject: null,
+    };
+  const summary = projectAnalysisView(
+    parent,
+    analysisViewRequestSchema.parse({
+      kind: "javascript-routes",
+      collection: "summary",
+    }),
+  );
+  if (!summary.ok) throw summary.error;
+  if (summary.value.kind !== "javascript-routes") throw new Error("Wrong view");
+  expect(summary.value.source_coverage.candidate_enumeration).toBe("partial");
+  expect(summary.value.summary!.reported_capture_omissions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ unit: "script-records", count: 3 }),
+      expect.objectContaining({ unit: "script-sources", count: null }),
+    ]),
+  );
+  const gaps = projectAnalysisView(
+    parent,
+    analysisViewRequestSchema.parse({
+      kind: "javascript-routes",
+      collection: "unknowns",
+      where: { kinds: ["capture-omission"] },
+      fields: ["capture_omission", "reason"],
+    }),
+  );
+  if (!gaps.ok) throw gaps.error;
+  if (gaps.value.kind !== "javascript-routes") throw new Error("Wrong view");
+  expect(gaps.value.items).toHaveLength(2);
+  for (const row of gaps.value.items)
+    expect(row).toMatchObject({ source_id: null, provenance: null });
 });

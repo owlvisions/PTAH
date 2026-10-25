@@ -18,7 +18,7 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 
 const createTemporaryRoot = (): Promise<string> =>
   mkdtemp(join(tmpdir(), "rea-mcp-process-cleanup-retry-"));

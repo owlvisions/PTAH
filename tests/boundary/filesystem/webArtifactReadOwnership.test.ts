@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
@@ -43,12 +43,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("retains cancelled source read ownership until service close retries it", async () => {
   const root = await createTestTempDirectory("rea-web-artifact-read-owner-");
-  onTestFinished(async () => {
+  onTestFinished(() => {
     injected.sourcePath = undefined;
     injected.abortController = undefined;
     injected.failClose = false;
     injected.closeAttempts = 0;
-    await rm(root, { recursive: true, force: true });
   });
   const source = 'import "./dep.js";';
   const fixture = webModuleArtifactsFixture(source);

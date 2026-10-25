@@ -6,9 +6,12 @@ import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { SqliteDatabaseService } from "../../../src/application/sqlite/SqliteDatabaseService.js";
+import { ArtifactFileCleanupFailure } from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { registerSqliteCommands } from "../../../src/cli/sqliteCommands.js";
 import { createSqliteDatabaseService } from "../../../src/composition/sqlite.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { silentLogger } from "../../../src/logger.js";
 import { SqliteDatabaseProvider } from "../../../src/sqlite/SqliteDatabaseProvider.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
@@ -325,6 +328,68 @@ it("retains reply-read cancellation and retries the failed reply descriptor clos
   });
   for (const root of selected.roots)
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("keeps a completed reply close failure primary when abort follows lease retention", async () => {
+  const selected = await fixture("reply");
+  const controller = new AbortController();
+  const reason = { requested: "abort after reply close failure capture" };
+  let retainedReplyLease: string | undefined;
+  const retain = ArtifactResourceScope.prototype.retain;
+  const retainSpy = vi
+    .spyOn(ArtifactResourceScope.prototype, "retain")
+    .mockImplementation(function (this: ArtifactResourceScope, owner) {
+      retain.call(this, owner);
+      if (owner.kind === "lease" && owner.resource === descriptorCleanup.path) {
+        retainedReplyLease = owner.resource;
+        controller.abort(reason);
+      }
+    });
+
+  try {
+    const result = await selected.provider.inspect(
+      { path: selected.database.path },
+      { signal: controller.signal },
+    );
+    expect(controller.signal.aborted).toBe(true);
+    expect(controller.signal.reason).toBe(reason);
+    expect(retainedReplyLease).toBe(descriptorCleanup.path);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+
+    const primary =
+      result.error instanceof AnalysisOutputError
+        ? result.error
+        : result.error.cleanupPrimary;
+    expect(primary).toBeInstanceOf(AnalysisOutputError);
+    if (!(primary instanceof AnalysisOutputError)) return;
+    expect(primary).not.toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect(primary.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
+    expect(primary.cause).toMatchObject({
+      fileCleanupFailure: {
+        path: descriptorCleanup.path,
+        outcome: { kind: "completed" },
+        completionCancellation: undefined,
+      },
+    });
+    expect(primary.cleanupIncomplete).toBe(true);
+    expect(primary.cleanupResources).toContain(descriptorCleanup.path);
+
+    const handle = descriptorCleanup.handles[0];
+    if (handle === undefined)
+      throw new Error("Expected owned reply descriptor");
+    expect(handle.fd).toBeGreaterThanOrEqual(0);
+    expect(descriptorCleanup.attempts).toBe(1);
+
+    descriptorCleanup.denied = false;
+    await selected.provider.close();
+    expect(descriptorCleanup.attempts).toBe(2);
+    expect(handle.fd).toBe(-1);
+    expect(primary.cleanupIncomplete).toBe(false);
+    expect(primary).toBeInstanceOf(AnalysisOutputError);
+  } finally {
+    retainSpy.mockRestore();
+  }
 });
 
 it("retries source cleanup before admitting another snapshot", async () => {

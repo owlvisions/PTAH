@@ -19,11 +19,10 @@ import {
   nativeUiDeadlineField,
 } from "../domain/native/nativeDeadlines.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { logCliCommand } from "../cliLogging.js";
+import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { swiftSymbolsSchema } from "../contracts/native/nativeToolContracts.js";
 import type { Logger } from "pino";
-import { isReferenceSourceImportCliFailure } from "./referenceSourceImportStatus.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
 
@@ -121,16 +120,14 @@ const registerNativeUiCommands = (
       ...nativeUiScopeOptions,
       steps: z
         .string()
-        .optional()
-        .describe("JSON array of declarative AX actions or waits"),
+        .describe(
+          "Required JSON array of one or more declarative AX actions or waits",
+        ),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.captureNativeUiScenario, async () => {
         const parameters = nativeUiScope(options);
-        const decoded =
-          options.steps === undefined
-            ? { ok: true as const, value: undefined }
-            : safeParseJson(options.steps);
+        const decoded = safeParseJson(options.steps);
         if (!decoded.ok)
           return invalidNativeUiScenarioInput(operation, [
             { path: ["steps"], reason: "invalid_format", expected: "JSON" },
@@ -144,7 +141,7 @@ const registerNativeUiCommands = (
             operation,
             projectInputIssues(parsed.error.issues, {
               ...parameters,
-              ...(options.steps === undefined ? {} : { steps: decoded.value }),
+              steps: decoded.value,
             }),
           );
         const { native_ui_deadline_ms: deadline, ...scenario } = parsed.data;
@@ -341,7 +338,7 @@ const registerReferenceSourceCommand = (
               : undefined,
           );
         },
-        isReferenceSourceImportCliFailure,
+        isCliOperationFailure,
       ),
   });
 };

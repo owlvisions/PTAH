@@ -11,13 +11,16 @@ import { reconcileJavaScriptRuntimeEvidence } from "../../../../src/application/
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { mappedRuntimePaths } from "../../../../src/domain/javascript/javascriptRuntimeStaticCandidates.js";
 import { projectRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
+import { parseRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { electronPageInspectionSchema } from "../../../../src/domain/javascript/electronObservation.js";
 import {
-  parseRuntimeReconciliationInput,
+  readRuntimeReconciliationInput,
   reconcileJavaScriptRuntime,
 } from "../../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
-import { reconcileJavaScriptRuntimeInputSchema } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
-import { javascriptRuntimeReconciliationResultSchema } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import {
+  reconcileJavaScriptRuntimeInputSchema,
+  javascriptRuntimeReconciliationResultSchema,
+} from "../../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { electronActiveObservationInputSchema } from "../../../../src/domain/javascript/electronActiveObservation.js";
 import { createElectronActiveObservationFixtureResult } from "../../../../src/domain/javascript/electronActiveObservation.fixture.js";
 
@@ -28,12 +31,16 @@ import {
   electronRuntimeEvidence,
 } from "../../../fixtures/javascriptRuntimeReconciliation.js";
 
-const reconcileInput = (input: unknown) =>
-  reconcileJavaScriptRuntime(
-    parseRuntimeReconciliationInput(
-      reconcileJavaScriptRuntimeInputSchema.parse(input),
-    ),
+const readInput = (input: unknown) => {
+  const result = readRuntimeReconciliationInput(
+    reconcileJavaScriptRuntimeInputSchema.parse(input),
   );
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
+const reconcileInput = (input: unknown) =>
+  reconcileJavaScriptRuntime(readInput(input));
 
 it("preserves source-capture input paths for runtime Evidence", async () => {
   const root = await applicationFixture();
@@ -223,6 +230,119 @@ it("keeps static load states unknown when one scoped capture omits scripts", asy
       }),
     ]),
   );
+});
+
+it("preserves positive script matches without inventing worker absence when workers are unavailable", async () => {
+  const fixture = await applicationFixture();
+  const staticEvidence = await analyzeFixture(fixture);
+  const reconcile = (workersUnavailable: boolean) =>
+    reconcileInput({
+      static_layers: [{ role: "application", analysis: staticEvidence }],
+      runtime_observations: [
+        electronRuntimeEvidence(fixture, SOURCE, {
+          includeWorker: false,
+          workersUnavailable,
+        }),
+      ],
+    });
+  const complete = reconcile(false);
+  const incomplete = reconcile(true);
+  expect(complete.summary.static_not_observed).toBeGreaterThan(0);
+  expect(incomplete.summary.static_not_observed).toBe(0);
+  expect(incomplete.runtime_captures[0]?.scripts_complete_within_scope).toBe(
+    true,
+  );
+  expect(incomplete.static_load_states).toContainEqual(
+    expect.objectContaining({
+      status: "loaded",
+      reason: "runtime-script-correspondence",
+    }),
+  );
+  expect(incomplete.static_load_states).toContainEqual(
+    expect.objectContaining({
+      status: "unknown",
+      reason: "static-or-runtime-coverage-incomplete",
+    }),
+  );
+});
+
+it("preserves unknown Electron frame provenance without linking it to an authorized frame", async () => {
+  const root = await applicationFixture();
+  const recorded = electronRuntimeEvidence(root, SOURCE);
+  const inspection = electronPageInspectionSchema.parse(
+    recorded.normalized_result,
+  );
+  const evidence = createEvidence(undefined, recorded.provider, {
+    predicateType: recorded.predicate_type,
+    operation: recorded.operation,
+    parameters: recorded.parameters,
+    confidence: recorded.confidence,
+    authority: recorded.authority,
+    result: {
+      ...inspection,
+      completeness: {
+        ...inspection.completeness,
+        status: "attach_limited",
+        conditions: ["attach_limited"],
+        attach_limited_sections: ["scripts"],
+      },
+      scripts: {
+        ...inspection.scripts,
+        items: inspection.scripts.items.map((script) => ({
+          ...script,
+          frame_scope: "unknown",
+          has_source_url: true,
+          reported_url: "file:///reported-label.js",
+          frame_claims: {
+            script_event_frame_id: "declared-frame",
+            execution_context_frame_id: "context-frame",
+          },
+        })),
+      },
+    },
+  });
+  const captures = parseRuntimeCaptures([evidence]);
+  expect(captures[0]?.scriptsCompleteWithinScope).toBe(false);
+  const projected = projectRuntimeCaptures(captures);
+  const script = projected.entities.find(({ kind }) => kind === "script");
+  const target = projected.entities.find(({ kind }) => kind === "target");
+  if (script === undefined || target === undefined)
+    throw new Error("Expected the observed script and selected target");
+  expect(script.frameKey).toBeNull();
+  expect(script.node.observations).toEqual([
+    expect.objectContaining({
+      properties: expect.objectContaining({
+        frame_scope: "unknown",
+        reported_frame_id: inspection.scripts.items[0]?.frame_id,
+        has_source_url: true,
+        reported_url: "file:///reported-label.js",
+        frame_claims: {
+          script_event_frame_id: "declared-frame",
+          execution_context_frame_id: "context-frame",
+        },
+      }),
+    }),
+  ]);
+  expect(projected.edges).toContainEqual(
+    expect.objectContaining({
+      source_node_id: target.node.node_id,
+      target_node_id: script.node.node_id,
+      relation: "loads",
+    }),
+  );
+  const frameIds = new Set(
+    projected.entities
+      .filter(({ kind }) => kind === "frame")
+      .map(({ node }) => node.node_id),
+  );
+  expect(frameIds.size).toBeGreaterThan(0);
+  expect(
+    projected.edges.some(
+      (edge) =>
+        frameIds.has(edge.source_node_id) &&
+        edge.target_node_id === script.node.node_id,
+    ),
+  ).toBe(false);
 });
 
 it("reconciles active Electron as a partial target-only runtime capture", async () => {
@@ -504,7 +624,7 @@ it.skipIf(process.platform === "win32")(
       "export const marker = 42;\n",
     );
     const analysis = await analyzeFixture(root);
-    const parsed = parseRuntimeReconciliationInput(
+    const parsed = readInput(
       reconcileJavaScriptRuntimeInputSchema.parse({
         static_layers: [
           {
@@ -740,7 +860,7 @@ it.each([false, true])(
     );
     await writeFile(
       join(root, "app", "main.cjs"),
-      'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("generated.html"); w.loadFile("./generated.html");',
+      'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("generated.html"); const other = new BrowserWindow(); other.loadFile("./generated.html");',
     );
     if (present)
       await writeFile(join(root, "app", "generated.html"), "generated page");

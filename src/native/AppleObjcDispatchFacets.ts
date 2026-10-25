@@ -1,5 +1,8 @@
 import { err, ok, type Result } from "../domain/result.js";
-import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
+import {
+  projectObjcClassMethods,
+  type ObjcSwiftMetadata,
+} from "../domain/native/objcSwiftMetadata.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
@@ -366,24 +369,13 @@ export const decodeObjcDispatchFacets = (input: {
       super_class: superclass.name,
       is_meta_class: meta,
       is_root_class: root,
-      methods: result.objc_dispatch_implementations
-        .filter(
+      methods: projectObjcClassMethods(
+        result.objc_dispatch_implementations.filter(
           (item) =>
             item.class_name === name &&
             item.method_type === (meta ? "class" : "instance"),
-        )
-        .map((item) => ({
-          selector: item.selector,
-          method_type: item.method_type,
-          address:
-            item.implementation_address !== null &&
-            BigInt(item.implementation_address) <=
-              BigInt(Number.MAX_SAFE_INTEGER)
-              ? Number(BigInt(item.implementation_address))
-              : null,
-          is_required: null,
-          is_optional: null,
-        })),
+        ),
+      ),
       properties,
       protocols,
       ivar_count: ivarCount,

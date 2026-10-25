@@ -53,8 +53,16 @@ it.each(["full", "compact"] as const)(
       strict: false,
       validateFormats: false,
     }).compile(tool.inputSchema);
-    for (const value of ["literal", 42, true, null, {}, []]) {
-      const primitive = value === null || typeof value !== "object";
+    const cases = [
+      { value: "literal", expectedPrimitive: true },
+      { value: 42, expectedPrimitive: true },
+      { value: true, expectedPrimitive: true },
+      { value: null, expectedPrimitive: true },
+      { value: {}, expectedPrimitive: false },
+      { value: [], expectedPrimitive: false },
+    ] as const;
+    let malformedChecks = 0;
+    for (const { value, expectedPrimitive } of cases) {
       const arguments_ = {
         application,
         query: {
@@ -62,15 +70,24 @@ it.each(["full", "compact"] as const)(
           direction: "backward-provenance",
         },
       };
-      if (primitive || profile === "full")
-        expect(validate(arguments_), JSON.stringify(value)).toBe(primitive);
+      if (expectedPrimitive || profile === "full")
+        expect(validate(arguments_), JSON.stringify(value)).toBe(
+          expectedPrimitive,
+        );
       const result = await client.callTool({
         name: tool.name,
         arguments: arguments_,
       });
-      if (primitive) expect(result.isError).not.toBe(true);
-      else expect(result.isError).toBe(true);
+      if (expectedPrimitive) expect(result.isError).not.toBe(true);
+      else {
+        malformedChecks += 1;
+        expect(parseMcpToolError(result).error).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+        });
+      }
     }
+    expect(malformedChecks).toBe(2);
   },
 );
 

@@ -1,6 +1,6 @@
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { DesktopApplicationPort } from "./DesktopApplicationPort.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../InvestigationProviders.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import {
   AnalysisInputError,

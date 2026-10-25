@@ -17,7 +17,9 @@ it("frames escaped quotes and trailing backslashes without consuming the next fo
       const encoded = JSON.stringify(value);
       const source = encoded + ' (export "next" (func 0))';
       expect(watStringEnd(source, 1)).toBe(encoded.length);
-      expect(watString(source, 1).bytes).toEqual(Buffer.from(value));
+      expect(
+        Buffer.compare(watString(source, 1).bytes, Buffer.from(value)),
+      ).toBe(0);
     }
   }
 });

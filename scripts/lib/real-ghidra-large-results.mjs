@@ -110,8 +110,11 @@ export async function verifyGhidraLargeResults({
       entry.address,
       "A delivery constraint must preserve the successfully committed edit",
     );
+    // The default summary fits the receive budget; only the complete dossier
+    // exercises the oversized-delivery path with a retained reference.
     const dossierError = await reject("analyze_function", {
       procedure: "rea_frame_probe",
+      detail: "complete",
     });
     const dossierId = retainedReference(dossierError, "analyze_function");
     const after = await call("binary_session");

@@ -22,9 +22,9 @@ import {
 } from "./SourceMapCodecProtocol.js";
 import {
   SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
-  SourceMapCleanupFailure,
   runSourceMapCommand,
   type SourceMapCleanupOwner,
+  type SourceMapCleanupRetention,
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -114,18 +114,18 @@ export class SourceMapDecoder implements WebSourceMapPort {
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
       );
     const serialized = encoded.join("");
+    const retainedCleanup: SourceMapCleanupRetention = {};
     const response = await runSourceMapCommand(
       serialized,
       input.path,
       options,
       this.dependencies,
+      retainedCleanup,
       input.decodeTimeoutMs ?? DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
     );
-    if (!response.ok) {
-      if (response.error instanceof SourceMapCleanupFailure)
-        this.#pendingCleanup = response.error.cleanupOwner;
-      return response;
-    }
+    if (retainedCleanup.owner !== undefined)
+      this.#pendingCleanup = retainedCleanup.owner;
+    if (!response.ok) return response;
     let value: unknown;
     try {
       value = JSON.parse(response.value);
@@ -174,7 +174,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
   async #retryCleanup(): Promise<AnalysisError | undefined> {
     const pending = this.#pendingCleanup;
     if (pending === undefined) return undefined;
-    const failure = await pending.close(null);
+    const failure = await pending.close();
     if (failure !== undefined) return failure;
     this.#pendingCleanup = undefined;
     return undefined;
