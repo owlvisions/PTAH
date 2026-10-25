@@ -46,12 +46,14 @@ jobs:
         run: |
           set -euo pipefail
           patch="$GITHUB_WORKSPACE/ptah/patches/PTAH-overlay-from-supplied-REA-baseline.patch"
-          if git apply --check --3way "$patch"; then
-            git apply --3way "$patch"
-          else
+          if ! git apply --3way "$patch"; then
             echo "Overlay patch conflicts with current upstream. No integration branch will be pushed." | tee -a "$GITHUB_STEP_SUMMARY"
-            git apply --3way "$patch" || true
             git status --short | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "Unresolved overlay conflicts remain; refusing to publish." | tee -a "$GITHUB_STEP_SUMMARY"
+            git diff --name-only --diff-filter=U | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           git status --short | tee -a "$GITHUB_STEP_SUMMARY"
