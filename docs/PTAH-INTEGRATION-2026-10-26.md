@@ -50,3 +50,7 @@ The post-update datetime follow-up does not constitute a fresh complete source-s
 ## Rollback
 
 Before merging, discard the review branch to leave the default branch unchanged. After a normal merge, revert the integration merge with the appropriate first parent; do not force-push or erase retained history. Preserve local investigations and Evidence independently of source rollback.
+
+## Delivery status
+
+The integrated branch was committed locally. Direct GitHub push failed because the Git transport has no credentials. The GitHub connector cannot import the missing upstream Git history through its exposed operations; fetching the upstream commit through the PTAH repository API returned 404. No remote branch, PR, default-branch update or successful upload is claimed. A self-contained Git bundle preserves the branch and both histories for authenticated import.

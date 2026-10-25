@@ -944,10 +944,10 @@ index 000000000..972e701a6
 +See [PTAH-UPSTREAM-SYNC.md](PTAH-UPSTREAM-SYNC.md) for the scheduled upstream polling and reviewed sync PR workflow.
 diff --git a/docs/PTAH-INTEGRATION-2026-10-26.md b/docs/PTAH-INTEGRATION-2026-10-26.md
 new file mode 100644
-index 000000000..c3f607a68
+index 000000000..3a7205815
 --- /dev/null
 +++ b/docs/PTAH-INTEGRATION-2026-10-26.md
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,56 @@
 +# PTAH integration checkpoint — 2026-10-26
 +
 +## Source and history
@@ -1000,6 +1000,10 @@ index 000000000..c3f607a68
 +## Rollback
 +
 +Before merging, discard the review branch to leave the default branch unchanged. After a normal merge, revert the integration merge with the appropriate first parent; do not force-push or erase retained history. Preserve local investigations and Evidence independently of source rollback.
++
++## Delivery status
++
++The integrated branch was committed locally. Direct GitHub push failed because the Git transport has no credentials. The GitHub connector cannot import the missing upstream Git history through its exposed operations; fetching the upstream commit through the PTAH repository API returned 404. No remote branch, PR, default-branch update or successful upload is claimed. A self-contained Git bundle preserves the branch and both histories for authenticated import.
 diff --git a/docs/PTAH-MCP.md b/docs/PTAH-MCP.md
 new file mode 100644
 index 000000000..a0e04e607
