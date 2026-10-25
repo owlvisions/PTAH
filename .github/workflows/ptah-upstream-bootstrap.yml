@@ -1,0 +1,111 @@
+name: PTAH upstream history bootstrap
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '41 3 * * 1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ptah-upstream-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out PTAH repository for the overlay patch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: ptah
+          fetch-depth: 1
+
+      - name: Check out latest REA main with full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: morluto/rea
+          ref: main
+          path: integrated
+          fetch-depth: 0
+
+      - name: Record upstream base and create integration branch
+        working-directory: integrated
+        run: |
+          set -euo pipefail
+          echo "Upstream base: $(git rev-parse HEAD)" | tee "$GITHUB_STEP_SUMMARY"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c bot/ptah-upstream-bootstrap
+
+      - name: Apply PTAH overlay without overwriting upstream wholesale
+        working-directory: integrated
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch="$GITHUB_WORKSPACE/ptah/patches/PTAH-overlay-from-supplied-REA-baseline.patch"
+          if git apply --check --3way "$patch"; then
+            git apply --3way "$patch"
+          else
+            echo "Overlay patch conflicts with current upstream. No integration branch will be pushed." | tee -a "$GITHUB_STEP_SUMMARY"
+            git apply --3way "$patch" || true
+            git status --short | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          git status --short | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up supported Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.1'
+          cache: npm
+          cache-dependency-path: integrated/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Run PTAH syntax checks and tests
+        working-directory: integrated
+        run: |
+          node --check scripts/ptah.mjs
+          node --check scripts/ptah-engine.mjs
+          node --check scripts/ptah-mcp.mjs
+          node --check scripts/ptah-ui.mjs
+          node --check scripts/ptah-ui-server.mjs
+          npm run test:ptah
+
+      - name: Install dependencies and run complete validation
+        working-directory: integrated
+        run: |
+          npm ci --ignore-scripts
+          npm run deps:check
+          npm run check
+          npm test
+
+      - name: Commit the integrated overlay on top of upstream history
+        working-directory: integrated
+        run: |
+          set -euo pipefail
+          git add -A
+          git commit -m "feat(ptah): apply PTAH overlay to REA upstream"
+          echo "Integrated commit: $(git rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish bootstrap branch to PTAH repository
+        working-directory: integrated
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git remote add ptah-origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push ptah-origin HEAD:refs/heads/bot/ptah-upstream-bootstrap
+
+      - name: Upload integrated source snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ptah-upstream-bootstrap
+          path: integrated/
+          retention-days: 14
