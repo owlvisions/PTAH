@@ -1,0 +1,99 @@
+name: PTAH latest-upstream integration check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'patches/PTAH-overlay-from-supplied-REA-baseline.patch'
+      - '.github/workflows/ptah-latest-upstream-integration.yml'
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ptah-latest-upstream-integration
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out PTAH overlay and patch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: ptah-overlay
+
+      - name: Preserve the overlay patch
+        run: cp ptah-overlay/patches/PTAH-overlay-from-supplied-REA-baseline.patch "$RUNNER_TEMP/ptah-overlay.patch"
+
+      - name: Check out latest REA main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: morluto/rea
+          ref: main
+          path: upstream
+          fetch-depth: 1
+
+      - name: Record upstream revision
+        working-directory: upstream
+        run: |
+          echo "Upstream revision: $(git rev-parse HEAD)" | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply PTAH overlay to latest upstream
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git apply --check "$RUNNER_TEMP/ptah-overlay.patch"; then
+            echo "PTAH overlay does not apply cleanly to latest upstream main." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "No files were changed; inspect the patch conflicts before claiming an integration." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          git apply "$RUNNER_TEMP/ptah-overlay.patch"
+          echo "PTAH overlay applied cleanly." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up supported Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.1'
+          cache: npm
+          cache-dependency-path: upstream/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Run PTAH syntax checks and tests
+        working-directory: upstream
+        run: |
+          node --check scripts/ptah.mjs
+          node --check scripts/ptah-engine.mjs
+          node --check scripts/ptah-mcp.mjs
+          node --check scripts/ptah-ui.mjs
+          node --check scripts/ptah-ui-server.mjs
+          npm run test:ptah
+
+      - name: Install full project dependencies
+        working-directory: upstream
+        run: npm ci --ignore-scripts
+
+      - name: Validate dependencies and run full checks
+        working-directory: upstream
+        run: |
+          npm run deps:check
+          npm run check
+          npm test
+
+      - name: Upload integrated source snapshot
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ptah-latest-upstream-integrated
+          path: upstream/
+          if-no-files-found: error
+          retention-days: 14
