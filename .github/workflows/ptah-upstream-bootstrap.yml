@@ -1,6 +1,9 @@
 name: PTAH upstream history bootstrap
 
 on:
+  push:
+    paths:
+      - '.github/workflows/ptah-upstream-bootstrap.yml'
   workflow_dispatch:
   schedule:
     - cron: '41 3 * * 1'
