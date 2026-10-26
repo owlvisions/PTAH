@@ -2,7 +2,7 @@
 
 `ptah agents` registers PTAH's MCP server (`ptah-mcp`) under the server name
 `ptah` and installs the PTAH skill (`integrations/agent-skill/ptah/SKILL.md`)
-for the agent clients below. The server name differs from the inherited REA
+for the 15 agent clients below, at user level or per project. The server name differs from the inherited REA
 server (`rea`), so both can be registered side by side.
 
 ```sh
@@ -32,6 +32,36 @@ From a source checkout, use `node scripts/ptah.mjs agents ...`.
 | Windsurf                 | `windsurf`       | `~/.codeium/windsurf/mcp_config.json`                                                    | `mcpServers.ptah`                  | `~/.agents/skills/ptah` |
 | OpenCode                 | `opencode`       | `~/.config/opencode/opencode.json` (`$OPENCODE_CONFIG_DIR`)                              | `mcp.ptah` (`type: local`)         | `~/.agents/skills/ptah` |
 | Qwen Code                | `qwen_code`      | `~/.qwen/settings.json` (`$QWEN_HOME`)                                                   | `mcpServers.ptah`                  | `~/.agents/skills/ptah` |
+
+| Cline (VS Code) | `cline` | VS Code `globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | `mcpServers.ptah` | `~/.agents/skills/ptah` |
+| Roo Code (VS Code) | `roo_code` | VS Code `globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json` | `mcpServers.ptah` | `~/.agents/skills/ptah` |
+| Kiro | `kiro` | `~/.kiro/settings/mcp.json` | `mcpServers.ptah` | `~/.agents/skills/ptah` |
+| Amazon Q Developer CLI | `amazon_q` | `~/.aws/amazonq/mcp.json` | `mcpServers.ptah` | `~/.agents/skills/ptah` |
+| Zed | `zed` | `~/.config/zed/settings.json` | `context_servers.ptah` (`source: custom`) | `~/.agents/skills/ptah` |
+
+## Per-project workspaces
+
+`ptah agents install --workspace DIR [--client ...] [--yes]` registers PTAH in
+the project's own configuration: `.mcp.json` (Claude Code), `.codex/config.toml`,
+`.gemini/settings.json`, `.vscode/mcp.json` (Copilot), `.cursor/mcp.json`,
+`.kiro/settings/mcp.json`, and `.roo/mcp.json`. Each entry starts the server
+with `--workspace DIR`, so the agent's tools cannot read or write outside the
+project. The skill goes to `DIR/.claude/skills/ptah` and `DIR/.agents/skills/ptah`,
+and a marked PTAH block is added to `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md`
+(`--no-instructions` skips this). `ptah agents uninstall --workspace DIR --yes`
+removes exactly those additions; files that held only PTAH's entry are deleted
+and your own content is restored byte for byte.
+
+## Extension and plugin packages
+
+- **Gemini CLI extension:** `gemini extensions install https://github.com/owlvisions/PTAH`
+  (`gemini-extension.json` at the repository root; the skill is the context file).
+- **Claude Code plugin:** `/plugin install ptah --marketplace owlvisions/PTAH`
+  (Claude Code 2.1.275 or later; `.claude-plugin/`). Older versions:
+  `/plugin marketplace add owlvisions/PTAH`, then `/plugin install ptah@ptah`.
+
+Both run `scripts/ptah-mcp.mjs` from the installed copy with `node`, and their
+versions are bumped with the package by release-please.
 
 On Windows, VS Code and Claude Desktop use `%APPDATA%`. Paths and entry
 shapes follow the client definitions already exercised by the inherited setup
@@ -77,6 +107,18 @@ once that package is published to npm.
   identify, record evidence with a reproducible source and honest confidence,
   claim only what is cited, track unknowns as questions, lint and verify, and
   answer from the report.
+
+## Verified with real clients (2026-10-26, sandboxed home directory)
+
+| Client       | Version | Result                                                                                                                                                             |
+| ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code  | 2.1.310 | `claude mcp list`: `ptah … ✔ Connected`; `claude plugin validate`: passed (only the optional icon is missing)                                                      |
+| Gemini CLI   | 0.60.0  | `gemini mcp list`: `✓ ptah … Connected` in a trusted folder (Gemini disables user servers in untrusted folders by design); `gemini extensions validate`: validated |
+| OpenAI Codex | 0.159.1 | `codex mcp list`: `ptah … enabled`                                                                                                                                 |
+
+The other clients are covered by `scripts/tests/ptah-agents.test.mjs` against
+their documented configuration shapes in a sandboxed home directory, not by
+launching each vendor's client.
 
 ## Limits
 

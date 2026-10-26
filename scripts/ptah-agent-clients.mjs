@@ -148,7 +148,154 @@ export const AGENT_CLIENTS = Object.freeze([
     marker: qwenHome,
     skills: sharedSkills,
   },
+  {
+    id: "cline",
+    name: "Cline (VS Code)",
+    format: "json",
+    serversKey: "mcpServers",
+    entry: "plain",
+    config: (context) =>
+      join(
+        vscodeUser(context),
+        "globalStorage",
+        "saoudrizwan.claude-dev",
+        "settings",
+        "cline_mcp_settings.json",
+      ),
+    marker: (context) =>
+      join(vscodeUser(context), "globalStorage", "saoudrizwan.claude-dev"),
+    skills: sharedSkills,
+  },
+  {
+    id: "roo_code",
+    name: "Roo Code (VS Code)",
+    format: "json",
+    serversKey: "mcpServers",
+    entry: "plain",
+    config: (context) =>
+      join(
+        vscodeUser(context),
+        "globalStorage",
+        "rooveterinaryinc.roo-cline",
+        "settings",
+        "mcp_settings.json",
+      ),
+    marker: (context) =>
+      join(vscodeUser(context), "globalStorage", "rooveterinaryinc.roo-cline"),
+    skills: sharedSkills,
+  },
+  {
+    id: "kiro",
+    name: "Kiro",
+    format: "json",
+    serversKey: "mcpServers",
+    entry: "plain",
+    config: ({ home }) => join(home, ".kiro", "settings", "mcp.json"),
+    marker: ({ home }) => join(home, ".kiro"),
+    skills: sharedSkills,
+  },
+  {
+    id: "amazon_q",
+    name: "Amazon Q Developer CLI",
+    format: "json",
+    serversKey: "mcpServers",
+    entry: "plain",
+    config: ({ home }) => join(home, ".aws", "amazonq", "mcp.json"),
+    marker: ({ home }) => join(home, ".aws", "amazonq"),
+    skills: sharedSkills,
+  },
+  {
+    id: "zed",
+    name: "Zed",
+    format: "json",
+    serversKey: "context_servers",
+    entry: "zed",
+    config: (context) =>
+      context.platform === "win32"
+        ? join(appData(context), "Zed", "settings.json")
+        : join(xdgConfigHome(context), "zed", "settings.json"),
+    marker: (context) =>
+      context.platform === "win32"
+        ? join(appData(context), "Zed")
+        : join(xdgConfigHome(context), "zed"),
+    skills: sharedSkills,
+    note: "Zed settings usually contain comments; when install reports blocked, paste the output of `ptah agents print --client zed`.",
+  },
 ]);
+
+/**
+ * Project-scoped registrations for a workspace directory. Each runs the
+ * server confined to that directory with --workspace.
+ */
+export const workspaceClients = (directory) =>
+  [
+    {
+      id: "claude_code",
+      name: "Claude Code (project .mcp.json)",
+      format: "json",
+      serversKey: "mcpServers",
+      entry: "typed",
+      path: [".mcp.json"],
+      skills: [".claude", "skills"],
+    },
+    {
+      id: "codex",
+      name: "OpenAI Codex (project .codex/config.toml)",
+      format: "toml",
+      path: [".codex", "config.toml"],
+      skills: [".agents", "skills"],
+    },
+    {
+      id: "gemini_cli",
+      name: "Gemini CLI (project .gemini/settings.json)",
+      format: "json",
+      serversKey: "mcpServers",
+      entry: "plain",
+      path: [".gemini", "settings.json"],
+      skills: [".agents", "skills"],
+    },
+    {
+      id: "copilot_vscode",
+      name: "GitHub Copilot / VS Code (.vscode/mcp.json)",
+      format: "json",
+      serversKey: "servers",
+      entry: "typed",
+      path: [".vscode", "mcp.json"],
+      skills: [".agents", "skills"],
+    },
+    {
+      id: "cursor",
+      name: "Cursor (project .cursor/mcp.json)",
+      format: "json",
+      serversKey: "mcpServers",
+      entry: "plain",
+      path: [".cursor", "mcp.json"],
+      skills: [".agents", "skills"],
+    },
+    {
+      id: "kiro",
+      name: "Kiro (project .kiro/settings/mcp.json)",
+      format: "json",
+      serversKey: "mcpServers",
+      entry: "plain",
+      path: [".kiro", "settings", "mcp.json"],
+      skills: [".agents", "skills"],
+    },
+    {
+      id: "roo_code",
+      name: "Roo Code (project .roo/mcp.json)",
+      format: "json",
+      serversKey: "mcpServers",
+      entry: "plain",
+      path: [".roo", "mcp.json"],
+      skills: [".agents", "skills"],
+    },
+  ].map(({ path, skills, ...client }) => ({
+    ...client,
+    config: () => join(directory, ...path),
+    marker: () => directory,
+    skills: () => join(directory, ...skills),
+  }));
 
 export const defaultContext = () => ({
   home: homedir(),

@@ -60,6 +60,8 @@ export function serverEntry(client, command) {
       return { type: "stdio", command: executable, args, tools: ["*"] };
     case "opencode":
       return { type: "local", command: [...command], enabled: true };
+    case "zed":
+      return { source: "custom", command: executable, args, env: {} };
     default:
       return { command: executable, args };
   }
@@ -153,6 +155,19 @@ async function writeWithBackup(path, content, { backup = true } = {}) {
   if (mode !== undefined) await chmod(temporary, mode);
   await rename(temporary, path);
   return backupPath;
+}
+
+/** Remove up to `levels` now-empty parent directories of a deleted file. */
+async function removeEmptyParents(path, levels) {
+  let directory = dirname(path);
+  for (let level = 0; level < levels; level += 1) {
+    try {
+      await rmdir(directory);
+    } catch {
+      return;
+    }
+    directory = dirname(directory);
+  }
 }
 
 /** Inspect one client's current PTAH registration without changing anything. */
@@ -368,7 +383,7 @@ async function removeSkills(clients, context, apply) {
     const item = { path, action };
     if (apply && action === "remove") {
       await rm(path);
-      await rmdir(directory).catch(() => {});
+      await removeEmptyParents(path, 3);
       item.applied = true;
     }
     skills.push(item);
@@ -401,10 +416,13 @@ export async function uninstallAgents(clients, options = {}) {
     };
     if (options.apply && result.action === "remove") {
       const text = await readTextIfExists(state.configPath);
-      result.backup = await writeWithBackup(
-        state.configPath,
-        renderConfig(client, text, state.configPath, undefined),
-      );
+      const content = renderConfig(client, text, state.configPath, undefined);
+      // A file that held nothing but PTAH's entry is removed rather than emptied.
+      if (content.trim() === "" || content.trim() === "{}") {
+        await rm(state.configPath);
+        await removeEmptyParents(state.configPath, 2);
+        result.removedEmptyFile = true;
+      } else result.backup = await writeWithBackup(state.configPath, content);
       result.applied = true;
     }
     results.push(result);
@@ -431,4 +449,68 @@ export function renderSnippet(target, command = serverCommand()) {
       `unknown client or dialect: ${target}. Use a client id or vscode, opencode, toml, json`,
     );
   return `${JSON.stringify({ [dialect.serversKey]: { [SERVER_KEY]: serverEntry(dialect, command) } }, null, 2)}\n`;
+}
+
+const BLOCK_START = "<!-- ptah:begin -->";
+const BLOCK_END = "<!-- ptah:end -->";
+const INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", "GEMINI.md"];
+const INSTRUCTIONS = `${BLOCK_START}
+## Program analysis with PTAH
+
+This workspace has the \`ptah\` MCP server. For binaries, executables, APKs,
+ASAR, WASM, firmware, or unknown files: start with \`ptah_triage\`, read
+\`ptah_summary\`, then deepen the top open question (\`ptah_structure\`,
+\`ptah_iocs\`, \`ptah_search\`, \`ptah_hexdump\`, \`ptah_static_analyze\`).
+Record every finding with \`ptah_add_evidence\` (reproducible source; confidence
+observed, derived, or inferred), claim only what cites evidence, run
+\`ptah_lint\` and \`ptah_verify\` before answering, and answer from
+\`ptah_report\`. Never execute the target. Keep investigations under
+\`.ptah/\`.
+${BLOCK_END}
+`;
+
+const withoutBlock = (text) => {
+  const start = text.indexOf(BLOCK_START);
+  const end = text.indexOf(BLOCK_END);
+  if (start < 0 || end < start) return text;
+  return `${text.slice(0, start)}${text.slice(end + BLOCK_END.length).replace(/^\n/u, "")}`;
+};
+
+/** The instruction file's text after adding or removing the PTAH block. */
+function instructionText(text, remove) {
+  const base = text === undefined ? "" : withoutBlock(text).trimEnd();
+  // The block is separated by one blank line, so removal restores the original text.
+  if (remove) return base && `${base}\n`;
+  return `${base}${base ? "\n\n" : ""}${INSTRUCTIONS}`;
+}
+
+function instructionAction(text, next, remove) {
+  if (text === next) return "unchanged";
+  if (text === undefined) return remove ? "absent" : "create";
+  return remove ? "remove" : "update";
+}
+
+/** Add, refresh, or remove the PTAH block in AGENTS.md, CLAUDE.md, and GEMINI.md. */
+export async function workspaceInstructions(
+  directory,
+  { apply = false, remove = false } = {},
+) {
+  const results = [];
+  for (const name of INSTRUCTION_FILES) {
+    const path = join(directory, name);
+    const text = await readTextIfExists(path);
+    const next = instructionText(text, remove);
+    const action = instructionAction(text, next, remove);
+    const writes = action !== "unchanged" && action !== "absent";
+    if (apply && writes) {
+      if (next === "") await rm(path);
+      else await writeWithBackup(path, next, { backup: text !== undefined });
+    }
+    results.push({
+      path,
+      action,
+      ...(apply && writes ? { applied: true } : {}),
+    });
+  }
+  return results;
 }

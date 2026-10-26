@@ -195,7 +195,7 @@ void test("MCP exposes workflow prompts and root-bounded investigation resources
     ]);
     assert.deepEqual(
       byId(2).result.prompts.map((p) => p.name),
-      ["investigate-target", "review-claims", "compare-cases"],
+      ["triage-target", "investigate-target", "review-claims", "compare-cases"],
     );
     assert.match(
       byId(3).result.messages[0].content.text,

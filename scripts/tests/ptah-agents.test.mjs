@@ -63,13 +63,13 @@ const sandbox = async () => {
 const client = (id) => AGENT_CLIENTS.find((item) => item.id === id);
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 
-void test("agents covers ten coding agents with distinct ids and config paths", () => {
-  assert.equal(AGENT_CLIENTS.length, 10);
+void test("agents covers fifteen coding agents with distinct ids and config paths", () => {
+  assert.equal(AGENT_CLIENTS.length, 15);
   const context = { home: "/h", env: {}, platform: "linux" };
-  assert.equal(new Set(AGENT_CLIENTS.map((item) => item.id)).size, 10);
+  assert.equal(new Set(AGENT_CLIENTS.map((item) => item.id)).size, 15);
   assert.equal(
     new Set(AGENT_CLIENTS.map((item) => item.config(context))).size,
-    10,
+    15,
   );
   for (const id of [
     "claude_code",
@@ -78,6 +78,11 @@ void test("agents covers ten coding agents with distinct ids and config paths", 
     "copilot_vscode",
     "copilot_cli",
     "cursor",
+    "cline",
+    "roo_code",
+    "kiro",
+    "amazon_q",
+    "zed",
   ])
     assert.ok(client(id), `${id} is supported`);
 });
@@ -272,10 +277,8 @@ void test("agents uninstall removes only PTAH and keeps a shared skill still in 
       "--yes",
     ]);
     assert.equal(rest.status, 0, rest.stderr);
-    assert.deepEqual(
-      (await readJson(client("cursor").config(context))).mcpServers ?? {},
-      {},
-    );
+    // The Cursor file held only PTAH's entry, so uninstall removes it.
+    await assert.rejects(readFile(client("cursor").config(context)));
     await assert.rejects(
       readFile(join(home, ".agents", "skills", "ptah", "SKILL.md")),
     );
@@ -335,4 +338,143 @@ void test("the registered command starts PTAH MCP with instructions and evidence
     "ptah_resolve_question",
   ])
     assert.ok(names.includes(name), `${name} is listed`);
+});
+
+void test("agents writes Zed context_servers and the new clients' mcpServers entries", async () => {
+  const { home, context, cleanup } = await sandbox();
+  try {
+    const applied = agents(home, [
+      "install",
+      "--client",
+      "zed,cline,roo_code,kiro,amazon_q",
+      "--yes",
+    ]);
+    assert.equal(applied.status, 0, applied.stderr);
+    const [node, script] = applied.json.command;
+    assert.deepEqual(
+      (await readJson(client("zed").config(context))).context_servers.ptah,
+      { source: "custom", command: node, args: [script], env: {} },
+    );
+    for (const id of ["cline", "roo_code", "kiro", "amazon_q"])
+      assert.deepEqual(
+        (await readJson(client(id).config(context))).mcpServers.ptah,
+        { command: node, args: [script] },
+        id,
+      );
+  } finally {
+    await cleanup();
+  }
+});
+
+void test("agents --workspace confines project registrations and round-trips instruction files", async () => {
+  const { home, cleanup } = await sandbox();
+  try {
+    const workspace = join(home, "project");
+    await mkdir(join(workspace, ".vscode"), { recursive: true });
+    await writeFile(
+      join(workspace, ".vscode", "mcp.json"),
+      JSON.stringify({ servers: { mine: { command: "x" } } }),
+    );
+    await writeFile(join(workspace, "AGENTS.md"), "# Project rules\n");
+    const installed = agents(home, [
+      "install",
+      "--workspace",
+      workspace,
+      "--yes",
+    ]);
+    assert.equal(installed.status, 0, installed.stderr);
+    const project = await readJson(join(workspace, ".mcp.json"));
+    assert.deepEqual(project.mcpServers.ptah.args.slice(-2), [
+      "--workspace",
+      workspace,
+    ]);
+    const vscode = await readJson(join(workspace, ".vscode", "mcp.json"));
+    assert.deepEqual(vscode.servers.mine, { command: "x" });
+    assert.equal(vscode.servers.ptah.type, "stdio");
+    assert.match(
+      await readFile(join(workspace, ".codex", "config.toml"), "utf8"),
+      /\[mcp_servers\.ptah\]/,
+    );
+    const agentsMd = await readFile(join(workspace, "AGENTS.md"), "utf8");
+    assert.match(agentsMd, /^# Project rules\n\n<!-- ptah:begin -->/);
+    assert.match(
+      await readFile(join(workspace, "CLAUDE.md"), "utf8"),
+      /ptah_triage/,
+    );
+    const again = agents(home, ["install", "--workspace", workspace, "--yes"]);
+    assert.ok(
+      again.json.instructions.every((item) => item.action === "unchanged"),
+    );
+    assert.ok(again.json.clients.every((item) => item.action === "unchanged"));
+
+    assert.equal(
+      agents(home, ["uninstall", "--workspace", workspace, "--yes"]).status,
+      0,
+    );
+    assert.equal(
+      await readFile(join(workspace, "AGENTS.md"), "utf8"),
+      "# Project rules\n",
+    );
+    assert.deepEqual(
+      (await readJson(join(workspace, ".vscode", "mcp.json"))).servers,
+      { mine: { command: "x" } },
+    );
+    await assert.rejects(readFile(join(workspace, ".mcp.json")));
+    await assert.rejects(readFile(join(workspace, "CLAUDE.md")));
+  } finally {
+    await cleanup();
+  }
+});
+
+void test("plugin and extension manifests launch this checkout's server and track the package version", async () => {
+  const pkg = await readJson(join(root, "package.json"));
+  const gemini = await readJson(join(root, "gemini-extension.json"));
+  const plugin = await readJson(join(root, ".claude-plugin", "plugin.json"));
+  const marketplace = await readJson(
+    join(root, ".claude-plugin", "marketplace.json"),
+  );
+  assert.equal(gemini.version, pkg.version);
+  assert.equal(plugin.version, pkg.version);
+  assert.deepEqual(gemini.mcpServers.ptah.args, [
+    "${extensionPath}/scripts/ptah-mcp.mjs",
+  ]);
+  assert.deepEqual(plugin.mcpServers.ptah.args, [
+    "${CLAUDE_PLUGIN_ROOT}/scripts/ptah-mcp.mjs",
+  ]);
+  await readFile(join(root, gemini.contextFileName));
+  assert.equal(marketplace.plugins[0].name, plugin.name);
+  const release = await readJson(join(root, "release-please-config.json"));
+  const bumped = release.packages["."]["extra-files"].map(
+    (item) => item.path ?? item,
+  );
+  assert.ok(
+    bumped.includes("gemini-extension.json") &&
+      bumped.includes(".claude-plugin/plugin.json"),
+  );
+});
+
+void test("doctor reports runtime, analyzers, agents, and upstream state without changing anything", async () => {
+  const { home, cleanup } = await sandbox();
+  try {
+    const result = agents(home, ["list"]);
+    assert.equal(result.status, 0);
+    const doctor = spawnSync(process.execPath, [entrypoint, "doctor"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: { ...process.env, HOME: home },
+    });
+    const report = JSON.parse(doctor.stdout);
+    assert.deepEqual(Object.keys(report.checks).sort(), [
+      "agents",
+      "analyzers",
+      "isolation",
+      "runtime",
+      "upstream",
+    ]);
+    assert.equal(typeof report.checks.runtime.ok, "boolean");
+    assert.deepEqual(await readdir(home), []);
+  } finally {
+    await cleanup();
+  }
 });

@@ -16,30 +16,38 @@ the same operations through the CLI: `ptah <command>` (or
 `node <ptah-root>/scripts/ptah.mjs <command>` from a source checkout). Every
 command prints JSON.
 
-| Goal                        | MCP tool                                            | CLI                                            |
-| --------------------------- | --------------------------------------------------- | ---------------------------------------------- |
-| Identify the file           | `ptah_fingerprint`, `ptah_inspect`                  | `fingerprint --target F [--inspect]`           |
-| Readable strings            | `ptah_strings`                                      | `strings --target F`                           |
-| Embedded files / containers | `ptah_carve`, `ptah_asar`, `ptah_wasm`              | `carve`, `asar`, `wasm --target F`             |
-| Static analyzers on PATH    | `ptah_providers`, `ptah_static_analyze`             | `providers`, `analyze --target F --provider P` |
-| Start an investigation      | `ptah_init`                                         | `init --target F --output INV`                 |
-| Record evidence             | `ptah_add_evidence`                                 | `add-evidence --input INV --output INV`        |
-| Record claims / questions   | `ptah_add_claim`, `ptah_add_question`               | `add-claim`, `add-question`                    |
-| Update status               | `ptah_set_claim_status`, `ptah_resolve_question`    | `set-claim-status`, `resolve-question`         |
-| Next step                   | `ptah_plan`                                         | `plan --input INV [--steps N]`                 |
-| Check before answering      | `ptah_lint`, `ptah_verify`                          | `lint`, `verify --input INV --target F`        |
-| Final answer                | `ptah_report` (format `markdown`), `ptah_graph`     | `report --format markdown`                     |
-| Share / compare             | `ptah_case_export`, `ptah_case_verify`, `ptah_diff` | `export-case`, `verify-case`, `diff`           |
+| Goal                         | MCP tool                                            | CLI                                            |
+| ---------------------------- | --------------------------------------------------- | ---------------------------------------------- |
+| Triage everything at once    | `ptah_triage` (then `ptah_summary`)                 | `triage --target F --output INV`               |
+| Identify the file            | `ptah_fingerprint`, `ptah_inspect`, `ptah_hashes`   | `fingerprint --target F [--inspect]`           |
+| Sections, imports, packers   | `ptah_structure`                                    | `structure --target F`                         |
+| Indicators / secrets         | `ptah_iocs`, `ptah_secrets` (values redacted)       | `iocs`, `secrets --target F`                   |
+| Likely behaviors (inferred)  | `ptah_capabilities`, `ptah_rules`                   | `capabilities`, `rules --rules R.json`         |
+| Readable strings / raw bytes | `ptah_strings`, `ptah_search`, `ptah_hexdump`       | `strings`, `search --hex`, `hexdump`           |
+| Embedded files / containers  | `ptah_carve`, `ptah_asar`, `ptah_wasm`              | `carve`, `asar`, `wasm --target F`             |
+| Static analyzers on PATH     | `ptah_providers`, `ptah_static_analyze`             | `providers`, `analyze --target F --provider P` |
+| Compare two files            | `ptah_compare`                                      | `compare --target F --other G`                 |
+| Start an investigation       | `ptah_init`                                         | `init --target F --output INV`                 |
+| Record evidence              | `ptah_add_evidence`                                 | `add-evidence --input INV --output INV`        |
+| Record claims / questions    | `ptah_add_claim`, `ptah_add_question`               | `add-claim`, `add-question`                    |
+| Update status                | `ptah_set_claim_status`, `ptah_resolve_question`    | `set-claim-status`, `resolve-question`         |
+| Next step                    | `ptah_plan`                                         | `plan --input INV [--steps N]`                 |
+| Check before answering       | `ptah_lint`, `ptah_verify`                          | `lint`, `verify --input INV --target F`        |
+| Final answer                 | `ptah_report` (format `markdown`), `ptah_graph`     | `report --format markdown`                     |
+| Share / compare              | `ptah_case_export`, `ptah_case_verify`, `ptah_diff` | `export-case`, `verify-case`, `diff`           |
 
 ## Workflow
 
 1. **Confirm scope.** Analyze only files the user owns or is authorized to
    examine. Treat every target as hostile; never run it.
-2. **Identify.** Fingerprint and inspect the target. Note format, architecture,
-   entropy, and signatures.
-3. **Open a record.** `ptah_init` next to the target (for example
-   `target.ptah.json`). All later evidence is bound to that digest; if the file
-   changes, start a new investigation.
+2. **Triage.** `ptah_triage` the target into a new investigation (for example
+   `.ptah/target.json`), then read `ptah_summary`. Triage records observed
+   facts, capability hypotheses marked `inferred`, prioritized questions, and
+   next actions. (For a manual start, use `ptah_init`.) All evidence is bound
+   to the target's SHA-256; if the file changes, start a new investigation.
+3. **Deepen.** Pick the highest-priority open question and gather what it
+   needs: `ptah_structure`, `ptah_iocs`, `ptah_search`, `ptah_hexdump`,
+   `ptah_static_analyze`, or the REA layer for decompilation.
 4. **Observe, then record.** After each tool result, add an evidence item:
    - `source` must let someone reproduce it (tool name, arguments, offset).
    - `confidence`: `observed` for direct tool output, `derived` for values you

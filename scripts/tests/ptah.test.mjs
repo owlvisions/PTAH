@@ -605,7 +605,10 @@ void test("report --format markdown and diff work end to end from the CLI", asyn
     );
     const badFormat = run(["report", "--input", head, "--format", "pdf"]);
     assert.equal(badFormat.status, 1);
-    assert.match(badFormat.stderr, /--format must be json or markdown/);
+    assert.match(
+      badFormat.stderr,
+      /--format must be json, markdown, sarif, or html/,
+    );
 
     const same = run(["diff", "--base", base, "--head", base]);
     assert.equal(same.status, 0, same.stderr);

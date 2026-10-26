@@ -21,6 +21,17 @@ Recording an investigation (each write validates the whole document, appends a h
 - `ptah_set_claim_status`: change status; `verified` requires cited `observed` evidence.
 - `ptah_resolve_question`: resolve with `reason` and `evidenceIds`, or `reopen: true`.
 
+Triage and native intelligence:
+
+- `ptah_triage`: run every applicable analysis and write a new investigation with observed evidence, inferred capability hypotheses, prioritized questions, and next actions.
+- `ptah_structure`: ELF/PE sections with entropy, imports, exports, libraries, imphash, packer hints.
+- `ptah_hashes`, `ptah_search` (hex with `??` wildcards or ASCII/UTF-16LE text), `ptah_hexdump` (≤ 4096 bytes), `ptah_compare` (string/import similarity, per-section differences).
+- `ptah_iocs`, `ptah_secrets` (values redacted, SHA-256 for correlation), `ptah_capabilities` (inferred, with ATT&CK ids), `ptah_rules` (text/hex only over MCP; regex rules are CLI-only to avoid catastrophic backtracking).
+- `ptah_summary`, `ptah_query`, `ptah_timeline`: compact agent views of an investigation.
+- `ptah_report` also renders `sarif` and `html`.
+
+Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), so clients can auto-approve the 31 read-only tools and confirm the 9 that write.
+
 Reading and analysis:
 
 - `ptah_fingerprint`: hash and identify a regular file without executing it.
@@ -58,7 +69,7 @@ The server advertises three prompts — `investigate-target`, `review-claims`, a
 
 ## Protocol and tests
 
-The server implements JSON-RPC over newline-delimited stdio messages and advertises protocol version `2024-11-05`. Its `initialize` result carries `instructions` describing the evidence-first workflow, so clients that surface server instructions guide the model even without the PTAH skill. To register the server with coding agents, see `docs/PTAH-AGENTS.md`. It handles `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. Regression tests are in `scripts/tests/ptah-engine.test.mjs` and run with `npm run test:ptah` (the tests themselves use Node's built-in test runner).
+The server implements JSON-RPC over newline-delimited stdio messages and negotiates protocol versions `2025-06-18`, `2025-03-26`, and `2024-11-05` (answering with the client's version when supported). Its `initialize` result carries `instructions` describing the evidence-first workflow, so clients that surface server instructions guide the model even without the PTAH skill. To register the server with coding agents, see `docs/PTAH-AGENTS.md`. It handles `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. Regression tests are in `scripts/tests/ptah-engine.test.mjs` and run with `npm run test:ptah` (the tests themselves use Node's built-in test runner).
 
 ## Limitations
 

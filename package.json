@@ -119,6 +119,14 @@
     "scripts/ptah-path-policy.mjs",
     "scripts/ptah-upstream-sync.mjs",
     "scripts/ptah-merge-policy.mjs",
+    "scripts/ptah-binary.mjs",
+    "scripts/ptah-bytes.mjs",
+    "scripts/ptah-intel.mjs",
+    "scripts/ptah-triage.mjs",
+    "scripts/ptah-reports.mjs",
+    "scripts/ptah-cli-intel.mjs",
+    "scripts/ptah-mcp-intel.mjs",
+    "scripts/ptah-doctor.mjs",
     "integrations/agent-skill",
     "scripts/ptah-ui.mjs",
     "scripts/ptah-ui-server.mjs",
@@ -367,7 +375,7 @@
     "licenses:check": "node scripts/generate-third-party-inventory.mjs --check",
     "lint:typed": "node scripts/ci/static-check-report.mjs typed-lint",
     "knip:production": "node scripts/ci/production-reachability-report.mjs",
-    "test:ptah": "node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs scripts/tests/ptah-case-tools.test.mjs scripts/tests/ptah-analyzers.test.mjs scripts/tests/ptah-eval.test.mjs scripts/tests/ptah-integrations.test.mjs scripts/tests/ptah-agents.test.mjs scripts/tests/ptah-security.test.mjs scripts/tests/ptah-upstream-sync.test.mjs",
+    "test:ptah": "node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs scripts/tests/ptah-case-tools.test.mjs scripts/tests/ptah-analyzers.test.mjs scripts/tests/ptah-eval.test.mjs scripts/tests/ptah-integrations.test.mjs scripts/tests/ptah-agents.test.mjs scripts/tests/ptah-security.test.mjs scripts/tests/ptah-upstream-sync.test.mjs scripts/tests/ptah-intel.test.mjs",
     "start:ptah-mcp": "node scripts/ptah-mcp.mjs"
   },
   "lint-staged": {

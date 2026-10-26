@@ -5,6 +5,12 @@ import { readFile } from "node:fs/promises";
 import { delimiter, join, resolve, sep } from "node:path";
 import { createPathPolicy } from "./ptah-path-policy.mjs";
 import {
+  INTEL_TOOLS,
+  annotate,
+  callIntelTool,
+  renderExtraReport,
+} from "./ptah-mcp-intel.mjs";
+import {
   fingerprintTarget,
   createInvestigationForTarget,
   recordHistory,
@@ -43,7 +49,8 @@ import {
   parseWasmSections,
 } from "./ptah-analysis.mjs";
 
-const PROTOCOL_VERSION = "2024-11-05";
+// Newest first; the server answers with the client's version when it supports it.
+const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const SERVER_VERSION = "0.9.0";
 const cliArgs = process.argv.slice(2);
 const rootIndex = cliArgs.indexOf("--root");
@@ -62,6 +69,7 @@ const WORKSPACE_ROOTS = [
 const pathPolicy = createPathPolicy({ roots: WORKSPACE_ROOTS });
 const READ_PATH_ARGUMENTS = [
   "target",
+  "other",
   "input",
   "artifact",
   "base",
@@ -97,6 +105,23 @@ const SERVER_INSTRUCTIONS = [
 ].join(" ");
 
 const prompts = [
+  {
+    name: "triage-target",
+    description:
+      "Triage an unknown file in one step, then explain what is known, what is inferred, and what to examine next.",
+    arguments: [
+      {
+        name: "target",
+        description: "Absolute path to the file",
+        required: true,
+      },
+      {
+        name: "output",
+        description: "Path for the investigation JSON",
+        required: true,
+      },
+    ],
+  },
   {
     name: "investigate-target",
     description:
@@ -150,6 +175,19 @@ function renderPrompt(name, promptArgs = {}) {
   const rules =
     "Rules: never execute the target; cite evidence IDs for every statement; use observed/derived/inferred confidence; do not call anything verified unless a verification step was performed; say 'unknown' when evidence is missing.";
   switch (name) {
+    case "triage-target": {
+      const target = need("target");
+      const output = need("output");
+      return [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Run ptah_triage on ${target} with output ${output}, then ptah_summary. Report in three parts: observed facts (cite evidence ids), inferred hypotheses (label them inferred), and the top open questions with the next step from ptah_plan. ${rules}`,
+          },
+        },
+      ];
+    }
     case "investigate-target": {
       const target = need("target");
       const output = need("output");
@@ -158,7 +196,7 @@ function renderPrompt(name, promptArgs = {}) {
           role: "user",
           content: {
             type: "text",
-            text: `Investigate ${target} with PTAH tools only. Steps: 1) ptah_inspect and ptah_fingerprint on the target; 2) create the investigation at ${output} via the ptah CLI (init) or import; 3) record each observation with ptah add-evidence semantics (kind, source, confidence); 4) run ptah_strings and ptah_carve for leads; 5) run ptah_lint and ptah_plan and report the next bounded step. ${rules}`,
+            text: `Investigate ${target} with PTAH tools only. Steps: 1) ptah_triage the target into ${output}; 2) read ptah_summary; 3) deepen the highest-priority open question with ptah_structure, ptah_iocs, ptah_strings, ptah_search, ptah_hexdump, or ptah_static_analyze, recording each observation with ptah_add_evidence (kind, reproducible source, confidence); 4) add or update claims with ptah_add_claim and ptah_set_claim_status; 5) run ptah_lint and ptah_plan and report the next bounded step. ${rules}`,
           },
         },
       ];
@@ -477,8 +515,9 @@ const tools = [
         },
         format: {
           type: "string",
-          enum: ["json", "markdown"],
-          description: "Output format; defaults to json",
+          enum: ["json", "markdown", "sarif", "html"],
+          description:
+            "Output format; defaults to json. sarif feeds code-scanning tools; html is a self-contained page.",
         },
       },
       required: ["input"],
@@ -737,6 +776,8 @@ async function callTool(name, args) {
   if (!args || typeof args !== "object" || Array.isArray(args))
     throw new TypeError("tool arguments must be an object");
   await checkToolPaths(name, args);
+  const intel = await callIntelTool(name, args);
+  if (intel !== undefined) return intel;
   switch (name) {
     case "ptah_init": {
       requirePathArgument(args.target, "target");
@@ -913,8 +954,10 @@ async function callTool(name, args) {
         return renderEvidenceReportMarkdown(
           await loadInvestigation(args.input),
         );
+      if (args.format === "sarif" || args.format === "html")
+        return renderExtraReport(args.format, args.input, SERVER_VERSION);
       if (args.format !== undefined && args.format !== "json")
-        throw new TypeError("format must be json or markdown");
+        throw new TypeError("format must be json, markdown, sarif, or html");
       return buildEvidenceReport(await loadInvestigation(args.input));
     case "ptah_diff":
       return diffInvestigations(
@@ -1026,7 +1069,11 @@ for await (const line of rl) {
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion: PROTOCOL_VERSION,
+            protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.includes(
+              request.params?.protocolVersion,
+            )
+              ? request.params.protocolVersion
+              : SUPPORTED_PROTOCOL_VERSIONS[0],
             capabilities: {
               tools: {},
               prompts: {},
@@ -1044,7 +1091,11 @@ for await (const line of rl) {
         send({ jsonrpc: "2.0", id, result: {} });
         break;
       case "tools/list":
-        send({ jsonrpc: "2.0", id, result: { tools } });
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: { tools: [...tools, ...INTEL_TOOLS].map(annotate) },
+        });
         break;
       case "prompts/list":
         send({ jsonrpc: "2.0", id, result: { prompts } });

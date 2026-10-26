@@ -1,0 +1,16 @@
+{
+  "name": "ptah",
+  "version": "6.8.0",
+  "description": "Evidence-first reverse engineering and program understanding: triage, structure, indicators, secrets, capabilities, and verifiable investigations without executing the target.",
+  "author": { "name": "owlvisions" },
+  "homepage": "https://github.com/owlvisions/PTAH",
+  "repository": "https://github.com/owlvisions/PTAH",
+  "license": "MIT",
+  "keywords": ["reverse-engineering", "binary-analysis", "mcp", "evidence"],
+  "mcpServers": {
+    "ptah": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/ptah-mcp.mjs"]
+    }
+  }
+}

@@ -72,6 +72,11 @@ import {
 } from "./ptah-case-tools.mjs";
 import { mkdir, writeFile as writeFileAtomicUnsafe } from "node:fs/promises";
 import { isSupportedPtahNodeVersion } from "./ptah-runtime.mjs";
+import {
+  INTEL_COMMAND_NAMES,
+  INTEL_USAGE,
+  runIntelCommand,
+} from "./ptah-cli-intel.mjs";
 
 process.stdout.on("error", (error) => {
   if (error.code === "EPIPE") process.exit(0);
@@ -215,14 +220,18 @@ function printHelp() {
   process.stdout.write(
     `  ptah ui [--port 4177]  Start the loopback-only local GUI\n`,
   );
+  for (const usage of INTEL_USAGE) process.stdout.write(`  ${usage}\n`);
+  process.stdout.write(
+    `  ptah doctor  Readiness of runtime, analyzers, isolation, agent registrations, and upstream sync\n`,
+  );
   process.stdout.write(
     `  ptah upstream-sync [--push] [--bundle FILE] [--no-validate] [--branch main] [--upstream URL] | --install-timer [--interval hourly]  Merge the latest REA upstream in a temporary worktree, validate, and push without force\n`,
   );
   process.stdout.write(
-    `  ptah agents list|install|uninstall|print [--client ID[,ID]|--all] [--yes] [--force] [--no-skill] [--launcher local|npx]  Register the PTAH MCP server and skill with AI coding agents (preview unless --yes)\n`,
+    `  ptah agents list|install|uninstall|print [--client ID[,ID]|--all] [--workspace DIR [--no-instructions]] [--yes] [--force] [--no-skill] [--launcher local|npx]  Register the PTAH MCP server and skill with AI coding agents (preview unless --yes)\n`,
   );
   process.stdout.write(
-    `  ptah report --input FILE [--format json|markdown]  Validate an investigation and print an evidence report\n`,
+    `  ptah report --input FILE [--format json|markdown|sarif|html]  Validate an investigation and print an evidence report\n`,
   );
   process.stdout.write(
     `  ptah diff --base FILE --head FILE  Compare two investigations or verified case bundles\n`,
@@ -1025,6 +1034,8 @@ const SHELL_COMMANDS = [
   "completion",
   "agents",
   "upstream-sync",
+  "doctor",
+  ...INTEL_COMMAND_NAMES,
   "ui",
   "help",
   "legacy",
@@ -1102,6 +1113,58 @@ async function runWatch() {
   });
 }
 
+/** Project-scoped registration: configs confined with --workspace, plus instruction files. */
+async function runWorkspaceAgents(agents, action, directory, command) {
+  const { workspaceClients } = await import("./ptah-agent-clients.mjs");
+  const { workspaceInstructions } = await import("./ptah-agents.mjs");
+  const selected = splitList("--client");
+  const clients = workspaceClients(directory).filter(
+    (client) => selected.length === 0 || selected.includes(client.id),
+  );
+  const confined = [...command, "--workspace", directory];
+  const options = {
+    command: confined,
+    apply: args.includes("--yes"),
+    force: args.includes("--force"),
+    skill: !args.includes("--no-skill"),
+  };
+  if (action === "list") {
+    const reports = [];
+    for (const client of clients)
+      reports.push(await agents.inspectClient(client, { command: confined }));
+    emit({ workspace: directory, command: confined, clients: reports });
+    return;
+  }
+  if (action !== "install" && action !== "uninstall")
+    throw new Error(
+      "with --workspace, agents action must be list, install, or uninstall",
+    );
+  const result =
+    action === "install"
+      ? await agents.installAgents(clients, options)
+      : await agents.uninstallAgents(clients, options);
+  const instructions = args.includes("--no-instructions")
+    ? []
+    : await workspaceInstructions(directory, {
+        apply: options.apply,
+        remove: action === "uninstall",
+      });
+  emit({
+    workspace: directory,
+    ...result,
+    instructions,
+    ...(options.apply
+      ? {}
+      : { next: "Preview only. Rerun with --yes to apply." }),
+  });
+  if (
+    [...result.clients, ...result.skills].some(
+      (item) => item.action === "conflict" || item.action === "blocked",
+    )
+  )
+    process.exitCode = 2;
+}
+
 async function runAgents() {
   const agents = await import("./ptah-agents.mjs");
   const action = args[1] ?? "list";
@@ -1109,6 +1172,11 @@ async function runAgents() {
   const command = agents.serverCommand(launcher, packageJson.version);
   if (action === "print") {
     emit(agents.renderSnippet(optionValue("--client") ?? "json", command));
+    return;
+  }
+  const workspace = optionValue("--workspace");
+  if (workspace) {
+    await runWorkspaceAgents(agents, action, resolve(workspace), command);
     return;
   }
   const clients = await agents.selectClients(
@@ -1189,7 +1257,35 @@ async function runUpstreamSync() {
     process.exitCode = 2;
 }
 
+/** Option access shared with commands defined in other modules. */
+const cliContext = {
+  args,
+  option: optionValue,
+  integer: integerOption,
+  emit,
+  readJson: readJsonFile,
+  required(name) {
+    const value = optionValue(name);
+    if (!value) throw new Error(`Missing required ${name} argument.`);
+    return value;
+  },
+};
+
+async function runDoctorCommand() {
+  const { runDoctor } = await import("./ptah-doctor.mjs");
+  const report = await runDoctor({ root, packageJson });
+  emit(report);
+  if (!report.ok) process.exitCode = 2;
+}
+
 const COMMAND_HANDLERS = {
+  ...Object.fromEntries(
+    INTEL_COMMAND_NAMES.map((name) => [
+      name,
+      () => runIntelCommand(name, cliContext),
+    ]),
+  ),
+  doctor: runDoctorCommand,
   agents: runAgents,
   "upstream-sync": runUpstreamSync,
   eval: runEval,
@@ -1244,8 +1340,17 @@ async function runEngineCommand(command) {
         process.stdout.write(renderEvidenceReportMarkdown(input));
         return;
       }
+      if (format === "sarif" || format === "html") {
+        const reports = await import("./ptah-reports.mjs");
+        emit(
+          format === "sarif"
+            ? reports.renderSarif(input, { version: packageJson.version })
+            : reports.renderHtmlReport(input),
+        );
+        return;
+      }
       if (format !== "json")
-        throw new Error("--format must be json or markdown");
+        throw new Error("--format must be json, markdown, sarif, or html");
       output = buildEvidenceReport(input);
     } else if (command === "graph") {
       const format = optionValue("--format") ?? "json";

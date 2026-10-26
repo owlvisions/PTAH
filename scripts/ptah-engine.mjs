@@ -1052,6 +1052,11 @@ export function migrateInvestigation(document) {
 }
 
 /** Quality checks that do not change the document; findings are advisory and deterministic. */
+const VAGUE_SOURCE =
+  /^(?:.{0,3}|manual|me|myself|user|agent|ai|llm|model|claude|gpt|gemini|copilot|unknown|n\/?a|none|tbd|todo|guess|memory|experience)$/iu;
+const OVERSTATED_WORDING =
+  /\b(?:definitely|certainly|undoubtedly|always|never|100\s?%|proven|guaranteed|obviously)\b/iu;
+
 export function lintInvestigation(input) {
   const investigation = validateInvestigation(input);
   const findings = [];
@@ -1079,6 +1084,22 @@ export function lintInvestigation(input) {
         "Observed evidence has no artifact digest; attach raw output for reproducibility.",
       );
   }
+  for (const item of investigation.evidence)
+    if (VAGUE_SOURCE.test(item.source.trim()))
+      add(
+        "warning",
+        "vague-source",
+        item.id,
+        "Source does not let someone reproduce the observation; name the tool, command, offset, or document.",
+      );
+  for (const claim of investigation.claims)
+    if (claim.status !== "verified" && OVERSTATED_WORDING.test(claim.text))
+      add(
+        "info",
+        "overstated-wording",
+        claim.id,
+        "Claim uses absolute wording although it is not verified.",
+      );
   const summaries = new Map();
   for (const item of investigation.evidence) {
     const key = `${item.kind}\u0000${item.summary.trim().toLowerCase()}`;
