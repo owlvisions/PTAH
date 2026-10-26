@@ -208,8 +208,24 @@ export function decryptCase(envelope, passphrase) {
   if (envelope.kdf?.name !== "scrypt" || envelope.cipher !== "aes-256-gcm")
     throw new TypeError("unsupported KDF or cipher");
   const { N, r, p } = envelope.kdf;
-  if (![N, r, p].every((v) => Number.isInteger(v) && v > 0) || N > 2 ** 20)
+  // Bound every cost parameter: r and p multiply CPU time, so an unbounded
+  // value in a hostile envelope would stall decryption indefinitely.
+  if (
+    ![N, r, p].every((v) => Number.isInteger(v) && v > 0) ||
+    N > 2 ** 20 ||
+    (N & (N - 1)) !== 0 ||
+    r > 16 ||
+    p > 4
+  )
     throw new TypeError("scrypt parameters out of accepted range");
+  const iv = Buffer.from(envelope.iv ?? "", "base64");
+  const authTag = Buffer.from(envelope.authTag ?? "", "base64");
+  // GCM accepts truncated tags unless the length is pinned; a short tag makes
+  // forging a modified case feasible.
+  if (iv.length !== 12 || authTag.length !== 16)
+    throw new TypeError(
+      "encrypted case has an invalid IV or authentication tag length",
+    );
   const key = scryptSync(
     passphrase,
     Buffer.from(envelope.kdf.salt, "base64"),
@@ -221,12 +237,10 @@ export function decryptCase(envelope, passphrase) {
       maxmem: 256 * 1024 * 1024,
     },
   );
-  const decipher = createDecipheriv(
-    "aes-256-gcm",
-    key,
-    Buffer.from(envelope.iv, "base64"),
-  );
-  decipher.setAuthTag(Buffer.from(envelope.authTag, "base64"));
+  const decipher = createDecipheriv("aes-256-gcm", key, iv, {
+    authTagLength: 16,
+  });
+  decipher.setAuthTag(authTag);
   let plaintext;
   try {
     plaintext = Buffer.concat([

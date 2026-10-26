@@ -116,6 +116,7 @@
     "scripts/ptah-mcp.mjs",
     "scripts/ptah-agents.mjs",
     "scripts/ptah-agent-clients.mjs",
+    "scripts/ptah-path-policy.mjs",
     "integrations/agent-skill",
     "scripts/ptah-ui.mjs",
     "scripts/ptah-ui-server.mjs",
@@ -364,7 +365,7 @@
     "licenses:check": "node scripts/generate-third-party-inventory.mjs --check",
     "lint:typed": "node scripts/ci/static-check-report.mjs typed-lint",
     "knip:production": "node scripts/ci/production-reachability-report.mjs",
-    "test:ptah": "node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs scripts/tests/ptah-case-tools.test.mjs scripts/tests/ptah-analyzers.test.mjs scripts/tests/ptah-eval.test.mjs scripts/tests/ptah-integrations.test.mjs scripts/tests/ptah-agents.test.mjs",
+    "test:ptah": "node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs scripts/tests/ptah-case-tools.test.mjs scripts/tests/ptah-analyzers.test.mjs scripts/tests/ptah-eval.test.mjs scripts/tests/ptah-integrations.test.mjs scripts/tests/ptah-agents.test.mjs scripts/tests/ptah-security.test.mjs",
     "start:ptah-mcp": "node scripts/ptah-mcp.mjs"
   },
   "lint-staged": {

@@ -2,7 +2,8 @@
 /** Dependency-free Model Context Protocol stdio server for PTAH's safe native tools. */
 import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
+import { createPathPolicy } from "./ptah-path-policy.mjs";
 import {
   fingerprintTarget,
   createInvestigationForTarget,
@@ -51,6 +52,40 @@ const RESOURCE_ROOT =
     ? resolve(cliArgs[rootIndex + 1])
     : null;
 const MAX_RESOURCE_BYTES = 8 * 1024 * 1024;
+// --workspace DIR (repeatable) or PTAH_MCP_ROOTS confines every tool path.
+const WORKSPACE_ROOTS = [
+  ...cliArgs.flatMap((arg, index) =>
+    arg === "--workspace" && cliArgs[index + 1] ? [cliArgs[index + 1]] : [],
+  ),
+  ...(process.env.PTAH_MCP_ROOTS ?? "").split(delimiter).filter(Boolean),
+];
+const pathPolicy = createPathPolicy({ roots: WORKSPACE_ROOTS });
+const READ_PATH_ARGUMENTS = [
+  "target",
+  "input",
+  "artifact",
+  "base",
+  "head",
+  "suite",
+  "baseline",
+];
+// Mutation tools update `input` in place unless `output` is given.
+const IN_PLACE_TOOLS = new Set([
+  "ptah_add_evidence",
+  "ptah_add_claim",
+  "ptah_add_question",
+  "ptah_set_claim_status",
+  "ptah_resolve_question",
+]);
+
+/** Apply the MCP path policy to every path argument before a tool runs. */
+async function checkToolPaths(name, args) {
+  for (const key of READ_PATH_ARGUMENTS)
+    if (args[key] !== undefined) await pathPolicy.read(args[key], key);
+  if (args.output !== undefined) await pathPolicy.write(args.output, "output");
+  else if (IN_PLACE_TOOLS.has(name))
+    await pathPolicy.write(args.input, "input");
+}
 
 const SERVER_INSTRUCTIONS = [
   "PTAH is an evidence-first program-analysis server. It never executes the target.",
@@ -701,6 +736,7 @@ async function artifactDigest(path) {
 async function callTool(name, args) {
   if (!args || typeof args !== "object" || Array.isArray(args))
     throw new TypeError("tool arguments must be an object");
+  await checkToolPaths(name, args);
   switch (name) {
     case "ptah_init": {
       requirePathArgument(args.target, "target");

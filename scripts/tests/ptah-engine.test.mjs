@@ -1737,13 +1737,17 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     assert.match(pageHtml, /Verify & import case/);
     const importWithoutTarget = await fetch(`${base}/api/import-case`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "x-ptah-token": app.sessionToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({}),
     });
     assert.equal(importWithoutTarget.status, 409);
     const upload = await fetch(`${base}/api/init`, {
       method: "POST",
       headers: {
+        "x-ptah-token": app.sessionToken,
         "content-type": "application/octet-stream",
         "x-target-name": "fixture.wasm",
       },
@@ -1755,7 +1759,10 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     assert.match(created.target.sha256, /^[a-f0-9]{64}$/);
     const evidence = await fetch(`${base}/api/evidence`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "x-ptah-token": app.sessionToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         id: "ev-ui",
         kind: "static-analysis",
@@ -1803,7 +1810,10 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     assert.equal(saved.investigation.evidence[0].id, "ev-ui");
     const imported = await fetch(`${base}/api/import-case`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "x-ptah-token": app.sessionToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(saved),
     });
     assert.equal(imported.status, 200);
@@ -1813,7 +1823,10 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     tampered.investigation.evidence[0].summary = "tampered case";
     const rejected = await fetch(`${base}/api/import-case`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "x-ptah-token": app.sessionToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(tampered),
     });
     assert.equal(rejected.status, 400);
@@ -1827,6 +1840,7 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     const differentTarget = await fetch(`${base}/api/init`, {
       method: "POST",
       headers: {
+        "x-ptah-token": app.sessionToken,
         "content-type": "application/octet-stream",
         "x-target-name": "other.wasm",
       },
@@ -1835,7 +1849,10 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     assert.equal(differentTarget.status, 201);
     const wrongTarget = await fetch(`${base}/api/import-case`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "x-ptah-token": app.sessionToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(saved),
     });
     assert.equal(wrongTarget.status, 400);
@@ -1861,7 +1878,10 @@ void test("local UI rejects non-loopback binding and oversized target uploads", 
     const base = `http://127.0.0.1:${app.server.address().port}`;
     const response = await fetch(`${base}/api/init`, {
       method: "POST",
-      headers: { "content-type": "application/octet-stream" },
+      headers: {
+        "x-ptah-token": app.sessionToken,
+        "content-type": "application/octet-stream",
+      },
       body: new Uint8Array([1, 2, 3, 4, 5]),
     });
     assert.equal(response.status, 413);

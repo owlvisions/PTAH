@@ -405,3 +405,31 @@ void test("case tools never write outside the requested paths", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+void test("decryption rejects truncated GCM tags and costly scrypt parameters", () => {
+  const passphrase = "correct horse battery";
+  const envelope = encryptCase(createInvestigationCase(fixture()), passphrase);
+  const truncated = {
+    ...envelope,
+    authTag: Buffer.from(envelope.authTag, "base64")
+      .subarray(0, 4)
+      .toString("base64"),
+  };
+  assert.throws(
+    () => decryptCase(truncated, passphrase),
+    /authentication tag length/,
+  );
+  for (const kdf of [{ p: 1_000_000 }, { r: 1_000 }, { N: 3 * 1024 }])
+    assert.throws(
+      () =>
+        decryptCase(
+          { ...envelope, kdf: { ...envelope.kdf, ...kdf } },
+          passphrase,
+        ),
+      /out of accepted range/,
+    );
+  assert.equal(
+    decryptCase(envelope, passphrase).integrity.payloadSha256,
+    envelope.payloadSha256,
+  );
+});

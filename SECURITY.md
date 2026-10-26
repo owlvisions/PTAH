@@ -56,3 +56,9 @@ after showing its plan and receiving approval. REA does not download, install,
 upgrade, or modify Ghidra or Java.
 
 On Linux, REA accepts release metadata only from Hopper's HTTPS endpoint, restricts package URLs to Hopper's public download origin, bounds the package size, and compares the downloaded bytes with Hopper's published checksum before requesting installation. The published SHA-1 value is a corruption check, not a modern package signature; HTTPS origin validation remains part of the trust boundary. Dependency installation is delegated without shell evaluation to `apt-get`, `dnf`, or `pacman`, directly as root or through `pkexec`. REA never invokes `sudo`.
+
+## PTAH hardening notes
+
+- The local workbench (`ptah ui`) requires a per-session token on every state-changing request and rejects foreign `Origin` headers, so other websites cannot drive it through the browser.
+- The MCP server applies a path policy to every tool argument (credential locations refused, writes limited to PTAH-owned `.json` files, optional `--workspace` confinement); see `docs/PTAH-MCP.md`.
+- Encrypted cases require a full 16-byte AES-GCM authentication tag and bounded scrypt parameters.

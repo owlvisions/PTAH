@@ -44,7 +44,13 @@ Reading and analysis:
 - `ptah_providers`: discover provider commands on `PATH` without executing them.
 - `ptah_static_analyze`: run an allow-listed analyzer (`objdump`, `llvm-objdump`, `readelf`, `nm`, `file`, `rabin2`, `rz-bin`, `monodis`, `aapt2`, `wasm-objdump`, `wasm-tools`) with fixed argv, bounded timeout and output cap, optional `isolation` (`auto|required|none`) via bubblewrap and `cpuSeconds`/`memoryBytes` via prlimit; format-specific adapters require a confirmed magic signature. This does not execute the target program.
 
-Tools accepting file paths operate with the permissions of the local MCP server process. Only connect clients and files you trust. The server does not accept arbitrary shell commands and does not run analyzed targets. Case checksums detect accidental corruption but do not authenticate bundle authors. Provider version probes remain an explicit CLI opt-in (`ptah providers --probe`) rather than an MCP tool. Static metadata analysis does launch the selected analyzer against the file; the adapter does not yet provide OS-level CPU/memory/filesystem sandboxing.
+Every path argument passes a policy before a tool runs (`scripts/ptah-path-policy.mjs`), because a model analyzing hostile content can be prompted to request any path:
+
+- Credential locations are refused for reading and writing, after resolving symlinks: `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.docker`, `~/.config/gcloud`, `~/.config/gh`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, keyrings, `/etc/shadow`, and files named like `.env*`, `id_rsa`/`id_ed25519`, `*.pem`, `*.key`, `*.p12`, `*.kdbx`.
+- Writes go only to `.json` files, never through a symlink, and an existing file is replaced only if it is already a PTAH investigation or case bundle.
+- `--workspace DIR` (repeatable) or `PTAH_MCP_ROOTS` (path-list) confines every path to those directories.
+
+The CLI is run by the user directly and does not apply this policy. Tools accepting file paths otherwise operate with the permissions of the local MCP server process. Only connect clients and files you trust. The server does not accept arbitrary shell commands and does not run analyzed targets. Case checksums detect accidental corruption but do not authenticate bundle authors. Provider version probes remain an explicit CLI opt-in (`ptah providers --probe`) rather than an MCP tool. Static metadata analysis does launch the selected analyzer against the file; the adapter does not yet provide OS-level CPU/memory/filesystem sandboxing.
 
 ## Prompts and resources
 
