@@ -373,6 +373,11 @@
                 class="button secondary hidden"
                 href="/api/download"
                 >Export verified case</a
+              ><a
+                id="downloadReport"
+                class="button secondary hidden"
+                href="/api/report.md"
+                >Markdown report</a
               ><button id="refresh" class="secondary" type="button">
                 Refresh
               </button>
@@ -528,6 +533,7 @@
       function render(investigation, target) {
         state.initialized = !!investigation;
         $("download").classList.toggle("hidden", !state.initialized);
+        $("downloadReport").classList.toggle("hidden", !state.initialized);
         $("importButton").disabled = !state.initialized;
         $("evidenceCount").textContent = investigation?.evidence?.length || 0;
         $("claimCount").textContent = investigation?.claims?.length || 0;

@@ -6,10 +6,10 @@ PTAH is the emerging product identity for this codebase: a program-understanding
 
 ## Current PTAH-native features
 
-- **Investigation engine:** target SHA-256 fingerprinting, file-signature hints, schema/provenance validation, evidence reports and graphs, deterministic bounded planning, target-drift verification, and corruption-checked portable case bundles.
-- **CLI:** `ptah` commands for `info`, `self-check`, `providers`, `fingerprint`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `verify`, `export-case`, `verify-case`, `import-case`, `report`, `graph`, `plan`, and bounded `analyze` operations.
-- **MCP:** `ptah-mcp` exposes PTAH investigation and portable case operations over stdio using JSON-RPC/MCP.
-- **Local workbench:** `ptah ui` launches an early loopback-only interface for investigations, evidence, reports, graphs, planning, and export.
+- **Investigation engine:** target SHA-256 fingerprinting, file-signature hints, schema/provenance validation, evidence reports (JSON and Markdown) and graphs, deterministic investigation diff, deterministic bounded planning, target-drift verification, and corruption-checked portable case bundles.
+- **CLI:** `ptah` commands for `info`, `self-check`, `providers`, `fingerprint`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `verify`, `export-case`, `verify-case`, `import-case`, `report [--format json|markdown]`, `diff`, `graph`, `plan`, and bounded `analyze` operations.
+- **MCP:** `ptah-mcp` exposes PTAH investigation, report, diff, and portable case operations over stdio using JSON-RPC/MCP.
+- **Local workbench:** `ptah ui` launches an early loopback-only interface for investigations, evidence, reports (including Markdown download), graphs, planning, case export, and verified case import.
 - **Compatibility:** `rea` and `rea-agents` remain as legacy entry points while feature parity is evaluated.
 
 These features are deliberately scoped. Static adapters for `objdump`, `llvm-objdump`, and `wasm-tools` provide bounded metadata/validation operations; they are not a universal decompiler. External tools are not OS-sandboxed by this migration slice, and the workbench is a local single-user utility rather than a production multi-user application.
@@ -35,7 +35,11 @@ node scripts/ptah.mjs verify --input ./sample.investigation.json --target ./samp
 node scripts/ptah.mjs export-case --input ./sample.investigation.json --output ./sample.ptah-case.json
 node scripts/ptah.mjs verify-case --input ./sample.ptah-case.json --target ./sample.bin
 node scripts/ptah.mjs import-case --input ./sample.ptah-case.json --output ./restored.investigation.json --target ./sample.bin
+node scripts/ptah.mjs report --input ./sample.investigation.json --format markdown > ./sample-report.md
+node scripts/ptah.mjs diff --base ./sample.ptah-case.json --head ./restored.investigation.json
 ```
+
+`report --format markdown` renders the same provenance-preserving report as the JSON output for humans: claims with support labels, cited evidence tables, and open questions. `diff` compares two investigations or verified case bundles and prints added/removed/changed evidence, claims, questions, and actions, claim status transitions, resolved or reopened questions, and whether both sides refer to the same target bytes; it exits `3` when differences exist, `0` when identical, and `1` on invalid input or a tampered case.
 
 Case bundles contain the investigation and a SHA-256 corruption checksum, not the target file. The checksum is not a signature and does not authenticate the bundle author. Supply `--target` during verification/import to confirm the local target bytes still match the recorded digest.
 

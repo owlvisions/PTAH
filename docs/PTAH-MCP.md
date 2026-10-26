@@ -17,7 +17,8 @@ When installed as an npm package, the executable is `ptah-mcp`. Configure your M
 - `ptah_case_export`: write a portable investigation case bundle with a SHA-256 corruption checksum.
 - `ptah_case_verify`: validate a case bundle and optionally re-hash its target.
 - `ptah_case_import`: verify a case bundle and atomically restore its investigation JSON.
-- `ptah_report`: return a provenance-aware report.
+- `ptah_report`: return a provenance-aware report as JSON (default) or Markdown (`format: "markdown"`).
+- `ptah_diff`: deterministically compare two investigations or verified case bundles (`base`, `head`).
 - `ptah_graph`: return the directed evidence graph.
 - `ptah_plan`: select one deterministic next action under call/cost budgets.
 - `ptah_providers`: discover provider commands on `PATH` without executing them.

@@ -21,9 +21,17 @@ function run(args) {
 void test("PTAH help is available without installing project dependencies", () => {
   const result = run(["help"]);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /PTAH/);
+  assert.match(
+    result.stdout,
+    /^PTAH \(بتاح\) — Program Understanding & Analysis Toolkit/,
+  );
   assert.match(result.stdout, /self-check/);
-  assert.match(result.stdout, /original REA CLI remains available/);
+  assert.match(result.stdout, /ptah diff --base FILE --head FILE/);
+  assert.match(result.stdout, /--format json\|markdown/);
+  assert.match(
+    result.stdout,
+    /REA remains available as `rea` and `rea-agents`/,
+  );
 });
 
 void test("PTAH info reports compatibility honestly as a migration preview", () => {
@@ -34,6 +42,65 @@ void test("PTAH info reports compatibility honestly as a migration preview", () 
   assert.equal(info.status, "migration-preview");
   assert.equal(info.compatibilityEngine, "rea-agents");
   assert.equal(info.packageManagerNameUnchanged, true);
+  assert.ok(
+    info.nativeCapabilities.includes("deterministic investigation diff"),
+  );
+  assert.match(info.inheritedCapabilities, /REA analyzers run beneath PTAH/);
+  const text = run(["info"]);
+  assert.match(text.stdout, /^PTAH \(بتاح\)/);
+});
+
+void test("report --format markdown and diff work end to end from the CLI", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-report-diff-"));
+  try {
+    const target = join(dir, "target.bin");
+    const base = join(dir, "base.json");
+    const head = join(dir, "head.json");
+    await writeFile(target, "report and diff fixture");
+    assert.equal(run(["init", "--target", target, "--output", base]).status, 0);
+    assert.equal(
+      run([
+        "add-evidence",
+        "--input",
+        base,
+        "--output",
+        head,
+        "--id",
+        "ev-1",
+        "--kind",
+        "static-analysis",
+        "--summary",
+        "Section headers listed",
+        "--source",
+        "objdump -h",
+      ]).status,
+      0,
+    );
+    const markdown = run(["report", "--input", head, "--format", "markdown"]);
+    assert.equal(markdown.status, 0, markdown.stderr);
+    assert.match(markdown.stdout, /^# PTAH evidence report — target\.bin/);
+    assert.match(
+      markdown.stdout,
+      /\| ev-1 \| static-analysis \| observed \| objdump -h \| Section headers listed \|/,
+    );
+    const badFormat = run(["report", "--input", head, "--format", "pdf"]);
+    assert.equal(badFormat.status, 1);
+    assert.match(badFormat.stderr, /--format must be json or markdown/);
+
+    const same = run(["diff", "--base", base, "--head", base]);
+    assert.equal(same.status, 0, same.stderr);
+    assert.equal(JSON.parse(same.stdout).identical, true);
+    const changed = run(["diff", "--base", base, "--head", head]);
+    assert.equal(changed.status, 3, changed.stderr);
+    const diff = JSON.parse(changed.stdout);
+    assert.deepEqual(diff.evidence.added, ["ev-1"]);
+    assert.equal(diff.target.sameTarget, true);
+    const missing = run(["diff", "--base", base]);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /--head FILE/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 void test("PTAH self-check emits machine-readable readiness details", () => {
