@@ -33,6 +33,8 @@ import {
   diffInvestigations,
   inspectTarget,
   recordHistory,
+  addEvidence,
+  addInvestigationRecord,
   setClaimStatus,
   resolveQuestion,
   lintInvestigation,
@@ -212,6 +214,9 @@ function printHelp() {
   );
   process.stdout.write(
     `  ptah ui [--port 4177]  Start the loopback-only local GUI\n`,
+  );
+  process.stdout.write(
+    `  ptah agents list|install|uninstall|print [--client ID[,ID]|--all] [--yes] [--force] [--no-skill] [--launcher local|npx]  Register the PTAH MCP server and skill with AI coding agents (preview unless --yes)\n`,
   );
   process.stdout.write(
     `  ptah report --input FILE [--format json|markdown]  Validate an investigation and print an evidence report\n`,
@@ -436,24 +441,18 @@ async function runAddEvidence() {
   ]) {
     if (!value) throw new Error(`Missing required ${name} argument.`);
   }
-  input.evidence ??= [];
-  if (input.evidence.some((item) => item.id === id))
-    throw new Error(`Evidence id already exists: ${id}`);
   const artifactPath = optionValue("--artifact");
-  const tags = splitList("--tags");
-  input.evidence.push({
-    id,
-    kind,
-    summary,
-    source,
-    confidence,
-    targetSha256: input.target.sha256,
-    ...(artifactPath ? { artifact: await artifactDigest(artifactPath) } : {}),
-    ...(tags.length ? { tags } : {}),
-  });
   const savedTo = await saveInvestigation(
     output,
-    recordHistory(input, "evidence-added", { evidenceId: id, kind }),
+    addEvidence(input, {
+      id,
+      kind,
+      summary,
+      source,
+      confidence,
+      artifact: artifactPath ? await artifactDigest(artifactPath) : undefined,
+      tags: splitList("--tags"),
+    }),
   );
   emit({
     status: "evidence-added",
@@ -480,13 +479,9 @@ async function appendInvestigationRecord(
         `Missing required --${field.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)} argument.`,
       );
   }
-  input[collection] ??= [];
-  if (input[collection].some((item) => item.id === record.id))
-    throw new Error(`${collection} id already exists: ${record.id}`);
-  input[collection].push(record);
   const savedTo = await saveInvestigation(
     output,
-    recordHistory(input, `${collection}-added`, { id: record.id }),
+    addInvestigationRecord(input, collection, record),
   );
   process.stdout.write(
     `${JSON.stringify({ status: `${collection}-added`, id: record.id, path: savedTo }, null, 2)}\n`,
@@ -1025,6 +1020,7 @@ const SHELL_COMMANDS = [
   "eval",
   "watch",
   "completion",
+  "agents",
   "ui",
   "help",
   "legacy",
@@ -1102,7 +1098,63 @@ async function runWatch() {
   });
 }
 
+async function runAgents() {
+  const agents = await import("./ptah-agents.mjs");
+  const action = args[1] ?? "list";
+  const launcher = optionValue("--launcher") ?? "local";
+  const command = agents.serverCommand(launcher, packageJson.version);
+  if (action === "print") {
+    emit(agents.renderSnippet(optionValue("--client") ?? "json", command));
+    return;
+  }
+  const clients = await agents.selectClients(
+    args.includes("--all") ? "all" : splitList("--client"),
+  );
+  if (action === "list" || action === "doctor") {
+    const reports = [];
+    for (const client of args.includes("--all") || splitList("--client").length
+      ? clients
+      : agents.AGENT_CLIENTS)
+      reports.push(await agents.inspectClient(client, { command }));
+    emit({ command, clients: reports });
+    if (reports.some((report) => report.registered && report.issues.length))
+      process.exitCode = 2;
+    return;
+  }
+  const options = {
+    command,
+    apply: args.includes("--yes"),
+    force: args.includes("--force"),
+    skill: !args.includes("--no-skill"),
+  };
+  if (action !== "install" && action !== "uninstall")
+    throw new Error("agents action must be list, install, uninstall, or print");
+  if (clients.length === 0)
+    throw new Error(
+      "No supported agent was detected. Pass --client ID[,ID] or --all; see ptah agents list.",
+    );
+  const result =
+    action === "install"
+      ? await agents.installAgents(clients, options)
+      : await agents.uninstallAgents(clients, options);
+  emit({
+    ...result,
+    ...(options.apply
+      ? {}
+      : {
+          next: `Preview only. Rerun with --yes to apply: ptah agents ${action} ${args.slice(2).join(" ")} --yes`.trim(),
+        }),
+  });
+  if (
+    [...result.clients, ...result.skills].some(
+      (item) => item.action === "conflict" || item.action === "blocked",
+    )
+  )
+    process.exitCode = 2;
+}
+
 const COMMAND_HANDLERS = {
+  agents: runAgents,
   eval: runEval,
   watch: runWatch,
   completion: async () => emit(renderCompletion(args[1] ?? "")),

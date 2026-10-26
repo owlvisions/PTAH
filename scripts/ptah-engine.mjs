@@ -253,6 +253,8 @@ const EVIDENCE_KINDS = new Set([
   "test-result",
   "other",
 ]);
+/** Evidence kinds accepted by validation, for tool schemas and help text. */
+export const EVIDENCE_KIND_VALUES = Object.freeze([...EVIDENCE_KINDS]);
 
 export function sha256Text(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -694,6 +696,55 @@ export function recordHistory(input, action, details = {}, at = undefined) {
   };
   entry.entrySha256 = historyEntryDigest(entry);
   return { ...investigation, history: [...history, entry] };
+}
+
+/** Append one evidence item bound to the investigation's target digest. */
+export function addEvidence(input, record, options = {}) {
+  const investigation = validateInvestigation(input);
+  if ((investigation.evidence ?? []).some((item) => item.id === record.id))
+    throw new Error(`Evidence id already exists: ${record.id}`);
+  const item = {
+    id: record.id,
+    kind: record.kind,
+    summary: record.summary,
+    source: record.source,
+    confidence: record.confidence ?? "observed",
+    targetSha256: investigation.target.sha256,
+    ...(record.artifact ? { artifact: record.artifact } : {}),
+    ...(record.tags?.length ? { tags: [...record.tags] } : {}),
+  };
+  return recordHistory(
+    {
+      ...investigation,
+      evidence: [...(investigation.evidence ?? []), item],
+    },
+    "evidence-added",
+    { evidenceId: record.id, kind: record.kind },
+    options.at,
+  );
+}
+
+const RECORD_COLLECTIONS = new Set(["claims", "questions", "actions"]);
+
+/** Append a claim, question, or action; validation enforces cited evidence and kinds. */
+export function addInvestigationRecord(
+  input,
+  collection,
+  record,
+  options = {},
+) {
+  if (!RECORD_COLLECTIONS.has(collection))
+    throw new TypeError("collection must be claims, questions, or actions");
+  const investigation = validateInvestigation(input);
+  const existing = investigation[collection] ?? [];
+  if (existing.some((item) => item.id === record.id))
+    throw new Error(`${collection} id already exists: ${record.id}`);
+  return recordHistory(
+    { ...investigation, [collection]: [...existing, record] },
+    `${collection}-added`,
+    { id: record.id },
+    options.at,
+  );
 }
 
 const CLAIM_STATUSES = ["hypothesis", "supported", "verified", "rejected"];

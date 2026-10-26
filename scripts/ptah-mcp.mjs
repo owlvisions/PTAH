@@ -5,6 +5,13 @@ import { readFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import {
   fingerprintTarget,
+  createInvestigationForTarget,
+  recordHistory,
+  addEvidence,
+  addInvestigationRecord,
+  setClaimStatus,
+  resolveQuestion,
+  EVIDENCE_KIND_VALUES,
   verifyInvestigation,
   buildEvidenceReport,
   buildEvidenceGraph,
@@ -44,6 +51,15 @@ const RESOURCE_ROOT =
     ? resolve(cliArgs[rootIndex + 1])
     : null;
 const MAX_RESOURCE_BYTES = 8 * 1024 * 1024;
+
+const SERVER_INSTRUCTIONS = [
+  "PTAH is an evidence-first program-analysis server. It never executes the target.",
+  "Workflow: ptah_fingerprint or ptah_inspect the file, then ptah_init an investigation bound to its SHA-256.",
+  "Record every finding with ptah_add_evidence before claiming anything; ptah_add_claim must cite evidence ids.",
+  "Confidence: observed = direct tool output, derived = computed from observed data, inferred = interpretation. Only claims citing observed evidence can be verified.",
+  "Use ptah_add_question for unknowns, ptah_plan to choose the next bounded step, ptah_lint and ptah_verify before reporting, and ptah_report for the final answer.",
+  "Never state a conclusion that is not backed by recorded evidence; say what is unknown instead.",
+].join(" ");
 
 const prompts = [
   {
@@ -525,6 +541,143 @@ const tools = [
       additionalProperties: false,
     },
   },
+  {
+    name: "ptah_init",
+    description:
+      "Create an investigation bound to a target file's SHA-256. Start every analysis here; later evidence must match this digest.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Path to the target file" },
+        output: {
+          type: "string",
+          description: "Path for the new investigation JSON file",
+        },
+        id: { type: "string", description: "Optional investigation id" },
+      },
+      required: ["target", "output"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_add_evidence",
+    description:
+      "Record one evidence item (what was observed, where, and how confident). Use confidence observed only for direct tool output; derived for computed results; inferred for interpretation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Investigation JSON path" },
+        output: {
+          type: "string",
+          description: "Where to save; defaults to updating input in place",
+        },
+        id: { type: "string" },
+        kind: { type: "string", enum: [...EVIDENCE_KIND_VALUES] },
+        summary: { type: "string" },
+        source: {
+          type: "string",
+          description: "Reproducible reference: tool, command, offset, or file",
+        },
+        confidence: {
+          type: "string",
+          enum: ["observed", "derived", "inferred"],
+        },
+        artifact: {
+          type: "string",
+          description:
+            "Optional file whose SHA-256 is recorded with the evidence",
+        },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["input", "id", "kind", "summary", "source"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_add_claim",
+    description:
+      "Record a claim that cites existing evidence ids. Claims without cited evidence are rejected.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string" },
+        output: { type: "string" },
+        id: { type: "string" },
+        text: { type: "string" },
+        evidenceIds: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+        },
+        status: {
+          type: "string",
+          enum: ["hypothesis", "supported", "verified", "rejected"],
+        },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["input", "id", "text", "evidenceIds"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_add_question",
+    description:
+      "Record an open question and the evidence kinds that would answer it; the planner uses these to choose the next step.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string" },
+        output: { type: "string" },
+        id: { type: "string" },
+        text: { type: "string" },
+        priority: { type: "integer", minimum: 0, maximum: 100 },
+        requiredEvidenceKinds: {
+          type: "array",
+          items: { type: "string", enum: [...EVIDENCE_KIND_VALUES] },
+        },
+      },
+      required: ["input", "id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_set_claim_status",
+    description:
+      "Change a claim's status. verified requires at least one cited evidence item with confidence observed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string" },
+        output: { type: "string" },
+        claimId: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["hypothesis", "supported", "verified", "rejected"],
+        },
+        reason: { type: "string" },
+      },
+      required: ["input", "claimId", "status"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_resolve_question",
+    description:
+      "Resolve a question with a reason and supporting evidence ids, or reopen it with reopen: true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string" },
+        output: { type: "string" },
+        questionId: { type: "string" },
+        reason: { type: "string" },
+        evidenceIds: { type: "array", items: { type: "string" } },
+        reopen: { type: "boolean" },
+      },
+      required: ["input", "questionId"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 async function loadInvestigation(path) {
@@ -532,10 +685,126 @@ async function loadInvestigation(path) {
     throw new TypeError("input must be a non-empty file path");
   return JSON.parse(await readFile(resolve(path), "utf8"));
 }
+function requirePathArgument(value, name) {
+  if (typeof value !== "string" || !value.trim())
+    throw new TypeError(`${name} must be a non-empty file path`);
+}
+async function artifactDigest(path) {
+  requirePathArgument(path, "artifact");
+  const fingerprint = await fingerprintTarget(path);
+  return {
+    sha256: fingerprint.sha256,
+    sizeBytes: fingerprint.sizeBytes,
+    name: fingerprint.id,
+  };
+}
 async function callTool(name, args) {
   if (!args || typeof args !== "object" || Array.isArray(args))
     throw new TypeError("tool arguments must be an object");
   switch (name) {
+    case "ptah_init": {
+      requirePathArgument(args.target, "target");
+      requirePathArgument(args.output, "output");
+      const investigation = await createInvestigationForTarget(
+        args.target,
+        args.id,
+      );
+      const path = await saveInvestigation(
+        args.output,
+        recordHistory(investigation, "init", {
+          targetId: investigation.target.id,
+        }),
+      );
+      return { status: "created", path, target: investigation.target };
+    }
+    case "ptah_add_evidence": {
+      const investigation = await loadInvestigation(args.input);
+      const path = await saveInvestigation(
+        args.output ?? args.input,
+        addEvidence(investigation, {
+          id: args.id,
+          kind: args.kind,
+          summary: args.summary,
+          source: args.source,
+          confidence: args.confidence,
+          tags: args.tags,
+          artifact:
+            args.artifact === undefined
+              ? undefined
+              : await artifactDigest(args.artifact),
+        }),
+      );
+      return {
+        status: "evidence-added",
+        evidenceId: args.id,
+        targetSha256: investigation.target.sha256,
+        path,
+      };
+    }
+    case "ptah_add_claim":
+    case "ptah_add_question": {
+      const claim = name === "ptah_add_claim";
+      const record = claim
+        ? {
+            id: args.id,
+            text: args.text,
+            evidenceIds: args.evidenceIds,
+            ...(args.status ? { status: args.status } : {}),
+            ...(args.tags?.length ? { tags: args.tags } : {}),
+          }
+        : {
+            id: args.id,
+            text: args.text,
+            priority: args.priority ?? 50,
+            requiredEvidenceKinds: args.requiredEvidenceKinds ?? [],
+            resolved: false,
+          };
+      const collection = claim ? "claims" : "questions";
+      const path = await saveInvestigation(
+        args.output ?? args.input,
+        addInvestigationRecord(
+          await loadInvestigation(args.input),
+          collection,
+          record,
+        ),
+      );
+      return { status: `${collection}-added`, id: args.id, path };
+    }
+    case "ptah_set_claim_status": {
+      const path = await saveInvestigation(
+        args.output ?? args.input,
+        setClaimStatus(
+          await loadInvestigation(args.input),
+          args.claimId,
+          args.status,
+          { reason: args.reason },
+        ),
+      );
+      return {
+        status: "claim-status-set",
+        claimId: args.claimId,
+        to: args.status,
+        path,
+      };
+    }
+    case "ptah_resolve_question": {
+      const path = await saveInvestigation(
+        args.output ?? args.input,
+        resolveQuestion(
+          await loadInvestigation(args.input),
+          args.questionId,
+          args.reopen === true
+            ? null
+            : { reason: args.reason, evidenceIds: args.evidenceIds ?? [] },
+        ),
+      );
+      return {
+        status:
+          args.reopen === true ? "question-reopened" : "question-resolved",
+        questionId: args.questionId,
+        path,
+      };
+    }
     case "ptah_fingerprint":
       if (typeof args.target !== "string" || !args.target.trim())
         throw new TypeError("target must be a non-empty file path");
@@ -728,6 +997,7 @@ for await (const line of rl) {
               ...(RESOURCE_ROOT ? { resources: {} } : {}),
             },
             serverInfo: { name: "ptah-mcp", version: SERVER_VERSION },
+            instructions: SERVER_INSTRUCTIONS,
           },
         });
         break;

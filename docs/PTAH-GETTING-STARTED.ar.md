@@ -63,9 +63,24 @@ node scripts/ptah.mjs ui
 | `export-case [--gzip]`, `verify-case`, `import-case`, `sign-case`, `keygen`, `encrypt-case`, `decrypt-case`, `link-case`, `merge` | الحزم المحمولة والتوقيع والتشفير والربط والدمج                                                                      |
 | `report [--format markdown]`, `diff`, `graph [--format dot\|mermaid]`, `plan [--steps N]`                                         | المخرجات القابلة للمراجعة                                                                                           |
 | `analyze --provider ID [--isolation auto\|required\|none] [--cpu-seconds N] [--memory-mb N]`                                      | محللات مسموح بها: objdump, llvm-objdump, readelf, nm, file, rabin2, rz-bin, monodis, aapt2, wasm-objdump, wasm-tools |
-| `eval`, `watch`, `completion`, `ui`                                                                                               | التقييم، المراقبة، إكمال الصدفة، الواجهة المحلية                                                                    |
+| `agents list\|install\|uninstall\|print`, `eval`, `watch`, `completion`, `ui`                                                     | تسجيل بتاح لدى وكلاء البرمجة، التقييم، المراقبة، إكمال الصدفة، الواجهة المحلية                                       |
 
 يدعم كل أمر `--quiet` لكتم المخرجات؛ الأخطاء تظل على stderr. عبارة المرور للتشفير تُمرَّر عبر متغير البيئة `PTAH_CASE_PASSPHRASE` فقط.
+
+## الاستخدام مع وكلاء الذكاء الاصطناعي
+
+يسجّل `ptah agents` خادم MCP الخاص ببتاح ويثبّت مهارة بتاح لدى Claude Code وClaude Desktop وOpenAI Codex وGemini CLI وGitHub Copilot (في VS Code وCLI) وCursor وWindsurf وOpenCode وQwen Code:
+
+```sh
+node scripts/ptah.mjs agents list                 # الحالة لكل وكيل
+node scripts/ptah.mjs agents install              # معاينة للوكلاء المكتشفين دون كتابة
+node scripts/ptah.mjs agents install --yes        # التطبيق مع نسخة احتياطية لكل ملف
+node scripts/ptah.mjs agents install --client codex,cursor --yes
+node scripts/ptah.mjs agents uninstall --all --yes
+node scripts/ptah.mjs agents print --client codex # مقطع إعداد يدوي لأي وكيل آخر
+```
+
+لا يُعدَّل إلا مدخل `ptah`؛ لا يُستبدل خادم آخر بنفس الاسم إلا مع `--force`، ولا تُعاد كتابة ملفات JSON التي تحتوي تعليقات. التفاصيل في `docs/PTAH-AGENTS.md`.
 
 ## حدود صادقة
 

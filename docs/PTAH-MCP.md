@@ -12,6 +12,17 @@ When installed as an npm package, the executable is `ptah-mcp`. Configure your M
 
 ## Tools
 
+Recording an investigation (each write validates the whole document, appends a hash-chained history entry, and saves atomically; `output` defaults to updating `input` in place):
+
+- `ptah_init`: create an investigation bound to a target's SHA-256.
+- `ptah_add_evidence`: record evidence with `kind`, `summary`, reproducible `source`, `confidence` (`observed|derived|inferred`), optional `artifact` digest and `tags`. Evidence is bound to the investigation's target digest.
+- `ptah_add_claim`: record a claim; it must cite existing `evidenceIds`.
+- `ptah_add_question`: record an open question with `priority` and `requiredEvidenceKinds` for the planner.
+- `ptah_set_claim_status`: change status; `verified` requires cited `observed` evidence.
+- `ptah_resolve_question`: resolve with `reason` and `evidenceIds`, or `reopen: true`.
+
+Reading and analysis:
+
 - `ptah_fingerprint`: hash and identify a regular file without executing it.
 - `ptah_inspect`: fingerprint plus ELF/PE/Mach-O header details and entropy.
 - `ptah_strings`: bounded printable ASCII/UTF-16LE strings with offsets (`minLength`, `maxResults`, `maxBytes`).
@@ -41,7 +52,7 @@ The server advertises three prompts — `investigate-target`, `review-claims`, a
 
 ## Protocol and tests
 
-The server implements JSON-RPC over newline-delimited stdio messages and advertises protocol version `2024-11-05`. It handles `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. Regression tests are in `scripts/tests/ptah-engine.test.mjs` and run with `npm run test:ptah` (the tests themselves use Node's built-in test runner).
+The server implements JSON-RPC over newline-delimited stdio messages and advertises protocol version `2024-11-05`. Its `initialize` result carries `instructions` describing the evidence-first workflow, so clients that surface server instructions guide the model even without the PTAH skill. To register the server with coding agents, see `docs/PTAH-AGENTS.md`. It handles `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. Regression tests are in `scripts/tests/ptah-engine.test.mjs` and run with `npm run test:ptah` (the tests themselves use Node's built-in test runner).
 
 ## Limitations
 
