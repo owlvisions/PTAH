@@ -43,6 +43,18 @@ node scripts/ptah.mjs diff --base ./sample.ptah-case.json --head ./restored.inve
 
 Case bundles contain the investigation and a SHA-256 corruption checksum, not the target file. The checksum is not a signature and does not authenticate the bundle author. Supply `--target` during verification/import to confirm the local target bytes still match the recorded digest.
 
+### Use PTAH from your AI coding agent
+
+Register the PTAH MCP server and skill with Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub Copilot (VS Code and CLI), Cursor, Windsurf, OpenCode, and Qwen Code:
+
+```sh
+node scripts/ptah.mjs agents list            # status per client
+node scripts/ptah.mjs agents install         # preview for detected clients
+node scripts/ptah.mjs agents install --yes   # apply, with backups
+```
+
+See `docs/PTAH-AGENTS.md` for paths, safety rules, and manual snippets.
+
 ### Protecting and sharing cases
 
 ```sh

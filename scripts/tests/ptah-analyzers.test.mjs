@@ -535,7 +535,10 @@ void test("workbench runs analyzer jobs with progress and cancellation, diffs up
       assert.ok(html.includes(marker), marker);
     const json = (body) => ({
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "x-ptah-token": app.sessionToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(body),
     });
     const noTarget = await fetch(
@@ -546,6 +549,7 @@ void test("workbench runs analyzer jobs with progress and cancellation, diffs up
     const upload = await fetch(`${base}/api/init`, {
       method: "POST",
       headers: {
+        "x-ptah-token": app.sessionToken,
         "content-type": "application/octet-stream",
         "x-target-name": "a.wasm",
       },

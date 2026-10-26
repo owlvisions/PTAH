@@ -63,9 +63,39 @@ node scripts/ptah.mjs ui
 | `export-case [--gzip]`, `verify-case`, `import-case`, `sign-case`, `keygen`, `encrypt-case`, `decrypt-case`, `link-case`, `merge` | الحزم المحمولة والتوقيع والتشفير والربط والدمج                                                                      |
 | `report [--format markdown]`, `diff`, `graph [--format dot\|mermaid]`, `plan [--steps N]`                                         | المخرجات القابلة للمراجعة                                                                                           |
 | `analyze --provider ID [--isolation auto\|required\|none] [--cpu-seconds N] [--memory-mb N]`                                      | محللات مسموح بها: objdump, llvm-objdump, readelf, nm, file, rabin2, rz-bin, monodis, aapt2, wasm-objdump, wasm-tools |
-| `eval`, `watch`, `completion`, `ui`                                                                                               | التقييم، المراقبة، إكمال الصدفة، الواجهة المحلية                                                                    |
+| `agents list\|install\|uninstall\|print`, `upstream-sync`, `eval`, `watch`, `completion`, `ui`                                    | تسجيل بتاح لدى وكلاء البرمجة، الدمج التلقائي لتحديثات REA، التقييم، المراقبة، إكمال الصدفة، الواجهة المحلية          |
 
 يدعم كل أمر `--quiet` لكتم المخرجات؛ الأخطاء تظل على stderr. عبارة المرور للتشفير تُمرَّر عبر متغير البيئة `PTAH_CASE_PASSPHRASE` فقط.
+
+## تحليل خارق بأمر واحد
+
+| الأمر                                       | الغرض                                                                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `triage --target F --output INV`           | يشغّل كل تحليل مناسب للملف ويسجّل الأدلة (مُلاحَظة) والقدرات (مُستنتَجة كفرضيات) والأسئلة المفتوحة والخطوات التالية |
+| `structure`                                | تحليل ELF/PE أصلي: الأقسام مع الإنتروبيا، الاستيرادات، التصديرات، المكتبات، imphash، مؤشرات التغليف           |
+| `hashes`, `search`, `hexdump`, `compare`   | بصمات متعددة، بحث بنمط ست عشري مع `??`، عرض بايتات محدود، مقارنة ملفين بدرجة تشابه                         |
+| `iocs`, `secrets`, `capabilities`, `rules` | مؤشرات الاختراق، أسرار مُخفاة القيمة، قدرات سلوكية مع معرّفات ATT&CK، قواعد نصية/ست عشرية                     |
+| `summary`, `query`, `timeline`, `doctor`   | ملخص موفّر للرموز، بحث في الأدلة، خط زمني، فحص جاهزية شامل                                                   |
+
+أي أمر تحليل يقبل `--record INV` ليضيف نتيجته دليلًا إلى التحقيق تلقائيًا، و`report --format sarif|html` يصدّر التقرير لأدوات الفحص أو كصفحة مستقلة.
+
+## الاستخدام مع وكلاء الذكاء الاصطناعي
+
+يسجّل `ptah agents` خادم MCP الخاص ببتاح ويثبّت مهارة بتاح لدى Claude Code وClaude Desktop وOpenAI Codex وGemini CLI وGitHub Copilot (في VS Code وCLI) وCursor وWindsurf وOpenCode وQwen Code:
+
+```sh
+node scripts/ptah.mjs agents list                 # الحالة لكل وكيل
+node scripts/ptah.mjs agents install              # معاينة للوكلاء المكتشفين دون كتابة
+node scripts/ptah.mjs agents install --yes        # التطبيق مع نسخة احتياطية لكل ملف
+node scripts/ptah.mjs agents install --client codex,cursor --yes
+node scripts/ptah.mjs agents uninstall --all --yes
+node scripts/ptah.mjs agents print --client codex # مقطع إعداد يدوي لأي وكيل آخر
+node scripts/ptah.mjs agents install --workspace . --yes # إعداد المشروع مقيّدًا بمجلده
+```
+
+يدعم 15 وكيلًا: Claude Code وClaude Desktop وCodex وGemini CLI وCopilot (VS Code وCLI) وCursor وWindsurf وOpenCode وQwen Code وCline وRoo Code وKiro وAmazon Q وZed. ويتوفر بتاح أيضًا كإضافة Gemini (`gemini extensions install https://github.com/owlvisions/PTAH`) وكإضافة Claude Code (`/plugin marketplace add owlvisions/PTAH`).
+
+لا يُعدَّل إلا مدخل `ptah`؛ لا يُستبدل خادم آخر بنفس الاسم إلا مع `--force`، ولا تُعاد كتابة ملفات JSON التي تحتوي تعليقات. التفاصيل في `docs/PTAH-AGENTS.md`.
 
 ## حدود صادقة
 

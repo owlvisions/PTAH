@@ -12,6 +12,28 @@ When installed as an npm package, the executable is `ptah-mcp`. Configure your M
 
 ## Tools
 
+Recording an investigation (each write validates the whole document, appends a hash-chained history entry, and saves atomically; `output` defaults to updating `input` in place):
+
+- `ptah_init`: create an investigation bound to a target's SHA-256.
+- `ptah_add_evidence`: record evidence with `kind`, `summary`, reproducible `source`, `confidence` (`observed|derived|inferred`), optional `artifact` digest and `tags`. Evidence is bound to the investigation's target digest.
+- `ptah_add_claim`: record a claim; it must cite existing `evidenceIds`.
+- `ptah_add_question`: record an open question with `priority` and `requiredEvidenceKinds` for the planner.
+- `ptah_set_claim_status`: change status; `verified` requires cited `observed` evidence.
+- `ptah_resolve_question`: resolve with `reason` and `evidenceIds`, or `reopen: true`.
+
+Triage and native intelligence:
+
+- `ptah_triage`: run every applicable analysis and write a new investigation with observed evidence, inferred capability hypotheses, prioritized questions, and next actions.
+- `ptah_structure`: ELF/PE sections with entropy, imports, exports, libraries, imphash, packer hints.
+- `ptah_hashes`, `ptah_search` (hex with `??` wildcards or ASCII/UTF-16LE text), `ptah_hexdump` (≤ 4096 bytes), `ptah_compare` (string/import similarity, per-section differences).
+- `ptah_iocs`, `ptah_secrets` (values redacted, SHA-256 for correlation), `ptah_capabilities` (inferred, with ATT&CK ids), `ptah_rules` (text/hex only over MCP; regex rules are CLI-only to avoid catastrophic backtracking).
+- `ptah_summary`, `ptah_query`, `ptah_timeline`: compact agent views of an investigation.
+- `ptah_report` also renders `sarif` and `html`.
+
+Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), so clients can auto-approve the 31 read-only tools and confirm the 9 that write.
+
+Reading and analysis:
+
 - `ptah_fingerprint`: hash and identify a regular file without executing it.
 - `ptah_inspect`: fingerprint plus ELF/PE/Mach-O header details and entropy.
 - `ptah_strings`: bounded printable ASCII/UTF-16LE strings with offsets (`minLength`, `maxResults`, `maxBytes`).
@@ -33,7 +55,13 @@ When installed as an npm package, the executable is `ptah-mcp`. Configure your M
 - `ptah_providers`: discover provider commands on `PATH` without executing them.
 - `ptah_static_analyze`: run an allow-listed analyzer (`objdump`, `llvm-objdump`, `readelf`, `nm`, `file`, `rabin2`, `rz-bin`, `monodis`, `aapt2`, `wasm-objdump`, `wasm-tools`) with fixed argv, bounded timeout and output cap, optional `isolation` (`auto|required|none`) via bubblewrap and `cpuSeconds`/`memoryBytes` via prlimit; format-specific adapters require a confirmed magic signature. This does not execute the target program.
 
-Tools accepting file paths operate with the permissions of the local MCP server process. Only connect clients and files you trust. The server does not accept arbitrary shell commands and does not run analyzed targets. Case checksums detect accidental corruption but do not authenticate bundle authors. Provider version probes remain an explicit CLI opt-in (`ptah providers --probe`) rather than an MCP tool. Static metadata analysis does launch the selected analyzer against the file; the adapter does not yet provide OS-level CPU/memory/filesystem sandboxing.
+Every path argument passes a policy before a tool runs (`scripts/ptah-path-policy.mjs`), because a model analyzing hostile content can be prompted to request any path:
+
+- Credential locations are refused for reading and writing, after resolving symlinks: `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.docker`, `~/.config/gcloud`, `~/.config/gh`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, keyrings, `/etc/shadow`, and files named like `.env*`, `id_rsa`/`id_ed25519`, `*.pem`, `*.key`, `*.p12`, `*.kdbx`.
+- Writes go only to `.json` files, never through a symlink, and an existing file is replaced only if it is already a PTAH investigation or case bundle.
+- `--workspace DIR` (repeatable) or `PTAH_MCP_ROOTS` (path-list) confines every path to those directories.
+
+The CLI is run by the user directly and does not apply this policy. Tools accepting file paths otherwise operate with the permissions of the local MCP server process. Only connect clients and files you trust. The server does not accept arbitrary shell commands and does not run analyzed targets. Case checksums detect accidental corruption but do not authenticate bundle authors. Provider version probes remain an explicit CLI opt-in (`ptah providers --probe`) rather than an MCP tool. Static metadata analysis does launch the selected analyzer against the file; the adapter does not yet provide OS-level CPU/memory/filesystem sandboxing.
 
 ## Prompts and resources
 
@@ -41,7 +69,7 @@ The server advertises three prompts — `investigate-target`, `review-claims`, a
 
 ## Protocol and tests
 
-The server implements JSON-RPC over newline-delimited stdio messages and advertises protocol version `2024-11-05`. It handles `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. Regression tests are in `scripts/tests/ptah-engine.test.mjs` and run with `npm run test:ptah` (the tests themselves use Node's built-in test runner).
+The server implements JSON-RPC over newline-delimited stdio messages and negotiates protocol versions `2025-06-18`, `2025-03-26`, and `2024-11-05` (answering with the client's version when supported). Its `initialize` result carries `instructions` describing the evidence-first workflow, so clients that surface server instructions guide the model even without the PTAH skill. To register the server with coding agents, see `docs/PTAH-AGENTS.md`. It handles `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. Regression tests are in `scripts/tests/ptah-engine.test.mjs` and run with `npm run test:ptah` (the tests themselves use Node's built-in test runner).
 
 ## Limitations
 

@@ -579,8 +579,19 @@
       function showError(error) {
         showStatus(error.message || String(error), "bad");
       }
+      const sessionToken =
+        document.querySelector('meta[name="ptah-token"]')?.content ?? "";
       async function api(url, options = {}) {
-        const response = await fetch(url, options);
+        const method = (options.method || "GET").toUpperCase();
+        const response = await fetch(
+          url,
+          method === "GET"
+            ? options
+            : {
+                ...options,
+                headers: { ...options.headers, "x-ptah-token": sessionToken },
+              },
+        );
         const type = response.headers.get("content-type") || "";
         const data = type.includes("json")
           ? await response.json()

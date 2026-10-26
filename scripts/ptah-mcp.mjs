@@ -2,9 +2,23 @@
 /** Dependency-free Model Context Protocol stdio server for PTAH's safe native tools. */
 import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
+import { createPathPolicy } from "./ptah-path-policy.mjs";
+import {
+  INTEL_TOOLS,
+  annotate,
+  callIntelTool,
+  renderExtraReport,
+} from "./ptah-mcp-intel.mjs";
 import {
   fingerprintTarget,
+  createInvestigationForTarget,
+  recordHistory,
+  addEvidence,
+  addInvestigationRecord,
+  setClaimStatus,
+  resolveQuestion,
+  EVIDENCE_KIND_VALUES,
   verifyInvestigation,
   buildEvidenceReport,
   buildEvidenceGraph,
@@ -35,7 +49,8 @@ import {
   parseWasmSections,
 } from "./ptah-analysis.mjs";
 
-const PROTOCOL_VERSION = "2024-11-05";
+// Newest first; the server answers with the client's version when it supports it.
+const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const SERVER_VERSION = "0.9.0";
 const cliArgs = process.argv.slice(2);
 const rootIndex = cliArgs.indexOf("--root");
@@ -44,8 +59,69 @@ const RESOURCE_ROOT =
     ? resolve(cliArgs[rootIndex + 1])
     : null;
 const MAX_RESOURCE_BYTES = 8 * 1024 * 1024;
+// --workspace DIR (repeatable) or PTAH_MCP_ROOTS confines every tool path.
+const WORKSPACE_ROOTS = [
+  ...cliArgs.flatMap((arg, index) =>
+    arg === "--workspace" && cliArgs[index + 1] ? [cliArgs[index + 1]] : [],
+  ),
+  ...(process.env.PTAH_MCP_ROOTS ?? "").split(delimiter).filter(Boolean),
+];
+const pathPolicy = createPathPolicy({ roots: WORKSPACE_ROOTS });
+const READ_PATH_ARGUMENTS = [
+  "target",
+  "other",
+  "input",
+  "artifact",
+  "base",
+  "head",
+  "suite",
+  "baseline",
+];
+// Mutation tools update `input` in place unless `output` is given.
+const IN_PLACE_TOOLS = new Set([
+  "ptah_add_evidence",
+  "ptah_add_claim",
+  "ptah_add_question",
+  "ptah_set_claim_status",
+  "ptah_resolve_question",
+]);
+
+/** Apply the MCP path policy to every path argument before a tool runs. */
+async function checkToolPaths(name, args) {
+  for (const key of READ_PATH_ARGUMENTS)
+    if (args[key] !== undefined) await pathPolicy.read(args[key], key);
+  if (args.output !== undefined) await pathPolicy.write(args.output, "output");
+  else if (IN_PLACE_TOOLS.has(name))
+    await pathPolicy.write(args.input, "input");
+}
+
+const SERVER_INSTRUCTIONS = [
+  "PTAH is an evidence-first program-analysis server. It never executes the target.",
+  "Workflow: ptah_fingerprint or ptah_inspect the file, then ptah_init an investigation bound to its SHA-256.",
+  "Record every finding with ptah_add_evidence before claiming anything; ptah_add_claim must cite evidence ids.",
+  "Confidence: observed = direct tool output, derived = computed from observed data, inferred = interpretation. Only claims citing observed evidence can be verified.",
+  "Use ptah_add_question for unknowns, ptah_plan to choose the next bounded step, ptah_lint and ptah_verify before reporting, and ptah_report for the final answer.",
+  "Never state a conclusion that is not backed by recorded evidence; say what is unknown instead.",
+].join(" ");
 
 const prompts = [
+  {
+    name: "triage-target",
+    description:
+      "Triage an unknown file in one step, then explain what is known, what is inferred, and what to examine next.",
+    arguments: [
+      {
+        name: "target",
+        description: "Absolute path to the file",
+        required: true,
+      },
+      {
+        name: "output",
+        description: "Path for the investigation JSON",
+        required: true,
+      },
+    ],
+  },
   {
     name: "investigate-target",
     description:
@@ -99,6 +175,19 @@ function renderPrompt(name, promptArgs = {}) {
   const rules =
     "Rules: never execute the target; cite evidence IDs for every statement; use observed/derived/inferred confidence; do not call anything verified unless a verification step was performed; say 'unknown' when evidence is missing.";
   switch (name) {
+    case "triage-target": {
+      const target = need("target");
+      const output = need("output");
+      return [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Run ptah_triage on ${target} with output ${output}, then ptah_summary. Report in three parts: observed facts (cite evidence ids), inferred hypotheses (label them inferred), and the top open questions with the next step from ptah_plan. ${rules}`,
+          },
+        },
+      ];
+    }
     case "investigate-target": {
       const target = need("target");
       const output = need("output");
@@ -107,7 +196,7 @@ function renderPrompt(name, promptArgs = {}) {
           role: "user",
           content: {
             type: "text",
-            text: `Investigate ${target} with PTAH tools only. Steps: 1) ptah_inspect and ptah_fingerprint on the target; 2) create the investigation at ${output} via the ptah CLI (init) or import; 3) record each observation with ptah add-evidence semantics (kind, source, confidence); 4) run ptah_strings and ptah_carve for leads; 5) run ptah_lint and ptah_plan and report the next bounded step. ${rules}`,
+            text: `Investigate ${target} with PTAH tools only. Steps: 1) ptah_triage the target into ${output}; 2) read ptah_summary; 3) deepen the highest-priority open question with ptah_structure, ptah_iocs, ptah_strings, ptah_search, ptah_hexdump, or ptah_static_analyze, recording each observation with ptah_add_evidence (kind, reproducible source, confidence); 4) add or update claims with ptah_add_claim and ptah_set_claim_status; 5) run ptah_lint and ptah_plan and report the next bounded step. ${rules}`,
           },
         },
       ];
@@ -426,8 +515,9 @@ const tools = [
         },
         format: {
           type: "string",
-          enum: ["json", "markdown"],
-          description: "Output format; defaults to json",
+          enum: ["json", "markdown", "sarif", "html"],
+          description:
+            "Output format; defaults to json. sarif feeds code-scanning tools; html is a self-contained page.",
         },
       },
       required: ["input"],
@@ -525,6 +615,143 @@ const tools = [
       additionalProperties: false,
     },
   },
+  {
+    name: "ptah_init",
+    description:
+      "Create an investigation bound to a target file's SHA-256. Start every analysis here; later evidence must match this digest.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Path to the target file" },
+        output: {
+          type: "string",
+          description: "Path for the new investigation JSON file",
+        },
+        id: { type: "string", description: "Optional investigation id" },
+      },
+      required: ["target", "output"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_add_evidence",
+    description:
+      "Record one evidence item (what was observed, where, and how confident). Use confidence observed only for direct tool output; derived for computed results; inferred for interpretation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Investigation JSON path" },
+        output: {
+          type: "string",
+          description: "Where to save; defaults to updating input in place",
+        },
+        id: { type: "string" },
+        kind: { type: "string", enum: [...EVIDENCE_KIND_VALUES] },
+        summary: { type: "string" },
+        source: {
+          type: "string",
+          description: "Reproducible reference: tool, command, offset, or file",
+        },
+        confidence: {
+          type: "string",
+          enum: ["observed", "derived", "inferred"],
+        },
+        artifact: {
+          type: "string",
+          description:
+            "Optional file whose SHA-256 is recorded with the evidence",
+        },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["input", "id", "kind", "summary", "source"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_add_claim",
+    description:
+      "Record a claim that cites existing evidence ids. Claims without cited evidence are rejected.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string" },
+        output: { type: "string" },
+        id: { type: "string" },
+        text: { type: "string" },
+        evidenceIds: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+        },
+        status: {
+          type: "string",
+          enum: ["hypothesis", "supported", "verified", "rejected"],
+        },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["input", "id", "text", "evidenceIds"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_add_question",
+    description:
+      "Record an open question and the evidence kinds that would answer it; the planner uses these to choose the next step.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string" },
+        output: { type: "string" },
+        id: { type: "string" },
+        text: { type: "string" },
+        priority: { type: "integer", minimum: 0, maximum: 100 },
+        requiredEvidenceKinds: {
+          type: "array",
+          items: { type: "string", enum: [...EVIDENCE_KIND_VALUES] },
+        },
+      },
+      required: ["input", "id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_set_claim_status",
+    description:
+      "Change a claim's status. verified requires at least one cited evidence item with confidence observed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string" },
+        output: { type: "string" },
+        claimId: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["hypothesis", "supported", "verified", "rejected"],
+        },
+        reason: { type: "string" },
+      },
+      required: ["input", "claimId", "status"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_resolve_question",
+    description:
+      "Resolve a question with a reason and supporting evidence ids, or reopen it with reopen: true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string" },
+        output: { type: "string" },
+        questionId: { type: "string" },
+        reason: { type: "string" },
+        evidenceIds: { type: "array", items: { type: "string" } },
+        reopen: { type: "boolean" },
+      },
+      required: ["input", "questionId"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 async function loadInvestigation(path) {
@@ -532,10 +759,129 @@ async function loadInvestigation(path) {
     throw new TypeError("input must be a non-empty file path");
   return JSON.parse(await readFile(resolve(path), "utf8"));
 }
+function requirePathArgument(value, name) {
+  if (typeof value !== "string" || !value.trim())
+    throw new TypeError(`${name} must be a non-empty file path`);
+}
+async function artifactDigest(path) {
+  requirePathArgument(path, "artifact");
+  const fingerprint = await fingerprintTarget(path);
+  return {
+    sha256: fingerprint.sha256,
+    sizeBytes: fingerprint.sizeBytes,
+    name: fingerprint.id,
+  };
+}
 async function callTool(name, args) {
   if (!args || typeof args !== "object" || Array.isArray(args))
     throw new TypeError("tool arguments must be an object");
+  await checkToolPaths(name, args);
+  const intel = await callIntelTool(name, args);
+  if (intel !== undefined) return intel;
   switch (name) {
+    case "ptah_init": {
+      requirePathArgument(args.target, "target");
+      requirePathArgument(args.output, "output");
+      const investigation = await createInvestigationForTarget(
+        args.target,
+        args.id,
+      );
+      const path = await saveInvestigation(
+        args.output,
+        recordHistory(investigation, "init", {
+          targetId: investigation.target.id,
+        }),
+      );
+      return { status: "created", path, target: investigation.target };
+    }
+    case "ptah_add_evidence": {
+      const investigation = await loadInvestigation(args.input);
+      const path = await saveInvestigation(
+        args.output ?? args.input,
+        addEvidence(investigation, {
+          id: args.id,
+          kind: args.kind,
+          summary: args.summary,
+          source: args.source,
+          confidence: args.confidence,
+          tags: args.tags,
+          artifact:
+            args.artifact === undefined
+              ? undefined
+              : await artifactDigest(args.artifact),
+        }),
+      );
+      return {
+        status: "evidence-added",
+        evidenceId: args.id,
+        targetSha256: investigation.target.sha256,
+        path,
+      };
+    }
+    case "ptah_add_claim":
+    case "ptah_add_question": {
+      const claim = name === "ptah_add_claim";
+      const record = claim
+        ? {
+            id: args.id,
+            text: args.text,
+            evidenceIds: args.evidenceIds,
+            ...(args.status ? { status: args.status } : {}),
+            ...(args.tags?.length ? { tags: args.tags } : {}),
+          }
+        : {
+            id: args.id,
+            text: args.text,
+            priority: args.priority ?? 50,
+            requiredEvidenceKinds: args.requiredEvidenceKinds ?? [],
+            resolved: false,
+          };
+      const collection = claim ? "claims" : "questions";
+      const path = await saveInvestigation(
+        args.output ?? args.input,
+        addInvestigationRecord(
+          await loadInvestigation(args.input),
+          collection,
+          record,
+        ),
+      );
+      return { status: `${collection}-added`, id: args.id, path };
+    }
+    case "ptah_set_claim_status": {
+      const path = await saveInvestigation(
+        args.output ?? args.input,
+        setClaimStatus(
+          await loadInvestigation(args.input),
+          args.claimId,
+          args.status,
+          { reason: args.reason },
+        ),
+      );
+      return {
+        status: "claim-status-set",
+        claimId: args.claimId,
+        to: args.status,
+        path,
+      };
+    }
+    case "ptah_resolve_question": {
+      const path = await saveInvestigation(
+        args.output ?? args.input,
+        resolveQuestion(
+          await loadInvestigation(args.input),
+          args.questionId,
+          args.reopen === true
+            ? null
+            : { reason: args.reason, evidenceIds: args.evidenceIds ?? [] },
+        ),
+      );
+      return {
+        status:
+          args.reopen === true ? "question-reopened" : "question-resolved",
+        questionId: args.questionId,
+        path,
+      };
+    }
     case "ptah_fingerprint":
       if (typeof args.target !== "string" || !args.target.trim())
         throw new TypeError("target must be a non-empty file path");
@@ -608,8 +954,10 @@ async function callTool(name, args) {
         return renderEvidenceReportMarkdown(
           await loadInvestigation(args.input),
         );
+      if (args.format === "sarif" || args.format === "html")
+        return renderExtraReport(args.format, args.input, SERVER_VERSION);
       if (args.format !== undefined && args.format !== "json")
-        throw new TypeError("format must be json or markdown");
+        throw new TypeError("format must be json, markdown, sarif, or html");
       return buildEvidenceReport(await loadInvestigation(args.input));
     case "ptah_diff":
       return diffInvestigations(
@@ -721,13 +1069,18 @@ for await (const line of rl) {
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion: PROTOCOL_VERSION,
+            protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.includes(
+              request.params?.protocolVersion,
+            )
+              ? request.params.protocolVersion
+              : SUPPORTED_PROTOCOL_VERSIONS[0],
             capabilities: {
               tools: {},
               prompts: {},
               ...(RESOURCE_ROOT ? { resources: {} } : {}),
             },
             serverInfo: { name: "ptah-mcp", version: SERVER_VERSION },
+            instructions: SERVER_INSTRUCTIONS,
           },
         });
         break;
@@ -738,7 +1091,11 @@ for await (const line of rl) {
         send({ jsonrpc: "2.0", id, result: {} });
         break;
       case "tools/list":
-        send({ jsonrpc: "2.0", id, result: { tools } });
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: { tools: [...tools, ...INTEL_TOOLS].map(annotate) },
+        });
         break;
       case "prompts/list":
         send({ jsonrpc: "2.0", id, result: { prompts } });

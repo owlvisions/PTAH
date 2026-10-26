@@ -1,3 +1,4 @@
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -29,7 +30,6 @@ import {
   parseAsarHeader,
   parseWasmSections,
 } from "./ptah-analysis.mjs";
-import { randomUUID } from "node:crypto";
 
 const MAX_JOBS = 50;
 const JOB_RETENTION_MS = 30 * 60 * 1000;
@@ -89,7 +89,15 @@ function sanitizeFilename(value) {
   return base && base !== "." && base !== ".." ? base : "target.bin";
 }
 
+function tokenMatches(candidate, expected) {
+  if (typeof candidate !== "string") return false;
+  const given = Buffer.from(candidate);
+  const wanted = Buffer.from(expected);
+  return given.length === wanted.length && timingSafeEqual(given, wanted);
+}
+
 export async function createPtahUiServer(options = {}) {
+  const sessionToken = randomBytes(32).toString("hex");
   const host = options.host ?? "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost")
     throw new TypeError("PTAH UI only supports loopback binding");
@@ -205,8 +213,25 @@ export async function createPtahUiServer(options = {}) {
         return sendJson(response, 403, {
           error: "loopback Host header required",
         });
+      // Cross-site pages can send "simple" POSTs to loopback without a
+      // preflight; every state change must prove it came from this page.
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        const origin = request.headers.origin;
+        if (
+          !tokenMatches(request.headers["x-ptah-token"], sessionToken) ||
+          (origin !== undefined && origin !== `http://${hostHeader}`)
+        )
+          return sendJson(response, 403, {
+            error: "missing or invalid PTAH session token",
+          });
+      }
       if (request.method === "GET" && request.url === "/") {
-        const html = await readFile(HTML_PATH);
+        const html = Buffer.from(
+          (await readFile(HTML_PATH, "utf8")).replace(
+            "</head>",
+            `<meta name="ptah-token" content="${sessionToken}" />\n</head>`,
+          ),
+        );
         response.writeHead(200, {
           "content-type": "text/html; charset=utf-8",
           "content-length": html.length,
@@ -551,6 +576,7 @@ export async function createPtahUiServer(options = {}) {
   return {
     server,
     workspace,
+    sessionToken,
     async close() {
       await new Promise((resolveClose, rejectClose) =>
         server.close((error) => (error ? rejectClose(error) : resolveClose())),

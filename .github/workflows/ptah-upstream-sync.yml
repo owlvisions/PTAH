@@ -8,118 +8,156 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: ptah-upstream-sync-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
-  propose-upstream-update:
+  merge-and-validate:
     # Never run this automation against the upstream project itself.
     if: github.repository != 'morluto/rea'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
+    # Upstream code runs here, so this job has read-only access and no push
+    # credentials. It only hands a validated merge commit to the next job.
+    permissions:
+      contents: read
+    outputs:
+      status: ${{ steps.sync.outputs.status }}
+      base: ${{ steps.sync.outputs.base }}
+      upstream: ${{ steps.sync.outputs.upstream }}
+      merged: ${{ steps.sync.outputs.merged }}
     steps:
       - name: Check out the PTAH fork with full history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up supported Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
 
-      - name: Merge latest REA main into PTAH
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Merge latest REA main with the PTAH conflict policy and validate
         id: sync
         env:
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
-          SYNC_BRANCH: bot/ptah-upstream-sync
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git remote add upstream https://github.com/morluto/rea.git || git remote set-url upstream https://github.com/morluto/rea.git
-          git fetch --no-tags upstream main
-          git fetch origin "${BASE_BRANCH}"
+          set +e
+          node scripts/ptah.mjs upstream-sync --branch "$BASE_BRANCH" --bundle "$RUNNER_TEMP/ptah-sync.bundle" > "$RUNNER_TEMP/sync.json"
+          set -e
+          cat "$RUNNER_TEMP/sync.json"
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const out = require("fs").createWriteStream(process.env.GITHUB_OUTPUT, { flags: "a" });
+            for (const key of ["status", "base", "upstream", "merged"]) out.write(`${key}=${r[key] ?? ""}\n`);
+            const summary = require("fs").createWriteStream(process.env.GITHUB_STEP_SUMMARY, { flags: "a" });
+            summary.write(`### PTAH upstream sync: ${r.status}\n\n\`\`\`json\n${JSON.stringify(r, null, 2)}\n\`\`\`\n`);
+          ' "$RUNNER_TEMP/sync.json"
 
-          base_ref="origin/${BASE_BRANCH}"
-          upstream_sha="$(git rev-parse upstream/main)"
-          echo "upstream_sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
+      - name: Keep the validated merge for publication
+        if: steps.sync.outputs.status == 'merged'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ptah-sync-bundle
+          path: ${{ runner.temp }}/ptah-sync.bundle
+          retention-days: 3
 
-          if ! git merge-base upstream/main "$base_ref" >/dev/null 2>&1; then
-            {
-              echo '### PTAH upstream sync is not bootstrapped yet'
-              echo
-              echo 'The default branch and upstream/main do not share Git history. This commonly happens when the project was uploaded from a ZIP archive. The workflow will not attempt a destructive or conflict-prone rebase.'
-              echo
-              echo 'Bootstrap the repository from the REA Git history, apply and review `patches/PTAH-overlay-from-supplied-REA-baseline.patch`, push the resulting history, then rerun this workflow.'
-              echo
-              echo 'See `docs/PTAH-UPSTREAM-SYNC.md` for the safe bootstrap procedure.'
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+      - name: Keep the sync report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ptah-sync-report
+          path: ${{ runner.temp }}/sync.json
+          retention-days: 14
 
-          if git merge-base --is-ancestor upstream/main "$base_ref"; then
-            echo 'Upstream is already contained in the default branch; no sync PR needed.'
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+  publish:
+    needs: merge-and-validate
+    if: needs.merge-and-validate.outputs.status == 'merged'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # No upstream code runs in this job: it verifies the merge commit's parents
+    # and pushes it without force, or opens a review PR when auto-merge is off.
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out the PTAH fork
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
-          git checkout -B "$SYNC_BRANCH" "$base_ref"
-          if ! git merge --no-edit upstream/main; then
-            git merge --abort || true
-            {
-              echo '### PTAH upstream sync needs manual conflict resolution'
-              echo
-              echo "The latest upstream commit is \`${upstream_sha}\`. Merge stopped because one or more PTAH changes overlap upstream changes. No branch was pushed and the default branch was not modified."
-              echo
-              echo 'Resolve this in a clone with `git fetch upstream && git merge --no-edit upstream/main`, then rerun this workflow.'
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+      - name: Fetch the validated merge bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ptah-sync-bundle
+          path: ${{ runner.temp }}
 
-          if git diff --quiet "$base_ref" HEAD; then
-            echo 'Merge produced no tree changes; no sync PR needed.'
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo 'changed=true' >> "$GITHUB_OUTPUT"
-          echo "Merged upstream ${upstream_sha}"
-
-      - name: Validate PTAH-specific JavaScript and tests
-        if: steps.sync.outputs.changed == 'true'
-        run: |
-          node --check scripts/ptah.mjs
-          node --check scripts/ptah-engine.mjs
-          node --check scripts/ptah-mcp.mjs
-          node --check scripts/ptah-ui.mjs
-          node --check scripts/ptah-ui-server.mjs
-          npm run test:ptah
-
-      - name: Publish sync branch and open or update review PR
-        if: steps.sync.outputs.changed == 'true'
+      - name: Verify parents and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
           SYNC_BRANCH: bot/ptah-upstream-sync
-          UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
+          AUTOMERGE: ${{ vars.PTAH_UPSTREAM_AUTOMERGE || 'true' }}
+          BASE_SHA: ${{ needs.merge-and-validate.outputs.base }}
+          UPSTREAM_SHA: ${{ needs.merge-and-validate.outputs.upstream }}
+          MERGED_SHA: ${{ needs.merge-and-validate.outputs.merged }}
         shell: bash
         run: |
           set -euo pipefail
-          git push --force-with-lease origin "HEAD:refs/heads/${SYNC_BRANCH}"
+          git fetch --no-tags "$RUNNER_TEMP/ptah-sync.bundle" HEAD
+          test "$(git rev-parse FETCH_HEAD)" = "$MERGED_SHA"
+          parents="$(git rev-list --parents -n1 "$MERGED_SHA" | cut -d' ' -f2-)"
+          test "$parents" = "$BASE_SHA $UPSTREAM_SHA" || { echo "unexpected merge parents: $parents"; exit 1; }
+          if [[ "$AUTOMERGE" == "true" ]]; then
+            # Non-forced: if the default branch moved, the push is rejected and the next run retries.
+            git push origin "${MERGED_SHA}:refs/heads/${BASE_BRANCH}"
+            echo "Merged REA ${UPSTREAM_SHA:0:12} into ${BASE_BRANCH}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git push --force-with-lease origin "${MERGED_SHA}:refs/heads/${SYNC_BRANCH}"
           pr_number="$(gh pr list --base "$BASE_BRANCH" --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number // empty')"
-          body="$(printf '%s\n\n%s\n' \
-            "Automated proposal to merge into PTAH from morluto/rea@${UPSTREAM_SHA:0:12}." \
-            "This PR is review-only and does not auto-merge upstream code. PTAH-specific syntax checks and tests run first; the full REA monorepo validation matrix must pass before merging. Conflicts stop the sync without rewriting the default branch.")"
+          body="Automated merge of morluto/rea@${UPSTREAM_SHA:0:12} into PTAH, validated before publication. Auto-merge is disabled by the PTAH_UPSTREAM_AUTOMERGE repository variable."
           if [[ -n "$pr_number" ]]; then
             gh pr edit "$pr_number" --title "chore: sync latest REA upstream" --body "$body"
           else
             gh pr create --draft --base "$BASE_BRANCH" --head "$SYNC_BRANCH" --title "chore: sync latest REA upstream" --body "$body"
+          fi
+
+  report-conflict:
+    needs: merge-and-validate
+    if: >-
+      needs.merge-and-validate.outputs.status == 'conflict' ||
+      needs.merge-and-validate.outputs.status == 'validation-failed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the sync issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATUS: ${{ needs.merge-and-validate.outputs.status }}
+          UPSTREAM_SHA: ${{ needs.merge-and-validate.outputs.upstream }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="PTAH upstream sync needs attention"
+          body="Merging morluto/rea@${UPSTREAM_SHA:0:12} stopped with status \`${STATUS}\`. The default branch was not changed. Details and the sync report: ${RUN_URL}"
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
           fi

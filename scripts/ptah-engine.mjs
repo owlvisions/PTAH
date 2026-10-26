@@ -253,6 +253,8 @@ const EVIDENCE_KINDS = new Set([
   "test-result",
   "other",
 ]);
+/** Evidence kinds accepted by validation, for tool schemas and help text. */
+export const EVIDENCE_KIND_VALUES = Object.freeze([...EVIDENCE_KINDS]);
 
 export function sha256Text(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -696,6 +698,55 @@ export function recordHistory(input, action, details = {}, at = undefined) {
   return { ...investigation, history: [...history, entry] };
 }
 
+/** Append one evidence item bound to the investigation's target digest. */
+export function addEvidence(input, record, options = {}) {
+  const investigation = validateInvestigation(input);
+  if ((investigation.evidence ?? []).some((item) => item.id === record.id))
+    throw new Error(`Evidence id already exists: ${record.id}`);
+  const item = {
+    id: record.id,
+    kind: record.kind,
+    summary: record.summary,
+    source: record.source,
+    confidence: record.confidence ?? "observed",
+    targetSha256: investigation.target.sha256,
+    ...(record.artifact ? { artifact: record.artifact } : {}),
+    ...(record.tags?.length ? { tags: [...record.tags] } : {}),
+  };
+  return recordHistory(
+    {
+      ...investigation,
+      evidence: [...(investigation.evidence ?? []), item],
+    },
+    "evidence-added",
+    { evidenceId: record.id, kind: record.kind },
+    options.at,
+  );
+}
+
+const RECORD_COLLECTIONS = new Set(["claims", "questions", "actions"]);
+
+/** Append a claim, question, or action; validation enforces cited evidence and kinds. */
+export function addInvestigationRecord(
+  input,
+  collection,
+  record,
+  options = {},
+) {
+  if (!RECORD_COLLECTIONS.has(collection))
+    throw new TypeError("collection must be claims, questions, or actions");
+  const investigation = validateInvestigation(input);
+  const existing = investigation[collection] ?? [];
+  if (existing.some((item) => item.id === record.id))
+    throw new Error(`${collection} id already exists: ${record.id}`);
+  return recordHistory(
+    { ...investigation, [collection]: [...existing, record] },
+    `${collection}-added`,
+    { id: record.id },
+    options.at,
+  );
+}
+
 const CLAIM_STATUSES = ["hypothesis", "supported", "verified", "rejected"];
 
 /** Change a claim's status; `verified` requires at least one observed evidence item. */
@@ -1001,6 +1052,11 @@ export function migrateInvestigation(document) {
 }
 
 /** Quality checks that do not change the document; findings are advisory and deterministic. */
+const VAGUE_SOURCE =
+  /^(?:.{0,3}|manual|me|myself|user|agent|ai|llm|model|claude|gpt|gemini|copilot|unknown|n\/?a|none|tbd|todo|guess|memory|experience)$/iu;
+const OVERSTATED_WORDING =
+  /\b(?:definitely|certainly|undoubtedly|always|never|100\s?%|proven|guaranteed|obviously)\b/iu;
+
 export function lintInvestigation(input) {
   const investigation = validateInvestigation(input);
   const findings = [];
@@ -1028,6 +1084,22 @@ export function lintInvestigation(input) {
         "Observed evidence has no artifact digest; attach raw output for reproducibility.",
       );
   }
+  for (const item of investigation.evidence)
+    if (VAGUE_SOURCE.test(item.source.trim()))
+      add(
+        "warning",
+        "vague-source",
+        item.id,
+        "Source does not let someone reproduce the observation; name the tool, command, offset, or document.",
+      );
+  for (const claim of investigation.claims)
+    if (claim.status !== "verified" && OVERSTATED_WORDING.test(claim.text))
+      add(
+        "info",
+        "overstated-wording",
+        claim.id,
+        "Claim uses absolute wording although it is not verified.",
+      );
   const summaries = new Map();
   for (const item of investigation.evidence) {
     const key = `${item.kind}\u0000${item.summary.trim().toLowerCase()}`;

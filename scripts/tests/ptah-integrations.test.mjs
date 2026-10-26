@@ -195,7 +195,7 @@ void test("MCP exposes workflow prompts and root-bounded investigation resources
     ]);
     assert.deepEqual(
       byId(2).result.prompts.map((p) => p.name),
-      ["investigate-target", "review-claims", "compare-cases"],
+      ["triage-target", "investigate-target", "review-claims", "compare-cases"],
     );
     assert.match(
       byId(3).result.messages[0].content.text,
@@ -339,6 +339,7 @@ void test("workbench serves DOT and Mermaid graph downloads", async () => {
     await fetch(`${base}/api/init`, {
       method: "POST",
       headers: {
+        "x-ptah-token": app.sessionToken,
         "content-type": "application/octet-stream",
         "x-target-name": "t.bin",
       },
@@ -353,6 +354,47 @@ void test("workbench serves DOT and Mermaid graph downloads", async () => {
     const html = await (await fetch(base)).text();
     assert.match(html, /id="downloadDot"/);
     assert.match(html, /id="downloadMermaid"/);
+  } finally {
+    await app.close();
+  }
+});
+
+void test("workbench rejects cross-site state changes without the session token", async () => {
+  const { createPtahUiServer } = await import("../ptah-ui-server.mjs");
+  const app = await createPtahUiServer();
+  await new Promise((ready) => app.server.listen(0, "127.0.0.1", ready));
+  try {
+    const base = `http://127.0.0.1:${app.server.address().port}`;
+    const upload = (headers) =>
+      fetch(`${base}/api/init`, {
+        method: "POST",
+        headers: { "content-type": "text/plain", ...headers },
+        body: "attacker bytes",
+      });
+    assert.equal((await upload({})).status, 403);
+    assert.equal(
+      (await upload({ "x-ptah-token": "0".repeat(64) })).status,
+      403,
+    );
+    assert.equal(
+      (
+        await upload({
+          "x-ptah-token": app.sessionToken,
+          origin: "https://evil.example",
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await (await fetch(`${base}/api/state`)).json()).initialized,
+      false,
+    );
+    const page = await (await fetch(base)).text();
+    assert.ok(page.includes(`content="${app.sessionToken}"`));
+    assert.equal(
+      (await upload({ "x-ptah-token": app.sessionToken, origin: base })).status,
+      201,
+    );
   } finally {
     await app.close();
   }

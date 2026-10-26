@@ -3,8 +3,8 @@
 PTAH is developed as a compatibility-preserving layer on top of the public
 [`morluto/rea`](https://github.com/morluto/rea) repository. The upstream project
 is active, so a downloaded source snapshot alone cannot stay current. This
-repository includes an optional GitHub Actions workflow that periodically
-checks upstream and proposes a reviewed sync.
+repository merges upstream automatically after validation, from GitHub Actions
+or from the local `ptah upstream-sync` command.
 
 ## Integration checkpoint — 2026-10-26
 
@@ -12,24 +12,64 @@ The reviewed integration tree is based on REA `1173c0a9dc1b352a60943a491462294db
 
 ## What the automation does
 
-- Polls `https://github.com/morluto/rea.git` every 15 minutes, and can also be
-  started manually from **Actions → PTAH upstream sync → Run workflow**.
-- Fetches the latest upstream `main` and merges the PTAH branch's commits on
-  top of it in a bot-owned branch.
-- Runs PTAH-owned JavaScript syntax checks and `npm run test:ptah` before
-  publishing a branch.
-- Opens or refreshes a pull request for human review. It never auto-merges and
-  never pushes the merged result directly to the default branch.
-- If merge conflicts occur, it aborts without pushing and records the conflict
-  and recovery command in the Actions job summary.
-- If the repository was initialized from a ZIP upload and has no common Git
-  ancestor with REA, it detects that state and stops safely with bootstrap
-  instructions instead of attempting a guaranteed-to-conflict merge.
+The same sync runs locally (`ptah upstream-sync`) and in GitHub Actions
+(`.github/workflows/ptah-upstream-sync.yml`), which polls every 15 minutes
+(a polling target, not a real-time guarantee; scheduled workflows run from the
+default branch):
 
-The 15-minute interval is a polling target, not a real-time guarantee. GitHub
-may delay scheduled workflows, and scheduled workflows run from the default
-branch. This feature only works after the project is pushed to a repository
-under an account or organization where you control Actions and pull requests.
+1. Fetches `https://github.com/morluto/rea.git` `main` and the default branch.
+   Stops with `up-to-date` when upstream is already contained, or
+   `not-bootstrapped` when the histories share no ancestor.
+2. Merges upstream into a temporary detached worktree; the caller's checkout
+   and every branch stay untouched until the final push.
+3. Resolves conflicts dynamically with the PTAH merge policy
+   (`scripts/ptah-merge-policy.mjs`), reporting every decision:
+   - PTAH-owned paths (`scripts/ptah*`, `docs/PTAH-*`, `integrations/`,
+     `web/ptah/`, PTAH workflows, `README.md`, `SECURITY.md`, `server.json`,
+     `install.sh`, release config) keep PTAH's side.
+   - `package.json` is merged field by field: PTAH keeps its identity (name,
+     MCP name, description, repository, homepage, keywords), `bin`/`files`/
+     `scripts` keep both sides' additions, and dependency conflicts take the
+     newer version.
+   - Generated files (`package-lock.json`, `licenses/npm-*.txt`) are rebuilt
+     with `npm install --package-lock-only`, `npm ci`, and `licenses:generate`.
+   - Everything else is the inherited REA runtime, where upstream is
+     authoritative.
+     If a regeneration step fails or conflict markers remain, the merge is
+     aborted and reported as `conflict`.
+4. Validates the merged tree: `npm run check:fast`, `npm run test:ptah`,
+   `npm run build:cached`, and `npm run test:fast`. Any failure stops with
+   `validation-failed` and nothing is pushed.
+5. Pushes the merge commit to the default branch **without force**. If the
+   branch moved meanwhile, the push is rejected (`push-rejected`) and the next
+   run starts over from the new tip.
+
+In GitHub Actions, steps 1–4 run in a job with read-only permissions and no
+push credentials, because they execute upstream code. A separate job verifies
+that the merge commit's parents are exactly the recorded default-branch tip
+and upstream commit, then pushes it. Set the repository variable
+`PTAH_UPSTREAM_AUTOMERGE` to `false` to receive a draft review PR instead of
+a direct merge. Conflicts and failed validation open or update an issue named
+"PTAH upstream sync needs attention".
+
+### Running it locally
+
+GitHub Actions is currently disabled for the `owlvisions` account
+("Actions has been disabled for this user"), so no workflow in this repository runs
+until GitHub Support restores it. The local command provides the same
+automation meanwhile:
+
+```sh
+node scripts/ptah.mjs upstream-sync              # merge + validate, no push (dry run)
+node scripts/ptah.mjs upstream-sync --push       # merge + validate + push to main
+node scripts/ptah.mjs upstream-sync --install-timer [--interval hourly]
+systemctl --user daemon-reload && systemctl --user enable --now ptah-upstream-sync.timer
+```
+
+The timer runs `upstream-sync --push` from this checkout with the systemd
+user manager; it needs Git push credentials for `origin` and network access.
+Exit status 2 means the run stopped (conflict, failed validation, rejected
+push, or missing shared history).
 
 ## Recommended repository setup
 
@@ -71,10 +111,11 @@ conflicts when bootstrapping on a newer commit.
    `ptah`, either make it the repository's default branch or adapt the workflow's
    base branch setting before enabling scheduled runs.
 5. In repository **Settings → Actions → General**, allow GitHub Actions to
-   create pull requests. The workflow uses the repository's `GITHUB_TOKEN`; no
+   create pull requests (needed only when auto-merge is disabled). The workflow uses the repository's `GITHUB_TOKEN`; no
    personal access token or secret is required.
 6. Enable Actions and run **Actions → PTAH upstream sync → Run workflow** once.
-   Future upstream changes are proposed as review PRs; they are never auto-merged.
+   Future upstream changes are merged automatically after validation, or
+   proposed as draft PRs when `PTAH_UPSTREAM_AUTOMERGE` is `false`.
 
 ## Manual workflow
 

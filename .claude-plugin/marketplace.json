@@ -1,0 +1,14 @@
+{
+  "name": "ptah",
+  "owner": {
+    "name": "owlvisions"
+  },
+  "description": "PTAH: evidence-first reverse engineering and program understanding for Claude Code.",
+  "plugins": [
+    {
+      "name": "ptah",
+      "source": "./",
+      "description": "PTAH MCP server for evidence-first reverse engineering."
+    }
+  ]
+}
