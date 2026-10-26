@@ -39,24 +39,49 @@ export interface PyInstallerCookie {
   readonly cookieOffset: number;
 }
 
-/** One CArchive table entry. */
+type CArchiveEntryRole =
+  | "script"
+  | "module"
+  | "package"
+  | "runtime-option"
+  | "dependency"
+  | "symlink"
+  | "binary"
+  | "pyz"
+  | "other";
+
+const CARCHIVE_ENTRY_ROLES: ReadonlyMap<string, CArchiveEntryRole> = new Map([
+  ["s", "script"],
+  ["m", "module"],
+  ["M", "package"],
+  ["o", "runtime-option"],
+  ["d", "dependency"],
+  ["n", "symlink"],
+  ["b", "binary"],
+  ["z", "pyz"],
+]);
+
+/** One CArchive table entry, retaining its source code separately from the parsed role. */
 export interface CArchiveEntry {
   readonly index: number;
   readonly tocRecordOffset: number;
   readonly tocRecordLength: number;
   readonly name: string;
   readonly typeCode: string;
+  readonly role: CArchiveEntryRole;
   readonly offset: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
   readonly compressionFlag: number;
 }
 
-/** Runtime options and external dependencies are declarations, never local blobs. */
-export const isCArchiveDeclaration = (
-  entry: CArchiveEntry,
-): entry is CArchiveEntry & { readonly typeCode: "o" | "d" } =>
-  entry.typeCode === "o" || entry.typeCode === "d";
+/** Role-defined declarations never own local payload bytes. */
+export const isCArchiveDeclaration = (entry: CArchiveEntry): boolean =>
+  entry.role === "runtime-option" || entry.role === "dependency";
+
+/** Importable Python modules and packages share headerless-code and marker semantics. */
+export const isCArchivePythonModule = (entry: CArchiveEntry): boolean =>
+  entry.role === "module" || entry.role === "package";
 
 /** True when a native executable has a structurally valid CArchive cookie. */
 export const containsPyInstallerArchive = async (
@@ -173,12 +198,15 @@ export const parseCArchiveToc = (
     const typeCode = bytes[offset + 17] ?? 0;
     if (typeCode < 0x20 || typeCode > 0x7e)
       return malformedEntry("CArchive type code is not a printable character");
+    const sourceTypeCode = String.fromCharCode(typeCode);
     entries.push({
       index: entries.length,
       tocRecordOffset: offset,
       tocRecordLength: entryLength,
       name: name.value,
-      typeCode: String.fromCharCode(typeCode),
+      typeCode: sourceTypeCode,
+      // Other printable codes keep generic-file behavior; compression is independent.
+      role: CARCHIVE_ENTRY_ROLES.get(sourceTypeCode) ?? "other",
       offset: bytes.readUInt32BE(offset + 4),
       compressedSize: bytes.readUInt32BE(offset + 8),
       uncompressedSize: bytes.readUInt32BE(offset + 12),

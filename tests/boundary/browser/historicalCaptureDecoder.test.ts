@@ -4,6 +4,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readFile,
   rm,
   symlink,
   truncate,
@@ -14,7 +15,10 @@ import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { HistoricalCaptureDecoder } from "../../../src/browser/history/HistoricalCaptureDecoder.js";
 import { MitmproxyCaptureAdapter } from "../../../src/browser/history/MitmproxyCaptureAdapter.js";
-import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../../src/browser/history/CaptureRelease.js";
+import {
+  MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
+  HAR_CAPTURE_PROVIDER_IDENTITY,
+} from "../../../src/browser/history/CaptureRelease.js";
 import {
   inspectWebNetworkCaptureInputSchema,
   WEB_NETWORK_CAPTURE_LIMITS,
@@ -59,6 +63,161 @@ linux("allows a symlink to a regular mitmdump executable", async () => {
     ),
   ).resolves.toMatchObject({ command });
 });
+
+it("keeps the admitted decoder environment across adapter preparation and refreshes it for the next call", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-capture-environment-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "capture.har");
+  const observedPath = join(root, "observed.json");
+  const text = JSON.stringify(historicalHar());
+  await writeFile(path, text);
+  const environment = { ...process.env, REA_CAPTURE_TEST_VALUE: "first" };
+  let runtimePath: string | undefined;
+  const decoder = new HistoricalCaptureDecoder(
+    [
+      {
+        format: "har",
+        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+        command: async (_, selectedRuntime) => {
+          // Adapter preparation can yield while callers reconfigure the next operation.
+          await Promise.resolve();
+          environment.REA_CAPTURE_TEST_VALUE = "changed-during-preparation";
+          return {
+            command: process.execPath,
+            arguments: [
+              "-e",
+              `
+            const fs = require("node:fs");
+            fs.writeFileSync(process.argv[1], JSON.stringify(process.env.REA_CAPTURE_TEST_VALUE));
+            fs.writeFileSync(process.argv[2], process.argv[3]);
+          `,
+              observedPath,
+              join(selectedRuntime, "reply.json"),
+              JSON.stringify({ ok: true, value: decodeHarCapture(text, []) }),
+            ],
+          };
+        },
+      },
+    ],
+    environment,
+    async () => {
+      const runtime = await PrivateRuntimeRoot.create({
+        prefix: "rea-capture-environment-",
+      });
+      runtimePath = runtime.path;
+      return runtime;
+    },
+  );
+  onTestFinished(() => decoder.close());
+  for (const selected of ["first", "second"]) {
+    environment.REA_CAPTURE_TEST_VALUE = selected;
+    const result = await decoder.inspect(
+      inspectWebNetworkCaptureInputSchema.parse({
+        capture_path: path,
+        format: "har",
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(await readFile(observedPath, "utf8"))).toBe(selected);
+    if (runtimePath === undefined) throw new Error("runtime was not acquired");
+    await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "binds independently selected mitmproxy configuration before runtime preparation",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-mitmproxy-environment-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const capturePath = join(root, "capture.mitm");
+    const observedPath = join(root, "observed.json");
+    await writeFile(capturePath, "inert selected capture");
+    const first = join(root, "first");
+    const second = join(root, "second");
+    const value = {
+      ...decodeHarCapture(JSON.stringify(historicalHar()), []),
+      decoder: MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
+    };
+    for (const command of [first, second]) {
+      await writeFile(
+        command,
+        `#!${process.execPath}
+const fs = require("node:fs");
+const request = JSON.parse(fs.readFileSync(process.argv.find(a => a.startsWith("rea_request_path=")).slice("rea_request_path=".length), "utf8"));
+fs.writeFileSync(${JSON.stringify(observedPath)}, JSON.stringify({ command: ${JSON.stringify(command)}, host: process.env.REA_CAPTURE_TEST_VALUE }));
+fs.writeFileSync(request.reply_path, ${JSON.stringify(JSON.stringify({ ok: true, value }))});
+`,
+        { mode: 0o700 },
+      );
+    }
+    // Exercise the Linux adapter gate while the actual owned inert child uses this host.
+    const command = MitmproxyCaptureAdapter.prototype.command;
+    vi.spyOn(MitmproxyCaptureAdapter.prototype, "command").mockImplementation(
+      function (this: MitmproxyCaptureAdapter, request, runtime) {
+        const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+        Object.defineProperty(process, "platform", {
+          ...platform,
+          value: "linux",
+        });
+        try {
+          return command.call(this, request, runtime);
+        } finally {
+          Object.defineProperty(process, "platform", platform);
+        }
+      },
+    );
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const adapterEnvironment = { REA_MITMDUMP_COMMAND: first };
+    const hostEnvironment = {
+      ...process.env,
+      REA_MITMDUMP_COMMAND: "independent-host-setting",
+      REA_CAPTURE_TEST_VALUE: "first-host",
+    };
+    let runtimePath: string | undefined;
+    const decoder = new HistoricalCaptureDecoder(
+      [new MitmproxyCaptureAdapter(adapterEnvironment)],
+      hostEnvironment,
+      async () => {
+        adapterEnvironment.REA_MITMDUMP_COMMAND = second;
+        hostEnvironment.REA_CAPTURE_TEST_VALUE = "changed-during-preparation";
+        const runtime = await PrivateRuntimeRoot.create({
+          prefix: "rea-mitmproxy-environment-",
+        });
+        runtimePath = runtime.path;
+        return runtime;
+      },
+    );
+    onTestFinished(() => decoder.close());
+    for (const [selectedCommand, selectedHost] of [
+      [first, "first-host"],
+      [second, "second-host"],
+    ] as const) {
+      adapterEnvironment.REA_MITMDUMP_COMMAND = selectedCommand;
+      hostEnvironment.REA_CAPTURE_TEST_VALUE = selectedHost;
+      const result = await decoder.inspect(
+        inspectWebNetworkCaptureInputSchema.parse({
+          capture_path: capturePath,
+          format: "mitmproxy",
+        }),
+      );
+      expect(
+        result.ok,
+        result.ok ? "" : JSON.stringify(projectAnalysisError(result.error)),
+      ).toBe(true);
+      expect(JSON.parse(await readFile(observedPath, "utf8"))).toEqual({
+        command: selectedCommand,
+        host: selectedHost,
+      });
+      if (runtimePath === undefined)
+        throw new Error("runtime was not acquired");
+      await expect(access(runtimePath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+  },
+);
 
 it("applies a non-default capture deadline and releases its runtime", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-capture-deadline-"));

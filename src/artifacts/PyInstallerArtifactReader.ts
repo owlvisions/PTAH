@@ -422,13 +422,12 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     this.#pyzStore.reserveImages(
       toc.reduce(
         (count, entry) =>
-          count +
-          (entry.typeCode === "z" && entry.compressionFlag === 1 ? 1 : 0),
+          count + (entry.role === "pyz" && entry.compressionFlag === 1 ? 1 : 0),
         0,
       ),
     );
     for (const entry of toc) {
-      if (entry.typeCode !== "z") continue;
+      if (entry.role !== "pyz") continue;
       abortIfNeeded(signal);
       const spooled =
         entry.compressionFlag === 0
@@ -495,7 +494,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     for (const entry of toc) {
       if (members.length % 256 === 0) await setImmediate();
       abortIfNeeded(signal);
-      const image = entry.typeCode === "z" ? images.get(entry) : undefined;
+      const image = entry.role === "pyz" ? images.get(entry) : undefined;
       if (image === undefined) {
         const bytecode = await this.#pyzStore.bytecodeHeader(
           handle,

@@ -49,6 +49,7 @@ import {
   type InspectWebNetworkCaptureInput,
   type WebNetworkCapture,
 } from "../../domain/webNetworkCapture.js";
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { runOwnedCommand } from "../../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
@@ -121,6 +122,7 @@ export class HistoricalCaptureDecoder {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
+    const selectedEnvironment = snapshotEnvironment(this.environment);
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
@@ -128,9 +130,11 @@ export class HistoricalCaptureDecoder {
     let reportedHeap = this.#heap;
     let replyFinalization: ArtifactReaderFailure | undefined;
     try {
-      const adapter = this.adapters.find(
+      const selectedAdapter = this.adapters.find(
         (candidate) => candidate.format === input.format,
       );
+      const adapter =
+        selectedAdapter?.snapshotConfiguration?.() ?? selectedAdapter;
       reportedHeap = this.#reportedHeap(adapter);
       if (adapter === undefined)
         throw new AnalysisCapabilityUnavailableError(
@@ -166,7 +170,7 @@ export class HistoricalCaptureDecoder {
       );
       const command = await adapter.command(requestPath, runtime.path);
       const environment: NodeJS.ProcessEnv = {
-        ...this.environment,
+        ...selectedEnvironment,
         UV_THREADPOOL_SIZE: "1",
       };
       delete environment.NODE_OPTIONS;
