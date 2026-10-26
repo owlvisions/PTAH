@@ -244,7 +244,7 @@ function printInfo(json = false) {
     productName: "PTAH (بتاح) — Program Understanding & Analysis Toolkit",
     status: "migration-preview",
     packageIdentityStatus:
-      "npm package remains rea-agents until a coordinated rename is approved",
+      "npm package is @owlvisions/ptah; rea and rea-agents remain as compatibility executable names",
     compatibilityEngine: packageJson.name,
     compatibilityEngineVersion: packageJson.version,
     packageManagerNameUnchanged: true,

@@ -17,6 +17,7 @@ import type {
 } from "../application/SetupTypes.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 import { invokingPackageRunner } from "../application/ClientRegistrationIdentity.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 
 const clientDisplayNames: ReadonlyMap<string, string> = new Map(
   SUPPORTED_CLIENT_DEFINITIONS.map(({ name, displayName }) => [
@@ -238,7 +239,9 @@ const renderKeyboardHelp = (accessible: boolean): void => {
 
 const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string => {
   const runner = invokingPackageRunner(environment);
-  return runner === undefined ? "rea" : `${runner} rea-agents`;
+  return runner === undefined
+    ? "rea"
+    : `${runner} ${PRODUCT_IDENTITY.packageName}`;
 };
 
 const renderReadyCapabilities = (

@@ -9,7 +9,7 @@ acceptance is verified only where explicitly recorded.
 ## Launchers and PATH
 
 A client launched from a desktop app, IDE or service can inherit a different
-`PATH` from your terminal. An absolute path to `rea-agents` does not resolve its
+`PATH` from your terminal. An absolute path to `@owlvisions/ptah` does not resolve its
 interpreter: the npm launcher's `#!/usr/bin/env node` still searches `PATH` for
 Node. Running that command successfully in a terminal does not establish that
 the client can launch it.
@@ -605,7 +605,7 @@ that produces the entire REA config, or a group-targeted REA insertion. Use a
 literal config and a root-level insertion as shown above.
 
 For a global npm installation, the launcher is under
-`$(npm root -g)/rea-agents/scripts/rea.mjs`. Restart Harness after setup; it
+`$(npm root -g)/@owlvisions/ptah/scripts/rea.mjs`. Restart Harness after setup; it
 exposes tools as `mcp__rea__<tool_name>`. Run `rea setup --skill --dry-run`,
 review the destination, then `rea setup --skill --yes` to install the workflow
 in `~/.agents/skills` (`$DSH_AGENTS_HOME/skills` when configured); Harness
@@ -649,7 +649,7 @@ the data directory as aligned. Ask the Grok Bot chat to add a custom MCP
 server named `rea` that runs on the Bot's computer:
 
 ```bash
-npx -y rea-agents@<version> mcp
+npx -y @owlvisions/ptah@<version> mcp
 ```
 
 Do not put credentials in that command or its arguments. `rea doctor --client grok_bot`

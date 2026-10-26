@@ -159,7 +159,7 @@ Real-world accuracy figures will be added only when authorized fixtures with ref
 
 Completed with tests (see `docs/PTAH-DEVELOPMENT-PROMPT.md` backlog numbering): freeze/unfreeze, tags, related-case links, same-target merge with conflict policy, migration registry (legacy→v1), Ed25519 case signing with `keygen`, AES-256-GCM case encryption via `PTAH_CASE_PASSPHRASE`, gzip bundles, `--quiet`; provider table with readelf/nm/file/rabin2/rz-bin/monodis/aapt2/wasm-objdump adapters, bubblewrap isolation and prlimit limits with honest fallback, cancellable background analyzer jobs, native ASAR and WASM parsers, embedded-signature carving; evaluation harness with pinned fixtures, reference labels, baseline regression detection, validator mutation test; workbench diff panel, SVG graph view, DOT/Mermaid downloads; `watch`, shell completion, MCP prompts and `--root` resources; VS Code integration skeleton (`integrations/vscode-ptah`, unpublished); Arabic getting-started guide; synthetic example case; PTAH responsible-disclosure policy in `SECURITY.md`.
 
-Deliberately deferred: publishing an npm package under a PTAH name (owner decision: keep `rea-agents` identity until a coordinated rename), and native analyzers replacing REA adapters (requires parity benchmarks on authorized real targets).
+Deliberately deferred: publishing the renamed `@owlvisions/ptah` package to npm and the MCP registry (owner decision: release jobs stay gated to the upstream repository until publication is approved), and native analyzers replacing REA adapters (requires parity benchmarks on authorized real targets).
 
 ## Delivery status update — PTAH-first increment (2026-10-26)
 

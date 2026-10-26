@@ -29,7 +29,7 @@ it("retains upstream body failure and joins the active updater and installer chi
     writeFile(tarball, "archive"),
     writeFile(
       join(packageRoot, "package.json"),
-      JSON.stringify({ name: "rea-agents", version: "6.0.0" }),
+      JSON.stringify({ name: "@owlvisions/ptah", version: "6.0.0" }),
     ),
     writeFile(
       join(packageRoot, "dist", "generatedPackageMetadata.js"),

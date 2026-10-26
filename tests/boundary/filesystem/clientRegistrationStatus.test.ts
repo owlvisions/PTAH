@@ -130,7 +130,7 @@ describe("client registration launcher identity", () => {
     await mkdir(join(home, ".codex"));
     await writeFile(
       join(home, ".codex/config.toml"),
-      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents", "mcp"]\n',
+      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "@owlvisions/ptah", "mcp"]\n',
     );
 
     const statuses = await readClientRegistrationStatuses(home);
@@ -138,7 +138,7 @@ describe("client registration launcher identity", () => {
     expect(statuses).toEqual([
       expect.objectContaining({
         client: "codex",
-        command: ["npx", "-y", "rea-agents", "mcp"],
+        command: ["npx", "-y", "@owlvisions/ptah", "mcp"],
         state: "stale",
       }),
     ]);
@@ -150,7 +150,7 @@ describe("client registration launcher identity", () => {
       join(home, ".claude.json"),
       JSON.stringify({
         mcpServers: {
-          rea: { command: "bunx", args: ["rea-agents", "mcp"] },
+          rea: { command: "bunx", args: ["@owlvisions/ptah", "mcp"] },
         },
       }),
     );
@@ -159,7 +159,7 @@ describe("client registration launcher identity", () => {
 
     expect(status).toMatchObject({
       client: "claude_code",
-      command: ["bunx", "rea-agents", "mcp"],
+      command: ["bunx", "@owlvisions/ptah", "mcp"],
       state: "stale",
     });
   });
@@ -254,7 +254,7 @@ describe("client registration package version identity", () => {
         "rea-registration-version-drift-",
       );
       await mkdir(join(home, ".codex"));
-      const reference = `rea-agents@${version}`;
+      const reference = `@owlvisions/ptah@${version}`;
       const command = ["npx", "-y", reference, "mcp"];
       await writeFile(
         join(home, ".codex/config.toml"),

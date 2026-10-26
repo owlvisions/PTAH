@@ -592,7 +592,7 @@ describe("package-private REA launchers", () => {
     env.APPDATA,
     "npm",
     "node_modules",
-    "rea-agents",
+    "@owlvisions/ptah",
     "scripts",
     "rea.mjs",
   );
@@ -603,7 +603,7 @@ describe("package-private REA launchers", () => {
     "Roaming",
     "npm",
     "node_modules",
-    "rea-agents",
+    "@owlvisions/ptah",
     "scripts",
     "rea.mjs",
   );
@@ -629,7 +629,7 @@ describe("package-private REA launchers", () => {
     );
     expect(blocker).toContain(stored);
     expect(blocker).toContain(CLAUDE_DESKTOP_PACKAGE_FAMILY);
-    expect(blocker).toContain("npm install -g rea-agents");
+    expect(blocker).toContain("npm install -g @owlvisions/ptah");
   });
 
   it("compares the launcher with the canonical package storage path", () => {
@@ -656,7 +656,7 @@ describe("package-private REA launchers", () => {
   it("allows ordinary and unresolvable launchers", () => {
     expect(
       packagePrivateLauncherBlocker(
-        ["cmd.exe", "/d", "/c", "npx", "-y", "rea-agents@6.4.0", "mcp"],
+        ["cmd.exe", "/d", "/c", "npx", "-y", "@owlvisions/ptah@6.4.0", "mcp"],
         packages,
         () => {
           throw new Error("package runners are not resolved");

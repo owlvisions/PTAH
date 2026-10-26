@@ -1,11 +1,11 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.morluto/rea",
-  "title": "REA",
-  "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
-  "websiteUrl": "https://github.com/morluto/rea",
+  "name": "io.github.owlvisions/ptah",
+  "title": "PTAH",
+  "description": "PTAH: evidence-first program understanding and reverse engineering from your terminal or agent — CLI, MCP server, and local workbench.",
+  "websiteUrl": "https://github.com/owlvisions/PTAH",
   "repository": {
-    "url": "https://github.com/morluto/rea",
+    "url": "https://github.com/owlvisions/PTAH",
     "source": "github"
   },
   "version": "6.8.0",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "rea-agents",
+      "identifier": "@owlvisions/ptah",
       "version": "6.8.0",
       "runtimeHint": "npx",
       "transport": {

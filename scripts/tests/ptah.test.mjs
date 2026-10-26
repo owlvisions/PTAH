@@ -40,7 +40,8 @@ void test("PTAH info reports compatibility honestly as a migration preview", () 
   const info = JSON.parse(result.stdout);
   assert.equal(info.product, "PTAH");
   assert.equal(info.status, "migration-preview");
-  assert.equal(info.compatibilityEngine, "rea-agents");
+  assert.equal(info.compatibilityEngine, "@owlvisions/ptah");
+  assert.match(info.packageIdentityStatus, /npm package is @owlvisions\/ptah/);
   assert.equal(info.packageManagerNameUnchanged, true);
   assert.ok(
     info.nativeCapabilities.some((item) =>
@@ -743,15 +744,20 @@ void test("root branding identifies PTAH and documents the remaining compatibili
   assert.match(readme, /^# PTAH — Program Understanding & Analysis Toolkit/m);
   assert.match(readme, /migration preview/);
   assert.match(readme, /PTAH-BRAND-AUDIT\.md/);
-  assert.match(audit, /not release-ready as a standalone PTAH package/);
+  assert.match(audit, /package identity migrated to `@owlvisions\/ptah`/);
   assert.match(audit, /Release gate checklist/);
   assert.match(packageJson.description, /PTAH/);
   assert.ok(packageJson.keywords.includes("ptah"));
-  assert.equal(
-    packageJson.name,
+  assert.equal(packageJson.name, "@owlvisions/ptah");
+  assert.equal(packageJson.mcpName, "io.github.owlvisions/ptah");
+  assert.match(packageJson.repository.url, /owlvisions\/PTAH/);
+  assert.deepEqual(Object.keys(packageJson.bin).sort(), [
+    "ptah",
+    "ptah-mcp",
+    "ptah-ui",
+    "rea",
     "rea-agents",
-    "keep package identity until coordinated migration is approved",
-  );
+  ]);
 });
 
 void test("PTAH validation workflow runs native tests and upstream CI on supported Node", async () => {

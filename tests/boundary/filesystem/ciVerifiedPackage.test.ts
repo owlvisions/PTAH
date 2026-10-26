@@ -177,10 +177,10 @@ async function preparePublication(fixture: Fixture, published = "false") {
         status:
           published === "unknown" ? 503 : published === "false" ? 404 : 200,
         body: {
-          name: "rea-agents",
+          name: "@owlvisions/ptah",
           versions: {
             [fixture.version]: {
-              name: "rea-agents",
+              name: "@owlvisions/ptah",
               version: fixture.version,
               dist: { integrity: fixture.integrity },
             },
@@ -196,7 +196,7 @@ import { readFile } from "node:fs/promises";
 import { prepareNpmPublication } from "./prepare-npm-publication.mjs";
 const state = JSON.parse(await readFile("registry-state.json", "utf8"));
 await prepareNpmPublication(async (url) => {
-  if (url !== "https://registry.npmjs.org/rea-agents") throw new Error("Unexpected registry origin");
+  if (url !== "https://registry.npmjs.org/@owlvisions/ptah") throw new Error("Unexpected registry origin");
   return Response.json(state.body, { status: state.status });
 });
 `,

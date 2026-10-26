@@ -4,18 +4,21 @@ import { verifyPublishedPackageIntegrity } from "./qualified-package-envelope.mj
 export async function readQualifiedNpmRelease(version, tag, request = fetch) {
   if (!["latest", "next"].includes(tag))
     throw new Error("Invalid qualified npm channel");
-  const response = await request("https://registry.npmjs.org/rea-agents", {
-    headers: {
-      Accept: "application/vnd.npm.install-v1+json",
-      "Cache-Control": "no-cache",
+  const response = await request(
+    "https://registry.npmjs.org/@owlvisions/ptah",
+    {
+      headers: {
+        Accept: "application/vnd.npm.install-v1+json",
+        "Cache-Control": "no-cache",
+      },
+      signal: AbortSignal.timeout(30_000),
     },
-    signal: AbortSignal.timeout(30_000),
-  });
+  );
   if (response.status === 404) return { status: "absent" };
   if (!response.ok)
     throw new Error(`npm registry lookup failed: HTTP ${response.status}`);
   const metadata = requireRecord(await response.json());
-  if (metadata.name !== "rea-agents")
+  if (metadata.name !== "@owlvisions/ptah")
     throw new Error("Unexpected npm package name");
   const versions = requireRecord(metadata.versions);
   const tags = requireRecord(metadata["dist-tags"]);
@@ -25,7 +28,7 @@ export async function readQualifiedNpmRelease(version, tag, request = fetch) {
   const published = requireRecord(versions[version]);
   const dist = requireRecord(published.dist);
   if (
-    published.name !== "rea-agents" ||
+    published.name !== "@owlvisions/ptah" ||
     published.version !== version ||
     typeof dist.integrity !== "string" ||
     dist.integrity.length === 0
@@ -49,7 +52,7 @@ function requireRecord(value) {
 /** Validate content before accepting a previously published or newly visible version. */
 export async function requireMatchingNpmRelease(tarball, version, published) {
   if (published.status !== "published")
-    throw new Error(`rea-agents@${version} is not published`);
+    throw new Error(`@owlvisions/ptah@${version} is not published`);
   await verifyPublishedPackageIntegrity(tarball, published.integrity);
   if (published.taggedVersion !== version)
     throw new Error(

@@ -153,7 +153,7 @@ at info level; the report is the only output on stdout:
     }
   },
   "tool_count": 37,
-  "package_source": { "kind": "registry", "specifier": "rea-agents@…" },
+  "package_source": { "kind": "registry", "specifier": "@owlvisions/ptah@…" },
   "files": [{ "path": "README.md", "bytes": 4210 }],
   "warnings": [{ "code": "name-from-file", "message": "…" }],
   "next": ["agent-env run /work/grafana"]
@@ -958,7 +958,7 @@ agent-env run ./grafana-example
 ```text
 grafana-example/
   README.md                                 provenance, what it serves, run command, rights note
-  envs/grafana-example/Dockerfile           pinned image: node:24.22.1-bookworm-slim + rea-agents@<this version>
+  envs/grafana-example/Dockerfile           pinned image: node:24.22.1-bookworm-slim + @owlvisions/ptah@<this version>
   envs/grafana-example/env.toml             environment_name = "grafana-example"
   envs/grafana-example/manifest.json        byte-exact copy of manifest.json
   envs/grafana-example/evidence.json        byte-exact copy of capture.json
@@ -982,7 +982,7 @@ server's advertised catalog budget before any files are written. Privately parse
 and replay share immutable response trees rather than copying the capture repeatedly.
 `--name` replaces the manifest's portable kebab-case name as the env folder and env id
 (Windows device names such as `con` and `lpt1` are refused);
-`--package-tarball <path>` copies a packed `rea-agents` tarball into the env
+`--package-tarball <path>` copies a packed `@owlvisions/ptah` tarball into the env
 folder and makes the Dockerfile install it instead of the registry package and
 remove it in the same layer, which is how a checkout rather than a release is
 run. The command prints the

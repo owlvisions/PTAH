@@ -22,7 +22,7 @@ export async function verifyPackageUpdate({
   const home = join(workspace, "update-home");
   const codexPath = join(home, ".codex", "config.toml");
   const originalConfig =
-    '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@0.0.0", "mcp"]\n';
+    '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "@owlvisions/ptah@0.0.0", "mcp"]\n';
   await mkdir(dirname(codexPath), { recursive: true });
   await writeFile(codexPath, originalConfig);
   let fixtureFailure;
@@ -42,7 +42,8 @@ export async function verifyPackageUpdate({
   let registry;
   async function serveRegistry(request, response) {
     const pathname = new URL(request.url, registry).pathname;
-    if (pathname === "/rea-agents") {
+    // npm escapes the scope separator (/@scope%2fname); compare the decoded path.
+    if (decodeURIComponent(pathname) === `/${metadata.name}`) {
       response.setHeader("Content-Type", "application/json");
       response.end(
         JSON.stringify({

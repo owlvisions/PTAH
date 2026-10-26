@@ -1908,7 +1908,7 @@ describe("uninstall configuration preflight", () => {
     ];
     const cursorConfig = JSON.stringify({
       mcpServers: {
-        rea: { command: "npx", args: ["-y", "rea-agents@6.1.0", "mcp"] },
+        rea: { command: "npx", args: ["-y", "@owlvisions/ptah@6.1.0", "mcp"] },
         other: { command: "echo", args: ["hello"] },
       },
     });

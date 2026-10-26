@@ -121,7 +121,7 @@ describe("planEnvironmentBundle", () => {
       "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*",
     );
     expect(lines).toContain(
-      `RUN npm install -g --ignore-scripts --no-fund --no-audit rea-agents@${PACKAGE_METADATA.version}`,
+      `RUN npm install -g --ignore-scripts --no-fund --no-audit @owlvisions/ptah@${PACKAGE_METADATA.version}`,
     );
     expect(lines).toContain(
       "COPY --chown=node:node manifest.json evidence.json /env/",
@@ -130,21 +130,23 @@ describe("planEnvironmentBundle", () => {
     expect(lines.at(-1)).toBe(
       'CMD ["rea","environment-serve","/env/manifest.json","--evidence","/env/evidence.json"]',
     );
-    expect(dockerfile).not.toContain("rea-agents.tgz");
+    expect(dockerfile).not.toContain("ptah.tgz");
     expect(dockerfile.indexOf("RUN npm install")).toBeLessThan(
       dockerfile.indexOf("USER node"),
     );
   });
 
   it("copies and installs the tarball instead of the registry package when one is given", () => {
-    const planned = plan({ tarball: "/packed/rea-agents-1.2.3.tgz" });
-    expect(planned.copies.tarball).toBe("envs/grafana-example/rea-agents.tgz");
+    const planned = plan({ tarball: "/packed/owlvisions-ptah-1.2.3.tgz" });
+    expect(planned.copies.tarball).toBe("envs/grafana-example/ptah.tgz");
     const dockerfile = file(planned, "envs/grafana-example/Dockerfile");
-    expect(dockerfile).toContain("COPY rea-agents.tgz /tmp/\n");
+    expect(dockerfile).toContain("COPY ptah.tgz /tmp/\n");
     expect(dockerfile).toContain(
-      "RUN npm install -g --ignore-scripts --no-fund --no-audit /tmp/rea-agents.tgz && rm /tmp/rea-agents.tgz\n",
+      "RUN npm install -g --ignore-scripts --no-fund --no-audit /tmp/ptah.tgz && rm /tmp/ptah.tgz\n",
     );
-    expect(dockerfile).not.toContain(`rea-agents@${PACKAGE_METADATA.version}`);
+    expect(dockerfile).not.toContain(
+      `@owlvisions/ptah@${PACKAGE_METADATA.version}`,
+    );
     expect(bundleDockerfile(registryPackageSource())).not.toBe(dockerfile);
   });
 
@@ -213,7 +215,7 @@ describe("planEnvironmentBundle", () => {
     expect(readme).toContain(
       `- State: \`${served.state?.evidenceId ?? ""}\`, derived from the capture`,
     );
-    expect(readme).toContain(`rea-agents@${PACKAGE_METADATA.version}`);
+    expect(readme).toContain(`@owlvisions/ptah@${PACKAGE_METADATA.version}`);
     expect(readme).toContain("```sh\nagent-env run .\n```");
     expect(readme).not.toContain("agent-env run grafana-example");
     expect(readme).toContain("## What the environment serves");

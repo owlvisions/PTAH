@@ -130,7 +130,7 @@ Add the registration path to the **REA** MCP entry's environment, keeping the up
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@<version-with-ida>", "mcp"],
+      "args": ["-y", "@owlvisions/ptah@<version-with-ida>", "mcp"],
       "env": {
         "REA_ANALYSIS_PROVIDER": "ida",
         "REA_IDA_MCP_CONFIG": "/absolute/path/to/ida-mcp.json"

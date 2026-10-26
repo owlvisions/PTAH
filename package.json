@@ -1,16 +1,16 @@
 {
-  "name": "rea-agents",
-  "mcpName": "io.github.morluto/rea",
+  "name": "@owlvisions/ptah",
+  "mcpName": "io.github.owlvisions/ptah",
   "version": "6.8.0",
-  "description": "PTAH program understanding and analysis toolkit with a compatibility-preserving REA CLI and MCP migration path.",
+  "description": "PTAH (بتاح): evidence-first program understanding and reverse-engineering toolkit — CLI, MCP server, and local workbench — with the inherited REA analyzers as a compatibility layer.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/morluto/rea.git"
+    "url": "git+https://github.com/owlvisions/PTAH.git"
   },
-  "homepage": "https://github.com/morluto/rea#readme",
+  "homepage": "https://github.com/owlvisions/PTAH#readme",
   "bugs": {
-    "url": "https://github.com/morluto/rea/issues"
+    "url": "https://github.com/owlvisions/PTAH/issues"
   },
   "keywords": [
     "program-understanding",

@@ -70,7 +70,7 @@ export async function verifyInteractiveSetup({
     !output.includes("No changes were made.")
   )
     throw new Error(
-      `packaged rea-agents setup did not cancel with a restored terminal and exit 0: ${output}`,
+      `packaged @owlvisions/ptah setup did not cancel with a restored terminal and exit 0: ${output}`,
     );
   await assertVerifierFilesUnchanged(
     commands,

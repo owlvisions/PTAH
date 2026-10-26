@@ -71,7 +71,7 @@ const writeSkill = async (content: string): Promise<string> => {
 };
 
 const staleCodex =
-  '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@0.1.0", "mcp"]\n';
+  '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "@owlvisions/ptah@0.1.0", "mcp"]\n';
 const action = {
   id: "configure_client:codex",
   kind: "configure_client",
@@ -251,7 +251,7 @@ describe("registration ownership in maintenance", () => {
     );
     await writeClient(
       "opencode",
-      '{"mcp":{"rea":{"type":"local","command":["npx","-y","rea-agents@0.1.0","mcp"],"enabled":false}}}',
+      '{"mcp":{"rea":{"type":"local","command":["npx","-y","@owlvisions/ptah@0.1.0","mcp"],"enabled":false}}}',
     );
     await writeClient(
       "vscode",
@@ -467,7 +467,10 @@ describe("shared registration maintenance", () => {
       "freebuff",
       JSON.stringify({
         mcpServers: {
-          rea: { command: "npx", args: ["-y", "rea-agents@0.1.0", "mcp"] },
+          rea: {
+            command: "npx",
+            args: ["-y", "@owlvisions/ptah@0.1.0", "mcp"],
+          },
         },
       }),
     );
@@ -649,7 +652,7 @@ const createBunUpdateFixture = async (
   await mkdir(join(packageRoot, "scripts"), { recursive: true });
   await writeFile(
     join(globalDirectory, "package.json"),
-    '{"dependencies":{"rea-agents":"3.2.1"}}\n',
+    '{"dependencies":{"@owlvisions/ptah":"3.2.1"}}\n',
   );
   await writeFile(versionPath, "3.2.1");
   await writeFile(
