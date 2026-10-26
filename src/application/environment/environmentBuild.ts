@@ -15,6 +15,7 @@ import type { EnvironmentBuildReport } from "../../domain/environmentBundleExpor
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import {
+  BUNDLE_NAME_CONSTRAINT,
   ENVIRONMENT_EXPORT_OPERATION,
   isPortableBundleName,
   planEnvironmentBundle,
@@ -191,7 +192,7 @@ const unnamed = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `The capture's origin is a loopback or IP address, and ${path === "" ? "retained Evidence has no file name to take one from" : `${path} yields no portable environment name (a kebab-case label of at most 64 characters that is not a Windows device name)`}; name the environment.`,
+      userMessage: `The capture's origin is a loopback or IP address, and ${path === "" ? "retained Evidence has no file name to take one from" : `${path} yields no portable environment name (${BUNDLE_NAME_CONSTRAINT})`}; name the environment.`,
     },
     [
       {

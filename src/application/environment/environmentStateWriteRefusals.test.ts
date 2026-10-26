@@ -120,20 +120,27 @@ describe("served document writes", () => {
 });
 
 describe("values the state can load back", () => {
+  it("preserves nested prototype-named data through writes and reload", () => {
+    const settings = servedFrom(SETTINGS_ROWS);
+    const meta = JSON.parse(
+      '{"__proto__":{"n":1},"constructor":2,"prototype":3}',
+    );
+    expect(
+      settings.answer(PATCH_SETTINGS, { id: "1", body: { meta } }).body,
+    ).toEqual({ theme: "dark", meta });
+    expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual({
+      theme: "dark",
+      meta,
+    });
+    expectReloadsUnchanged(settings);
+  });
+
   it("refuses a body value data/add would refuse, whatever member carries it", () => {
     const settings = servedFrom(SETTINGS_ROWS);
     const unexact =
       "Member meta would hold a value that is not exactly representable JSON";
     expectRefusedUnchanged(settings, [
       [PATCH_SETTINGS, { id: "1", body: { meta: { n: 1e20 } } }, unexact],
-      [
-        PATCH_SETTINGS,
-        {
-          id: "1",
-          body: JSON.parse('{"meta":{"__proto__":{"n":1}}}') as JsonValue,
-        },
-        unexact,
-      ],
       [
         PATCH_SETTINGS,
         { id: "1", body: { meta: { n: nested(MAX_JSON_DEPTH) } } },

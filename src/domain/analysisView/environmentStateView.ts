@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
+import { jsonRecordSchema } from "../jsonRecord.js";
 import { ok, type Result } from "../result.js";
 import type {
   AnalysisViewParent,
@@ -22,7 +23,6 @@ export const environmentStateViewRequestSchema = z.strictObject({
   ),
 });
 
-const jsonObjectFieldsSchema = z.record(z.string(), jsonValueSchema);
 const queryParameterSchema = z.discriminatedUnion("role", [
   z.strictObject({
     role: z.literal("filter"),
@@ -73,11 +73,9 @@ const queryParameterSchema = z.discriminatedUnion("role", [
   }),
 ]);
 const listQuerySchema = z.strictObject({
-  parameters: z
-    .record(z.string(), queryParameterSchema)
-    .describe(
-      "What each query parameter does. A call whose every parameter has a role is answered by evaluating them over the state.",
-    ),
+  parameters: jsonRecordSchema(queryParameterSchema).describe(
+    "What each query parameter does. A call whose every parameter has a role is answered by evaluating them over the state.",
+  ),
   record_ordinals: z
     .array(z.number().int().nonnegative())
     .describe("Checked lines the query reproduces, answered by evaluating it."),
@@ -122,14 +120,12 @@ const entityViewFields = {
   required_fields: z.array(z.string()),
   checked_record_ordinals: checkedSchema,
   per_response_members: perResponseSchema,
-  clock_formats: z
-    .record(z.string(), clockFormatSchema)
+  clock_formats: jsonRecordSchema(clockFormatSchema)
     .optional()
     .describe(
       "How the view spells clock fields it always spells otherwise than the entities' stored values; a stored value the view never recorded is spelled this way.",
     ),
-  nested_fields: z
-    .record(z.string(), z.array(z.string()))
+  nested_fields: jsonRecordSchema(z.array(z.string()))
     .optional()
     .describe(
       "The keys the view shows of object fields it always shows with fewer keys than an entity stores, such as a parent listed without its own nested type; a stored object the view never recorded shows those keys.",
@@ -474,9 +470,9 @@ export const environmentStateFields = {
         type: z.string(),
         collection: z.string(),
         id: z.string(),
-        fields: jsonObjectFieldsSchema,
+        fields: jsonObjectSchema,
         view_fields: z.array(
-          z.strictObject({ tool: z.string(), fields: jsonObjectFieldsSchema }),
+          z.strictObject({ tool: z.string(), fields: jsonObjectSchema }),
         ),
         record_ordinals: z.array(z.number().int().nonnegative()),
       }),

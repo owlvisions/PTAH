@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  ownMember,
   collectionPathOf,
   IDENTITY_NAMES,
   identityCandidates,
@@ -37,7 +38,7 @@ const succeeded = (record: StateRecordFacts): boolean =>
 const identityValues = (object: JsonValue | undefined): string[] =>
   isObject(object)
     ? IDENTITY_NAMES.flatMap((name) => {
-        const value = scalarText(object[name]);
+        const value = scalarText(ownMember(object, name));
         return value === undefined ? [] : [value];
       })
     : [];
@@ -101,7 +102,7 @@ const listedIds = (body: JsonValue | undefined): Set<string> => {
     ...items.flatMap(identityValues),
     ...(suffixed === undefined
       ? []
-      : items.flatMap((item) => scalarText(item[suffixed]) ?? [])),
+      : items.flatMap((item) => scalarText(ownMember(item, suffixed)) ?? [])),
   ]);
 };
 

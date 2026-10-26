@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -555,7 +558,6 @@ async function call(name, arguments_ = {}) {
     { name, arguments: arguments_ },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.ok(result.structuredContent, `${name} omitted structured result`);
   return requireMcpOperationResult(result, name);
 }
@@ -564,8 +566,7 @@ async function evidenceCall(name, arguments_) {
     { name, arguments: arguments_ },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  const evidence = parseEvidence(result.structuredContent);
+  const evidence = parseEvidence(requireMcpOutput(result, name));
   assert.equal(evidence.subject.digest.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);

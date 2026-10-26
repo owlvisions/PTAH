@@ -1,4 +1,5 @@
 import {
+  ownMember,
   renderStateEntity,
   same,
   type JsonObject,
@@ -412,7 +413,9 @@ export const writtenFieldChecks = (
     if (fields === null || compared.length === 0) continue;
     outcomes.set(
       tool,
-      compared.every((field) => same(shown[field], observed[field])),
+      compared.every((field) =>
+        same(ownMember(shown, field), ownMember(observed, field)),
+      ),
     );
   }
   return outcomes;

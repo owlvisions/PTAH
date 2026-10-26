@@ -18,6 +18,7 @@ import { validateRecordedCrashSources } from "./RecordedCrashSourceBindings.js";
 import { validateRecordedCrashStructure } from "./RecordedCrashStructureBindings.js";
 import {
   inspectPwndbgCore,
+  pwndbgContextFinalizationFailure,
   recordedCrashStageOutput,
 } from "../pwndbg/PwndbgCoreContext.js";
 import type { z } from "zod";
@@ -133,7 +134,7 @@ export class PwntoolsRecordedCrashProvider
               snapshot.bytes,
             );
             if (!authority.ok) throw authority.error;
-            const context = await inspectPwndbgCore({
+            const completed = await inspectPwndbgCore({
               environment,
               architecture: value.architecture,
               rootPath,
@@ -143,20 +144,25 @@ export class PwntoolsRecordedCrashProvider
               runCommand,
               timeoutMs,
             });
+            const context = completed.context;
             const enriched = validate(context);
             if (!enriched.success)
-              throw new AnalysisOutputError(
-                "inspect_recorded_crash",
-                `Recorded debugger context is invalid: ${enriched.error.issues[0]?.message ?? "schema mismatch"}`,
-                {
-                  capturedOutput:
-                    context.status === "available"
-                      ? recordedCrashStageOutput(
-                          diagnostics,
-                          context.diagnostics,
-                        )
-                      : diagnostics,
-                },
+              throw pwndbgContextFinalizationFailure(
+                new AnalysisOutputError(
+                  "inspect_recorded_crash",
+                  `Recorded debugger context is invalid: ${enriched.error.issues[0]?.message ?? "schema mismatch"}`,
+                  {
+                    capturedOutput: recordedCrashStageOutput(
+                      diagnostics,
+                      context.diagnostics,
+                    ),
+                  },
+                ),
+                completed.finalization,
+              );
+            if (completed.finalization !== undefined)
+              throw completed.finalization.retainPartialObservation(
+                enriched.data,
               );
             return enriched.data;
           } catch (cause: unknown) {

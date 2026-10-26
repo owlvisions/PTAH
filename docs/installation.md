@@ -86,7 +86,7 @@ these checks do not lock out another writer modifying the same file in place,
 or exclude pathname changes between the final check and publication.
 Setup also retains valid environment overrides in REA's existing server entry,
 such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
-`REA_MCP_MAX_RESPONSE_BYTES`.
+`REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`.
 Detected provider settings replace only matching environment keys.
 Setup manages REA's launcher, selected provider settings, and recommended timeout
 defaults. Codex approval policies, tool selections, and other caller-owned server
@@ -341,7 +341,7 @@ remove it with `claude mcp remove --scope local rea` from the same directory.
 To move it to a newer release, first back up the project entry in
 `~/.claude.json` and record its environment and other metadata. In particular,
 preserve caller-selected overrides such as `REA_MCP_INPUT_SCHEMA_PROFILE` and
-`REA_MCP_MAX_RESPONSE_BYTES`. Run `claude mcp remove --scope local rea` from the
+`REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`. Run `claude mcp remove --scope local rea` from the
 same directory, then recreate it with the platform-appropriate command above
 and the new version. Reapply every recorded environment value with Claude
 Code's `mcp add --env NAME=value` options and restore any other retained entry
@@ -411,6 +411,13 @@ The public error code varies by caller: `capability_unavailable`,
 `provider_unavailable` or `execution_failure`. Some provider adapters report
 only a generic startup error. Check this prerequisite before following
 provider-specific recovery advice.
+
+`binary_session` still returns status on such a host. Providers whose
+readiness check reaches the owned-child launch, such as Ghidra's Java probe,
+JADX and Apktool, report themselves unavailable with a reason naming the
+missing `ps`. A provider that fails an earlier configuration check, such as
+JADX without `REA_JADX_MCP_JAR`, keeps that reason. The other providers keep
+their own status. `open_binary` keeps the refusal described above.
 
 ## Diagnose, update, and remove
 
@@ -494,6 +501,10 @@ on Windows, security software's protection history before attributing the cause.
 Do not rename `index.cjs` to `index.mjs` or disable protection to make startup pass.
 
 ### Update the owning installation
+
+Read-only metadata and version checks time out after 10 seconds. This does not
+interrupt a package installation already in progress. If a probe cannot be
+stopped, the updater reports a cleanup failure.
 
 `rea update` installs the exact resolved
 release into the npm prefix or Bun global directory that owns the running
@@ -648,6 +659,10 @@ Linux distribution with a recognized apt, dnf, or pacman package family, where
 an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra
 and IDA have their own provider-specific host requirements; Windows Ghidra uses
 the [experimental P0 boundary](windows-ghidra-p0.md).
+
+If the Linux package download receives an HTTP failure, setup includes the
+observed HTTP status in its `download_failed` diagnostic. The status does not
+establish the underlying cause or guarantee that retrying will succeed.
 
 Hopper metadata and package downloads require HTTPS throughout the redirect
 chain; a redirect to HTTP is refused before that destination is requested.
@@ -1145,9 +1160,10 @@ This coordinate selects only REA's session-private configuration directory, not
 the installation or an existing user configuration directory.
 
 Each verified session uses an ephemeral temporary project and isolated
-home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses
-Ghidra's default analysis settings, and loads its packaged Java
-bridge via `-scriptPath`; it never opens an existing user project. Linux and
+home/cache/config/temp paths. By default REA passes `-readOnly`, `-deleteProject`,
+uses Ghidra's default analysis settings, and loads its packaged Java
+bridge via `-scriptPath` into a new ephemeral project; opt-in
+[existing-project reuse](#reuse-an-existing-ghidra-project) opens only an owned copy. Linux and
 macOS use a current-user-only local bridge socket and descriptor. The
 project remains under the selected temporary directory. If its Unix socket
 pathname would exceed the host's byte limit, REA allocates a separate owner-only
@@ -1166,7 +1182,7 @@ original process owner for a later cleanup retry.
 The experimental Windows transport uses authenticated IPv4 loopback with a
 private native-owned bearer descriptor and Job Object process ownership.
 
-Operations begin only after default auto-analysis completes. `open_binary`
+In the default fresh-import mode, operations begin only after default auto-analysis completes. `open_binary`
 selects and validates the target/provider binding; it does not wait for Ghidra
 import and auto-analysis. The first Ghidra-backed query starts that work lazily.
 The provider startup deadline is 330,000 ms by default for import, analysis,
@@ -1296,6 +1312,63 @@ arm64 Mach-O returns decompiled C through the headless provider. The JDK is
 not needed for the make step, only for the Ghidra provider. If your toolchain
 rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
+
+### Reuse an existing Ghidra project
+
+For repeated investigations, select an expanded local project marker with
+`REA_GHIDRA_PROJECT_PATH=/absolute/projects/app-analysis.gpr`. Both CLI and MCP
+use this shared selection. `REA_GHIDRA_PROGRAM_NAME` selects one exact program
+in the project root; when omitted it defaults to the selected target's filename.
+Paths, globs and command flags are not program names. The matching `.rep`
+directory must be present; restore `.grez` archives with Ghidra first.
+
+```bash
+export REA_ANALYSIS_PROVIDER=ghidra
+export REA_GHIDRA_PROJECT_PATH=/absolute/projects/app-analysis.gpr
+export REA_GHIDRA_PROGRAM_NAME=app
+rea decompile /absolute/target/app --procedure entry --provider ghidra --json
+```
+
+Set the same variables in the MCP server environment and restart/reconnect;
+`open_binary` still selects the original target file. `rea setup` retains these
+explicit settings in a saved registration. Fresh import remains the default
+when the project setting is absent. This route supports native ELF, PE and
+Mach-O programs on POSIX without provider-pinned import preparation; Windows,
+raw/DOS/DOL and special pinned-language import profiles require fresh import.
+
+REA fingerprints only the selected `.gpr`/`.rep` pair, copies it into its owned
+runtime, verifies the copied content against the committed analysis profile,
+and runs `-process <program> -noanalysis -readOnly`. Ghidra never opens or saves
+the original database; REA reads selected files only for fingerprinting and copying.
+This mode does not copy unrelated sibling projects, rerun repair scripts, or
+admit bridge database edits. Cleanup removes the owned copy.
+The bridge checks the program's recorded import SHA-256 against the admitted
+target digest; mismatches and project changes fail explicitly. Reopen the target
+to resolve a new profile after intentionally changing the source project.
+
+The profile records the caller path, resolved project/name, program and content
+fingerprint. Original analysis settings and completeness remain **unknown**;
+prior annotations or edits are caller-project state, not fresh REA discoveries.
+A matching recorded import digest does not claim that the database is unedited.
+Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
+they are not interpreted as overrides applied by this session.
+Project content participates in snapshot identity, so different project states
+cannot reuse the same profile's cached observations.
+
+To prepare a new project explicitly, use your existing Ghidra installation in a
+new directory you own (this writes that project; REA does not save it for you):
+
+```bash
+mkdir /absolute/new-projects
+GHIDRA_HEADLESS_MAXMEM=1536M JAVA_TOOL_OPTIONS=-XX:ActiveProcessorCount=2 \
+  "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" /absolute/new-projects app-analysis \
+  -import /absolute/target/app -analysisTimeoutPerFile 600 -max-cpu 2
+```
+
+Check that preparation completed successfully before selecting the project.
+Preparation time, disk copy/fingerprinting, engine startup and client deadlines
+are separate costs; reusing a project avoids import/analysis, not all startup.
+Use the [heap/CPU controls](#ghidra-heap-and-cpu-controls) appropriate to the target.
 
 ### Ghidra import language and analysis seeds
 

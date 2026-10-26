@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
   isObject,
   locateItem,
   pointerTo,
@@ -125,7 +126,7 @@ export const nextInteger = (
 ): number | undefined => {
   let largest: number | undefined;
   for (const member of members) {
-    const value = sequenceNumber(member[field], exemplar);
+    const value = sequenceNumber(ownMember(member, field), exemplar);
     if (value !== undefined && (largest === undefined || value > largest))
       largest = value;
   }
@@ -179,10 +180,12 @@ const learnedClockFormat = (
 ): ClockFormat => {
   let learned = format;
   for (const member of type) {
-    const fitted = fittedClockFormat(learned, member[field], value);
+    const fitted = fittedClockFormat(learned, ownMember(member, field), value);
     if (fitted?.kind === "iso" && fitted.trimmed === true) learned = fitted;
   }
-  return type.some((member) => showsFixedWidth(format, member[field]))
+  return type.some((member) =>
+    showsFixedWidth(format, ownMember(member, field)),
+  )
     ? format
     : learned;
 };
@@ -193,7 +196,7 @@ export const createdInteger = (
   entity: JsonObject,
   type: readonly JsonObject[],
 ): "independent" | "linked" | undefined => {
-  const value = entity[field];
+  const value = ownMember(entity, field);
   const digits = generatedIntegerDigits(value);
   if (
     digits === undefined ||
@@ -203,10 +206,10 @@ export const createdInteger = (
     return undefined;
   const held = new Set([digits]);
   const distinct = type.every((member) => {
-    const other = generatedIntegerDigits(member[field]);
+    const other = generatedIntegerDigits(ownMember(member, field));
     if (
       other === undefined ||
-      typeof member[field] !== typeof value ||
+      typeof ownMember(member, field) !== typeof value ||
       other.length !== digits.length ||
       held.has(other)
     )
@@ -252,7 +255,7 @@ const generatedRule = (
   if (
     (isUuid(value) &&
       evidence.type.length > 0 &&
-      evidence.type.every((member) => member[field] !== value)) ||
+      evidence.type.every((member) => ownMember(member, field) !== value)) ||
     createdInteger(field, evidence.entity, evidence.type) === "independent"
   )
     return { field, rule: "unique" };
@@ -311,7 +314,9 @@ export const explainCreate = (
   // Generated values first, then copies: an echoed value may recur in unrelated text, a copied one is the call's own unless also echoed.
   const echoed = new Set(
     rules.flatMap((rule) =>
-      rule.rule === "echo" ? [scalarText(evidence.entity[rule.field])] : [],
+      rule.rule === "echo"
+        ? [scalarText(ownMember(evidence.entity, rule.field))]
+        : [],
     ),
   );
   const sources = [
@@ -319,7 +324,7 @@ export const explainCreate = (
     ...rules.filter(
       (rule) =>
         rule.rule === "copy" &&
-        !echoed.has(scalarText(evidence.entity[rule.field])),
+        !echoed.has(scalarText(ownMember(evidence.entity, rule.field))),
     ),
   ];
   const constants: string[] = [];
@@ -375,7 +380,9 @@ export const explainCreate = (
     ),
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
     tied: [
-      ...[...constants, ...templates].map((field) => evidence.entity[field]!),
+      ...[...constants, ...templates].map((field) =>
+        ownMember(evidence.entity, field)!,
+      ),
       ...literals,
     ].some((text) => tokens.some((token) => containsDelimited(text, token))),
   };
@@ -388,7 +395,7 @@ const echoedSlugs = (
 ): Map<string, string> => {
   const slugs = new Map<string, string>();
   for (const member of echoed) {
-    const sent = body[member];
+    const sent = ownMember(body, member);
     if (typeof sent === "string" && !slugs.has(slugOf(sent)))
       slugs.set(slugOf(sent), member);
   }
@@ -404,7 +411,7 @@ const keptReference = (
   if (known === undefined || evidence.named === undefined) return undefined;
   const shown = referenceRule(
     field,
-    evidence.after[field],
+    ownMember(evidence.after, field),
     evidence.call.body,
     evidence.named,
   );
@@ -439,7 +446,12 @@ export const explainUpdate = (
     // The identity is the entity's key: the path's id repeated is the identity member; another value is one the application ignored, or used to re-key the entity, which no rule models.
     if (member === evidence.idField) {
       if (scalarText(sent) === evidence.id) identity = member;
-      else if (!same(evidence.after[member], evidence.before[member]))
+      else if (
+        !same(
+          ownMember(evidence.after, member),
+          ownMember(evidence.before, member),
+        )
+      )
         unexplained.push(member);
       continue;
     }
@@ -465,7 +477,9 @@ export const explainUpdate = (
         !(evidence.shown ?? []).includes(field))
     )
       continue;
-    if (same(evidence.before[field], evidence.after[field])) {
+    if (
+      same(ownMember(evidence.before, field), ownMember(evidence.after, field))
+    ) {
       const kept = keptReference(evidence, field);
       if (kept !== undefined) rules.push(kept);
       continue;
@@ -553,7 +567,10 @@ const orderedBy = (
 ): boolean =>
   members.every((member, index) => {
     if (index === 0) return true;
-    const order = compareValues(members[index - 1]![field], member[field]);
+    const order = compareValues(
+      ownMember(members[index - 1]!, field),
+      ownMember(member, field),
+    );
     return (
       order !== undefined && (direction === "ascending" ? order < 0 : order > 0)
     );
@@ -572,17 +589,23 @@ export const randomIdentities = (
   idField: string,
   clocks: readonly string[],
 ): boolean => {
-  const ids = members.map((member) => scalarText(member[idField]) ?? "");
+  const ids = members.map(
+    (member) => scalarText(ownMember(member, idField)) ?? "",
+  );
   if (ids.length > 0 && ids.every((id) => UUID_V4.test(id))) return true;
   if (members.length < 2 || clocks.length === 0) return false;
   const byId = members.toSorted(
-    (left, right) => compareValues(left[idField], right[idField]) ?? 0,
+    (left, right) =>
+      compareValues(ownMember(left, idField), ownMember(right, idField)) ?? 0,
   );
   return clocks.every((clock) =>
     byId.some(
       (member, index) =>
         index > 0 &&
-        (compareValues(byId[index - 1]![clock], member[clock]) ?? 1) > 0,
+        (compareValues(
+          ownMember(byId[index - 1]!, clock),
+          ownMember(member, clock),
+        ) ?? 1) > 0,
     ),
   );
 };
@@ -628,7 +651,10 @@ export const insertIndex = (
 ): number => {
   if (rule.rule !== "sorted") return rule.rule === "first" ? 0 : members.length;
   const index = members.findIndex((member) => {
-    const order = compareValues(fields[rule.field], member[rule.field]);
+    const order = compareValues(
+      ownMember(fields, rule.field),
+      ownMember(member, rule.field),
+    );
     return (
       order !== undefined &&
       (rule.direction === "ascending" ? order < 0 : order > 0)

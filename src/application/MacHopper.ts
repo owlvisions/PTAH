@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   access,
@@ -13,22 +12,22 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
-import { z } from "zod";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
 import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
+import { downloadHopperPackage } from "./HopperDownload.js";
 import {
-  downloadHopperPackage,
-  HOPPER_DOWNLOAD_BYTES,
-} from "./HopperDownload.js";
+  HOPPER_RELEASES_URL,
+  HOPPER_DOWNLOAD_PREFIX,
+  parseHopperReleaseJson,
+  parseMacHopperReleases,
+  hopperArchiveIntegrityMatches,
+} from "./HopperReleaseFeed.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
 
 const execFileAsync = promisify(execFile);
-const RELEASES_URL =
-  "https://www.hopperapp.com/include/files-api.php?request=releases&public=true";
-const DOWNLOAD_PREFIX = "https://www.hopperapp.com:443/downloader/public/";
 const HOPPER_PUBLISHER_REQUIREMENT = macDeveloperIdRequirement(
   HOPPER_PUBLISHER.bundleIdentifier,
   HOPPER_PUBLISHER.teamIdentifier,
@@ -75,7 +74,7 @@ export interface MacHopperBundleInstallOperations {
 
 /** Stable network and command effects disclosed before macOS Hopper setup. */
 export const macHopperInstallDisclosure = {
-  networkOrigins: [RELEASES_URL, DOWNLOAD_PREFIX] as const,
+  networkOrigins: [HOPPER_RELEASES_URL, HOPPER_DOWNLOAD_PREFIX] as const,
   commands: [
     "hdiutil attach -readonly -nobrowse -mountpoint <private-mount> <verified-hopper.dmg>",
     "codesign --verify --deep --strict <mounted-hopper.app>",
@@ -143,19 +142,18 @@ export const installMacHopper = async (
   let result: MacHopperInstallResult;
   try {
     result = await (async (): Promise<MacHopperInstallResult> => {
-      const metadata = await host.download(RELEASES_URL);
+      const metadata = await host.download(HOPPER_RELEASES_URL);
       if (!metadata.ok) return { status: "failed", reason: "release_metadata" };
-      const parsed = releasesSchema.safeParse(parseJson(metadata.bytes));
-      if (!parsed.success)
-        return { status: "failed", reason: "release_metadata" };
-      const release = parsed.data["OS X"];
-      if (!release.filename.startsWith(DOWNLOAD_PREFIX))
-        return { status: "failed", reason: "release_metadata" };
+      const decoded = parseHopperReleaseJson(metadata.bytes);
+      if (!decoded.ok) throw decoded.cause;
+      const parsed = parseMacHopperReleases(decoded.value);
+      if (!parsed.ok) return { status: "failed", reason: "release_metadata" };
+      const release = parsed.value;
       installStage = "download";
       const archive = await host.download(release.filename);
       if (!archive.ok) return { status: "failed", reason: "download" };
       installStage = "integrity";
-      if (!integrityMatches(archive.bytes, release))
+      if (!hopperArchiveIntegrityMatches(archive.bytes, release))
         return { status: "failed", reason: "integrity" };
 
       installStage = "destination_inspection";
@@ -471,15 +469,6 @@ export const systemMacHopperInstallHost = (
   };
 };
 
-const parseJson = (bytes: Uint8Array): unknown =>
-  JSON.parse(new TextDecoder().decode(bytes));
-const integrityMatches = (
-  bytes: Uint8Array,
-  release: z.infer<typeof releaseSchema>,
-): boolean =>
-  bytes.byteLength === Number(release.file_length) &&
-  bytes.byteLength <= HOPPER_DOWNLOAD_BYTES &&
-  createHash("sha1").update(bytes).digest("hex") === release.file_hash;
 const commandSucceeds = async (
   command: string,
   args: readonly string[],
@@ -524,9 +513,3 @@ const pathExists = async (path: string): Promise<boolean> => {
     throw cause;
   }
 };
-const releaseSchema = z.object({
-  filename: z.string().url(),
-  file_length: z.string().regex(/^\d+$/u),
-  file_hash: z.string().regex(/^[a-f0-9]{40}$/u),
-});
-const releasesSchema = z.object({ "OS X": releaseSchema });

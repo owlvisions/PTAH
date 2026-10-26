@@ -212,7 +212,7 @@ export const projectPyzMember = (
     pathDialect,
   );
   const encrypted = pyzEntryEncrypted(item, encryptionMarker);
-  if (item.namespace)
+  if (item.role === "namespace")
     return {
       entry: projectEntry({
         path,
@@ -242,7 +242,7 @@ export const projectPyzMember = (
   const header =
     !encrypted &&
     pythonMagic !== undefined &&
-    (item.typeCode === 0 || item.typeCode === 1)
+    (item.role === "module" || item.role === "package")
       ? reconstructedPycHeader(pythonMagic)
       : undefined;
   const limitations: string[] = [];
@@ -306,11 +306,11 @@ const pyzMemberPath = (
   item: PyzEntry,
   pathDialect: CarrierPathDialect,
 ): string => {
-  if (item.typeCode === 2)
+  if (item.role === "data")
     return `${container}/${canonicalMemberPath(item.name, pathDialect)}`;
   const dotted = item.name.replaceAll(".", "/");
-  if (item.namespace) return `${container}/${dotted}`;
-  if (item.package) return `${container}/${dotted}/__init__.pyc`;
+  if (item.role === "namespace") return `${container}/${dotted}`;
+  if (item.role === "package") return `${container}/${dotted}/__init__.pyc`;
   return `${container}/${dotted}.pyc`;
 };
 

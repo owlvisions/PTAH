@@ -729,7 +729,6 @@ describe("unserved write plans", () => {
       stateOf(sending()),
       stateOf(sending([{ name: "Third Book" }])),
       recorded("application/x-www-form-urlencoded", "name=Third+Book"),
-      recorded("application/json", '{"__proto__":{},"name":"Third Book"}'),
       recorded(
         "application/json",
         '{"name":"Third Book","copies":12345678901234567890}',
@@ -2602,3 +2601,26 @@ describe("recorded calls serving would refuse", () => {
     }
   });
 });
+
+it.each(["__proto__", "constructor"])(
+  "learns a confirmed update of an own %s field",
+  (field) => {
+    const initial = {
+      id: 1,
+      name: "One",
+      ...Object.fromEntries([[field, { label: "old" }]]),
+    };
+    const body = Object.fromEntries([[field, { label: "stored" }]]);
+    const updated = { ...initial, ...body };
+    const state = stateOf([
+      ["GET", "/api/items", [initial, { id: 2, name: "Two" }]],
+      ["GET", "/api/items/1", initial],
+      ["PATCH", "/api/items/1", updated, 200, body],
+      ["GET", "/api/items/1", updated],
+    ]);
+    expect(planOf(state, "patch_items_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([{ rule: "echo", field }]),
+    });
+  },
+);

@@ -15,6 +15,7 @@ import type { Evidence } from "../evidence.js";
 import type { JsonValue } from "../jsonValue.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
 import {
+  analysisViewResultSchema,
   projectAnalysisView,
   type AnalysisViewParent,
   type AnalysisViewResult,
@@ -29,6 +30,8 @@ import {
   type JsonObject,
   type StateRecordFacts,
 } from "./environmentStateRules.js";
+import { evaluateQuery } from "./environmentStateListQuery.js";
+import { singleQueryValues } from "../recordedTransportUrl.js";
 import { environmentStateFields } from "./environmentStateView.js";
 import {
   lineShapes,
@@ -1725,3 +1728,94 @@ it.each(["+00:60", "+24:00", "+99:99"])(
     expect(environmentStateFields.views.safeParse([view]).success).toBe(false);
   },
 );
+
+it("keeps learned prototype-named query roles through public result normalization", () => {
+  const books = [
+    { id: 1, shelf: "a" },
+    { id: 2, shelf: "b" },
+  ];
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/books", books],
+      ["GET", "/api/books?__proto__=x&shelf=a", [books[0]!]],
+    ]),
+  );
+  const normalized = analysisViewResultSchema.parse(
+    JSON.parse(JSON.stringify(state)),
+  );
+  if (normalized.kind !== "environment-state")
+    throw new Error("Expected state");
+  const view = normalized.views.find((entry) => entry.shape === "list");
+  if (view?.shape !== "list" || view.query === undefined)
+    throw new Error("Expected learned query");
+  expect(
+    Object.getOwnPropertyDescriptor(view.query.parameters, "__proto__")?.value,
+  ).toEqual({ role: "inert", values: ["x"] });
+  expect(
+    evaluateQuery(
+      view.query.parameters,
+      singleQueryValues("?__proto__=x&shelf=a")!,
+      normalized.entities,
+    )?.page.map((entity) => entity.id),
+  ).toEqual(["1"]);
+});
+
+it("validates every own render-metadata dictionary entry through the public schema", () => {
+  const state = stateOf();
+  const item = state.views.find((view) => view.shape === "item")!;
+  const parse = (clock: unknown, nested: unknown) =>
+    analysisViewResultSchema.safeParse({
+      ...state,
+      views: [
+        {
+          ...item,
+          clock_formats: Object.fromEntries([["__proto__", clock]]),
+          nested_fields: Object.fromEntries([["__proto__", nested]]),
+        },
+      ],
+    });
+  const clock = { kind: "epoch", unit: "ms" };
+  const parsed = parse(clock, ["id"]);
+  expect(parsed.success).toBe(true);
+  if (!parsed.success || parsed.data.kind !== "environment-state")
+    throw new Error("Expected state");
+  const view = parsed.data.views[0]!;
+  if (view.shape !== "item") throw new Error("Expected item");
+  expect(
+    Object.getOwnPropertyDescriptor(view.clock_formats, "__proto__")?.value,
+  ).toEqual(clock);
+  expect(
+    Object.getOwnPropertyDescriptor(view.nested_fields, "__proto__")?.value,
+  ).toEqual(["id"]);
+  expect(parse({ kind: "epoch", unit: "invalid" }, ["id"]).success).toBe(false);
+  expect(parse(clock, [1]).success).toBe(false);
+});
+
+it("preserves own prototype-named entity and document fields through capture projection and public normalization", () => {
+  const first = JSON.parse(
+    '{"id":1,"__proto__":{"label":"one"},"constructor":"first","meta":{"__proto__":"nested"}}',
+  ) as JsonObject;
+  const second = JSON.parse(
+    '{"id":2,"__proto__":{"label":"two"},"constructor":"second","meta":{"__proto__":"nested"}}',
+  ) as JsonObject;
+  const document = JSON.parse('{"__proto__":{"theme":"dark"}}') as JsonObject;
+  const projected = stateOf(
+    captureOf([
+      ["GET", "/api/items", [first, second]],
+      ["GET", "/api/items/1", first],
+      ["GET", "/api/settings", document],
+    ]),
+  );
+  const state = analysisViewResultSchema.parse(
+    JSON.parse(JSON.stringify(projected)),
+  );
+  if (state.kind !== "environment-state") throw new Error("Expected state");
+  const entity = state.entities.find((entry) => entry.id === "1")!;
+  expect(JSON.stringify(entity.fields)).toBe(JSON.stringify(first));
+  expect(
+    Object.getOwnPropertyDescriptor(entity.fields, "__proto__")?.value,
+  ).toEqual({ label: "one" });
+  expect(state.documents).toContainEqual(
+    expect.objectContaining({ value: document }),
+  );
+});

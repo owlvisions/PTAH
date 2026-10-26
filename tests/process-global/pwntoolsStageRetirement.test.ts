@@ -12,6 +12,7 @@ import {
 } from "vitest";
 import { z } from "zod";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { PwntoolsRecordedCrashProvider } from "../../src/native/pwntools/PwntoolsRecordedCrashProvider.js";
 import type { PwntoolsLauncher } from "../../src/native/pwntools/PwntoolsDecoder.js";
 import {
@@ -390,6 +391,7 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
     const read = artifacts.readStableArtifact;
     let injected = false;
     let releaseAllowed = false;
+    const closeFailure = new Error("reply close refused");
     const emergencyCloses: (() => Promise<void>)[] = [];
     vi.spyOn(artifacts, "readStableArtifact").mockImplementation(
       async (...args) => {
@@ -402,7 +404,7 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
         const close = file.close.bind(file);
         emergencyCloses.push(close);
         file.close = async () => {
-          if (!releaseAllowed) throw new Error("reply close refused");
+          if (!releaseAllowed) throw closeFailure;
           await close();
         };
         const retain = resources.retain.bind(resources);
@@ -454,17 +456,36 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
       { signal: controller.signal },
     );
     if (result.ok) throw new Error("Expected the physical reply-close failure");
-    expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(controller.signal.reason).toBe(reason);
+    if (stage === "debugger") {
+      expect(result.error).toBeInstanceOf(ProviderCleanupError);
+      expect(result.error.diagnostics).toMatchObject({
+        stage: "debugger_reply_descriptor_close",
+      });
+      expect(result.error.partialObservation).toMatchObject({
+        artifact: { path },
+        debugger: {
+          status: "available",
+          connection: "core",
+          maps: recordedCrashDebuggerFixture().maps,
+          diagnostics: { stdout: "debugger diagnostic" },
+        },
+      });
+    } else expect(result.error._tag).toBe("AnalysisOutputError");
     expect(result.error.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
     if (!(result.error.cause instanceof ArtifactFileCleanupFailure))
       throw new Error("Expected exact file owner");
     expect(result.error.cause.fileCleanupFailure.outcome.kind).toBe(
       "completed",
     );
+    expect(result.error.cause.fileCleanupFailure.cleanupCause).toBe(
+      closeFailure,
+    );
     expect(
       result.error.cause.fileCleanupFailure.completionCancellation,
     ).toBeUndefined();
     expect(result.error.cleanupIncomplete).toBe(true);
+    const observation = result.error.partialObservation;
     await expect(provider.close()).rejects.toMatchObject({
       cleanupIncomplete: true,
     });
@@ -472,6 +493,8 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
     releaseAllowed = true;
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+    expect(result.error.partialObservation).toBe(observation);
     expect(result.error.capturedOutput?.stdout).toContain("basic diagnostic");
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },

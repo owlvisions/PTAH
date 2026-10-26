@@ -73,6 +73,49 @@ const snapshotWithHistoricalEvidence = () => {
   };
 };
 
+describe("analysis snapshot entry admission", () => {
+  it("preserves provider entries without profiles and requires profiles on workflow entries", () => {
+    const { snapshot } = snapshotWithHistoricalEvidence();
+    const entry = snapshot.entries[0];
+    if (entry === undefined) throw new Error("Missing fixture query");
+    const providerSchema = analysisSnapshotSchema.shape.entries.element;
+    const workflowSchema =
+      analysisSnapshotSchema.shape.workflow_entries.element;
+    expect(providerSchema.parse(entry)).toEqual(entry);
+    expect(workflowSchema.safeParse(entry).success).toBe(false);
+    const workflow = {
+      ...entry,
+      execution: {
+        ...entry.execution,
+        analysis_profile: snapshot.binding.analysis_profile,
+      },
+    };
+    expect(workflowSchema.parse(workflow)).toEqual(workflow);
+    for (const schema of [providerSchema, workflowSchema]) {
+      expect(
+        schema.safeParse({
+          ...workflow,
+          execution: { ...workflow.execution, provider: undefined },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      providerSchema.parse({
+        ...workflow,
+        unknown_entry: true,
+        execution: { ...workflow.execution, unknown_execution: true },
+      }),
+    ).toEqual(entry);
+    expect(
+      workflowSchema.parse({
+        ...workflow,
+        unknown_entry: true,
+        execution: { ...workflow.execution, unknown_execution: true },
+      }),
+    ).toEqual(workflow);
+  });
+});
+
 describe("analysis snapshot target identity", () => {
   it.each(RAW_ONLY_ARCHITECTURES)(
     "keeps %s confined to executable raw snapshots",

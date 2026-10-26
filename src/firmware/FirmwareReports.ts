@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import { digestSchema } from "../domain/digests.js";
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import { firmwareLogicalPath } from "./FirmwareFiles.js";
@@ -21,11 +25,20 @@ const scan = z.array(
     Analysis: z.object({
       file_path: z.string(),
       file_map: z.array(signature),
-      extractions: z.record(z.string(), jsonValueSchema),
+      extractions: jsonObjectSchema,
     }),
   }),
 );
-const report = z.object({ __typename__: z.string() }).catchall(jsonValueSchema);
+const report = jsonObjectSchema.pipe(
+  z.custom<Record<string, JsonValue> & { __typename__: string }>(
+    (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      "__typename__" in value &&
+      typeof value.__typename__ === "string",
+    "Expected report __typename__ string",
+  ),
+);
 const task = z.object({
   path: z.string(),
   depth: integer,

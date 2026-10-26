@@ -1,10 +1,7 @@
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
-  readStableArtifact,
-  completedStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -13,7 +10,7 @@ import {
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import type { PeResourcesPort } from "../../application/binaryDiagnostics/PeResourcesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -216,16 +213,8 @@ const peResourcesFailure = (cause: unknown, input: InspectPeResourcesInput) => {
     artifactFilePrimaryFacts(cause),
     input,
   );
-  const snapshot = completedStableArtifact(cause);
-  if (snapshot !== undefined)
-    primary.retainPartialObservation(
-      fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
-        path: input.path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      }),
-    );
+  const observation = completedStableArtifactObservation(cause, input.path);
+  if (observation !== undefined) primary.retainPartialObservation(observation);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(

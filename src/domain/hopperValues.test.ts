@@ -233,3 +233,32 @@ describe("provider-neutral inclusive function body evidence", () => {
     ).toBe(false);
   });
 });
+
+it.each(["procedures", "strings"])(
+  "counts every own entry of direct and wrapped %s maps",
+  (property) => {
+    for (const text of [
+      '{"__proto__":"observed"}',
+      '{"__proto__":"observed","0x1000":"one"}',
+    ]) {
+      const source = JSON.parse(text);
+      const count = Object.keys(source).length;
+      expect(parseListCount(source, property)).toEqual({
+        ok: true,
+        value: count,
+      });
+      expect(parseListCount({ [property]: source }, property)).toEqual({
+        ok: true,
+        value: count,
+      });
+      expect(JSON.stringify(source)).toBe(text);
+    }
+    expect(parseListCount({ [property]: [] }, property)).toEqual({
+      ok: true,
+      value: 0,
+    });
+    expect(parseListCount({}, property)).toEqual({ ok: true, value: 0 });
+    for (const value of [null, "not a list", 3, false])
+      expect(parseListCount(value, property).ok).toBe(false);
+  },
+);

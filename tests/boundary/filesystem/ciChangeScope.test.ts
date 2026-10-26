@@ -739,6 +739,28 @@ it.each([
     { code: true, runtime: true, package: true, apple: false, evm: false },
   ],
   [
+    "src/domain/windowsNativeArtifact.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
+  ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
+  [
+    "scripts/lib/verifier-source-loader.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsNativeArtifactVerifier.test.ts",
+    { code: true, package: true },
+  ],
+  [
+    "scripts/lib/windows-native-inspection-workspace.mjs",
+    { code: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsNativeInspectionWorkspace.test.ts",
+    { code: true, package: true },
+  ],
+  [
     "src/domain/javascript/javascriptRuntimeStaticCandidates.ts",
     { code: true, runtime: true, package: true, javascript_recovery: true },
   ],
@@ -1242,6 +1264,18 @@ it.each([
   ],
   [
     "tests/conformance/c/fixture.c",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/lib/conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/build-conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/verify-conformance-fixtures.mjs",
     { code: true, fixtures: true, readiness: true, package: false },
   ],
   [

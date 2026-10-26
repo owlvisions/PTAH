@@ -7,11 +7,13 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   ASAR_HEADER_ADMISSION_SETTING,
   DEFAULT_ASAR_HEADER_ADMISSION,
-  DEFAULT_ASAR_MAX_HEADER_BYTES,
-  MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import {
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+} from "../domain/analysisResourceLimits.js";
 
 /**
  * Resolve the admission from a composition root's selected environment; an

@@ -24,7 +24,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
-  numberValue,
+  executionContextKey,
   recordValue,
   cdpStringValue,
   scriptMetadataValues,
@@ -651,7 +651,7 @@ const ingestScript = (event: CdpEvent, state: CaptureState): void => {
   const metadata = scriptMetadataValues(value);
   const draft: ScriptDraft = {
     rawUrl,
-    executionContextKey: contextKey(value?.executionContextId),
+    executionContextKey: executionContextKey(value?.executionContextId),
     cdpHash: metadata.hash,
     length: metadata.length,
     isModule: metadata.isModule,
@@ -680,7 +680,7 @@ const ingestContext = (event: CdpEvent, state: CaptureState): void => {
     event.method === "Runtime.executionContextCreated"
       ? recordValue(parameters?.context)
       : parameters;
-  const key = contextKey(
+  const key = executionContextKey(
     event.method === "Runtime.executionContextCreated"
       ? runtimeContext?.id
       : runtimeContext?.executionContextId,
@@ -776,13 +776,6 @@ const retainedMetadataBytes = (value: ScriptDraft | ContextDraft): number => {
     RETAINED_OBJECT_OVERHEAD_BYTES +
     strings.reduce((total, text) => total + (text?.length ?? 0) * 2, 0)
   );
-};
-
-const contextKey = (value: unknown): string | null => {
-  const identifier = numberValue(value);
-  return identifier !== undefined && Number.isSafeInteger(identifier)
-    ? String(identifier)
-    : null;
 };
 
 const providerError = (

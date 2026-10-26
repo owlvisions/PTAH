@@ -416,14 +416,11 @@ const stdioMode = (
   method: JavaScriptSemanticChildProcessSpawn["method"],
   context: ChildSpawnContext,
 ): string => {
+  // Async exec/execFile do not forward options.stdio to their underlying spawn.
+  if (method === "exec" || method === "execFile") return "default";
   if (options === undefined) return "default";
   const expression = unwrapJavaScriptExpression(options).node;
-  if (
-    context.isNullish(expression) ||
-    ((method === "exec" || method === "execFile") &&
-      context.isCallback(expression))
-  )
-    return "default";
+  if (context.isNullish(expression)) return "default";
   const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
   if (lookup.status === "missing")
     return unsetStdioMode(expression, method, context);

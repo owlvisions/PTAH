@@ -534,7 +534,6 @@ const appendReadEntry = (
 /** Convert bounded reader observations into graph entries and parsed edges. */
 export const parseReferenceSourceEntries = (
   read: ReferenceSourceRead,
-  filePaths: ReadonlySet<string>,
   exclusions: HistoricalSourceGraphInput["exclusions"],
   signal?: AbortSignal,
 ): ParsedReferenceSourceEntries => {
@@ -550,7 +549,11 @@ export const parseReferenceSourceEntries = (
     );
   const packageInventory = readPackageMetadata(read, exclusions);
   const context: SpecifierContext = {
-    lookupPath: createReferenceSourcePathLookup(filePaths),
+    lookupPath: createReferenceSourcePathLookup(
+      read.entries
+        .filter((entry) => entry.status === "read" && entry.kind === "file")
+        .map((entry) => entry.path),
+    ),
     packages: packageInventory.packages,
     packageManifestPathLookup: packageInventory.pathLookup,
   };

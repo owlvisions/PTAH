@@ -202,13 +202,6 @@ export const integerOrNull = (value: unknown): number | null => {
   return number === undefined ? null : Math.max(0, Math.trunc(number));
 };
 
-export const executionContextKey = (value: unknown): string | null => {
-  const identifier = numberValue(value);
-  return identifier !== undefined && Number.isSafeInteger(identifier)
-    ? String(identifier)
-    : null;
-};
-
 export const isJsonContentType = (
   headers: UnknownRecord | undefined,
 ): boolean => {

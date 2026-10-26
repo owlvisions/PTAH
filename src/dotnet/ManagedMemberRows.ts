@@ -1,3 +1,4 @@
+import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
@@ -234,34 +235,25 @@ export const parseMemberRefs = (
   const table = layout.table(10);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 10, row);
-      const parentRaw = cursor.readIndex(
-        layout.codedIndexSize("MemberRefParent"),
-      );
+      const { token, rowOffset, parentRaw, parent, nameIndex, signatureIndex } =
+        readMemberReferenceRowFacts(bytes, layout, row);
       const name = readMetadataString(
         bytes,
         layout,
-        cursor.readIndex(layout.stringIndexSize),
+        nameIndex,
         layout.strings.size,
       );
       const sig = readMetadataBlob(
         bytes,
         layout,
-        cursor.readIndex(layout.blobIndexSize),
+        signatureIndex,
         layout.blob?.size ?? 0,
-      );
-      const token = metadataToken(10, row);
-      const parent = decodeMetadataCodedIndex(
-        parentRaw,
-        3,
-        [2, 1, 26, 6, 27],
-        layout.rowCounts,
       );
       if (parent.kind !== "valid")
         issues.push({
           code: "invalid-row",
           scope: `metadata.MemberRef:${token}`,
-          offset: cursor.start,
+          offset: rowOffset,
           detail:
             parent.kind === "null"
               ? "MemberRef parent coded index 0x0 is null, but the Class column must reference a row"
@@ -278,7 +270,7 @@ export const parseMemberRefs = (
       );
       refs.push({
         token,
-        row_offset: cursor.start,
+        row_offset: rowOffset,
         parent_token: parentToken,
         parent_name: parentName,
         name,

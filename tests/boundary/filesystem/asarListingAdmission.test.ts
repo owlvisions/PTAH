@@ -139,3 +139,89 @@ it("preserves POSIX literal backslashes and rejects Windows component separators
     await reader.close();
   }
 });
+
+it.each([undefined, "01", "-1", "9007199254740992"])(
+  "retains inventory facts for an unreadable packed offset %s",
+  async (offset) => {
+    const digest = "a".repeat(64);
+    const bytes = asarHeaderBytes(
+      JSON.stringify({
+        files: {
+          member: {
+            size: 0,
+            ...(offset === undefined ? {} : { offset }),
+            executable: true,
+            integrity: { algorithm: "SHA256", hash: digest },
+          },
+        },
+      }),
+    );
+    const path = await archiveWith(bytes);
+    const reader = new AsarArtifactReader(path);
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries).toHaveLength(1);
+      const entry = entries[0]!;
+      expect(entry).toMatchObject({
+        path: "member",
+        kind: "file",
+        declaredSize: 0,
+        executable: true,
+        declaredIntegrity: { algorithm: "sha256", digest },
+      });
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "format",
+      });
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
+it("preserves directory and link priority with unrecognized integrity declarations", async () => {
+  const bytes = asarHeaderBytes(
+    JSON.stringify({
+      files: {
+        directory: {
+          files: {},
+          link: "target",
+          size: 3,
+          integrity: { algorithm: "SHA512", hash: "source-digest" },
+        },
+        link: {
+          link: "target",
+          size: 4,
+          offset: "invalid",
+          integrity: { algorithm: "SHA256", hash: "INVALID" },
+        },
+      },
+    }),
+  );
+  const path = await archiveWith(bytes);
+  const reader = new AsarArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    expect(entries).toMatchObject([
+      {
+        path: "directory",
+        kind: "directory",
+        declaredSize: 3,
+        declaredIntegrity: null,
+        limitations: [],
+      },
+      {
+        path: "link",
+        kind: "symlink",
+        declaredSize: 4,
+        declaredIntegrity: null,
+        limitations: ["ASAR symlink target was not followed or disclosed."],
+      },
+    ]);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+  } finally {
+    await reader.close();
+  }
+});

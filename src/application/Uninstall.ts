@@ -1,3 +1,4 @@
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
@@ -18,7 +19,7 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname } from "node:path";
 import { defaultKunaCacheDirectory } from "../config/kunaCacheDirectory.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
@@ -1046,7 +1047,7 @@ const purgeSelectedData = async (
   fileSystem: UninstallFileSystem,
 ): Promise<readonly UninstallItem[]> => {
   const items = [
-    ...(await purgeManagedData(join(home, ".rea"), fileSystem, [
+    ...(await purgeManagedData(appendCallerPath(home, ".rea"), fileSystem, [
       "cache",
       "state",
     ])),
@@ -1097,7 +1098,11 @@ const purgeManagedData = async (
   } catch (cause: unknown) {
     return names.map((name) =>
       isMissing(cause)
-        ? item(name, "skipped", `${join(root, name)} does not exist.`)
+        ? item(
+            name,
+            "skipped",
+            `${appendCallerPath(root, name)} does not exist.`,
+          )
         : item(
             name,
             "failed",
@@ -1107,7 +1112,9 @@ const purgeManagedData = async (
   }
   const items: UninstallItem[] = [];
   for (const name of names)
-    items.push(await removeManagedPath(join(root, name), name, fileSystem));
+    items.push(
+      await removeManagedPath(appendCallerPath(root, name), name, fileSystem),
+    );
   return items;
 };
 
@@ -1210,7 +1217,7 @@ const inspectManagedSkill = async (
   if (root.isDirectory?.() !== true)
     return item(name, "retained", "Skill path is not a directory.");
 
-  const manifestPath = join(path, "SKILL.md");
+  const manifestPath = appendCallerPath(path, "SKILL.md");
   try {
     const manifest = await fileSystem.stat(manifestPath);
     if (manifest.isSymbolicLink())
@@ -1315,7 +1322,9 @@ const removeEmptyManagedDirectories = async (
 ): Promise<UninstallItem | undefined> => {
   if (fileSystem.removeEmptyDirectory === undefined) return undefined;
   for (const directory of [
-    ...MANAGED_SKILL_DIRECTORIES.map((relative) => join(root, relative)),
+    ...MANAGED_SKILL_DIRECTORIES.map((relative) =>
+      appendCallerPath(root, relative),
+    ),
     root,
   ]) {
     try {
@@ -1347,7 +1356,7 @@ const removeManagedSkillFile = async (
   const segments = relativePath.split(/[\\/]/u);
   let parent = root;
   for (const segment of segments.slice(0, -1)) {
-    parent = join(parent, segment);
+    parent = appendCallerPath(parent, segment);
     try {
       const stats = await fileSystem.stat(parent);
       if (stats.isSymbolicLink() || stats.isDirectory?.() !== true)
@@ -1361,7 +1370,7 @@ const removeManagedSkillFile = async (
         ? item(
             name,
             "skipped",
-            `${join(parent, segments.at(-1) ?? "")} does not exist.`,
+            `${appendCallerPath(parent, segments.at(-1) ?? "")} does not exist.`,
           )
         : item(
             name,
@@ -1371,7 +1380,7 @@ const removeManagedSkillFile = async (
     }
   }
 
-  const target = join(root, relativePath);
+  const target = appendCallerPath(root, relativePath);
   let stats: ManagedPathStats;
   try {
     stats = await fileSystem.stat(target);

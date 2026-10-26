@@ -534,7 +534,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
             encrypted,
             image.archive.pythonMagic,
             pathDialect,
-            item.namespace || encrypted
+            item.role === "namespace" || encrypted
               ? undefined
               : {
                   handle: image.handle,

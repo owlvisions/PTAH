@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import { same, type JsonObject } from "./environmentStateRules.js";
+import { ownMember, same, type JsonObject } from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
 import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
 import {
@@ -127,9 +127,12 @@ const mergedField = (
   // This call echoes a member the plan's calls left out: what they stored there is its default.
   if (after !== undefined)
     return after.rule === "echo" && !calls.required.includes(field)
-      ? { rule: after, default: { member: field, value: exemplar[field]! } }
+      ? {
+          rule: after,
+          default: { member: field, value: ownMember(exemplar, field)! },
+        }
       : undefined;
-  return same(exemplar[field], later.entity[field]) ? {} : undefined;
+  return same(ownMember(exemplar, field), later.entity[field]) ? {} : undefined;
 };
 
 /**
@@ -151,7 +154,7 @@ export const mergedCreatePlan = (
   },
   earlier: EarlierEvidence = {
     kept: new Set(),
-    clockOf: (field) => exemplar[field],
+    clockOf: (field) => ownMember(exemplar, field),
   },
 ): { readonly rules: FieldRule[]; readonly body: WriteBody } | undefined => {
   const held = new Map(plan.rules.map((rule) => [rule.field, rule]));

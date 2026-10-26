@@ -7,6 +7,7 @@ import {
   resolveHermesClientHome,
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import {
   type MsixPackageView,
@@ -524,7 +525,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "codex",
     displayName: "Codex",
     configPath: (context: ClientPathContext) =>
-      join(codexDirectory(context), "config.toml"),
+      appendCallerPath(codexDirectory(context), "config.toml"),
     markerPath: codexDirectory,
     format: "toml",
   },
@@ -929,6 +930,7 @@ export const clientSkillDirectories = (
       : clientIds.length === 0
         ? ["shared"]
         : clientIds;
+  const sharedDirectory = appendCallerPath(home, ".agents/skills", platform);
   const destinations = new Map<string, { client: string; directory: string }>();
   for (const client of selected) {
     const definition = definitions.find(({ name }) => name === client);
@@ -944,7 +946,7 @@ export const clientSkillDirectories = (
     try {
       const resolved =
         definition?.skillPath === undefined
-          ? ok(join(home, ".agents", "skills"))
+          ? ok(sharedDirectory)
           : resolvePath(definition.skillPath, {
               home,
               platform,
@@ -968,8 +970,7 @@ export const clientSkillDirectories = (
     }
     if (!destinations.has(directory))
       destinations.set(directory, {
-        client:
-          directory === join(home, ".agents", "skills") ? "shared" : client,
+        client: directory === sharedDirectory ? "shared" : client,
         directory,
       });
   }

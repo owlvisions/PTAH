@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { parseBinary } from "plist";
+
+import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
 
 import { appleResourceKeyFields } from "../../domain/apple/appleAssetCatalog.js";
 import {
@@ -23,16 +24,16 @@ import {
   unknownDateLimitation,
   unknownScalarLimitation,
 } from "../../domain/apple/plistValue.js";
-import {
-  omittedPrototypeKeysLimitation,
-  parseXmlPropertyList,
-} from "../../domain/propertyListKeys.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeNibArchive,
   nibCollectionMembers,
   type NibArchiveDocument,
 } from "./NibArchive.js";
-import { preflightPropertyListDecode } from "./PropertyListDecodeBudget.js";
+import {
+  preflightPropertyListDecode,
+  type PlistDecodePreflight,
+} from "./PropertyListDecodeBudget.js";
 import {
   interfaceBuilderDecodeBudgetFailure,
   InterfaceBuilderDecodeBudget,
@@ -58,11 +59,8 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
-  decodeBinaryPlistScalars,
-  retainBinaryPlistUidIdentity,
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-  type BinaryPlistScalarDecodePlan,
 } from "./PlistScalars.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import {
@@ -111,7 +109,6 @@ const decodeInterfaceBuilderBundle = async (
   const incompleteHierarchies = new Map<string, number>();
   const unexaminedSources = new Map<string, readonly NibUnexaminedSource[]>();
   const unresolvedConnections = new Map<string, number>();
-  const prototypeKeyOmissions = new Map<string, number | null>();
   const unknownDates = new Map<string, number>();
   const datePrecisionOverlaps = new Map<string, number>();
   const unknownScalars = new Map<string, number>();
@@ -178,15 +175,7 @@ const decodeInterfaceBuilderBundle = async (
         const isNibArchive = hasNibArchiveSignature(bytes);
         let nib: ReturnType<typeof projectNibArchive> | null = null;
         let xmlText: string | undefined;
-        let binaryPrototypeKeyObserved = false;
-        let scalarPlan: BinaryPlistScalarDecodePlan = {
-          reachableDateOffsets: [],
-          overlappingDateOffsets: [],
-          reachableWideIntegerOffsets: [],
-          overlappingWideIntegerOffsets: [],
-          reachableNumericOffsets: [],
-          uidOffsetsToNormalize: [],
-        };
+        let scalarPlan!: PlistDecodePreflight;
         let datePrecisionOverlapCount = 0;
         if (isNibArchive) {
           const documentBudget = new InterfaceBuilderDecodeBudget(
@@ -220,23 +209,19 @@ const decodeInterfaceBuilderBundle = async (
             "plist representation exceeds the aggregate Interface Builder decode budget",
           );
           plistReservation = decodedReservation.estimatedBytes;
-          binaryPrototypeKeyObserved =
-            decodedReservation.binaryPrototypeKeyObserved;
           scalarPlan = decodedReservation;
           datePrecisionOverlapCount =
             decodedReservation.datePrecisionOverlapCount;
         }
         const {
           value: raw,
-          omittedPrototypeKeys,
           unknownDateCount,
           unknownScalarCount,
           numberLiterals,
         } = nib === null
-          ? decodePlist(bytes, xmlText, binaryPrototypeKeyObserved, scalarPlan)
+          ? decodePlist(bytes, xmlText, scalarPlan)
           : {
               value: nib.raw,
-              omittedPrototypeKeys: 0,
               unknownDateCount: 0,
               unknownScalarCount: 0,
               numberLiterals: undefined,
@@ -252,8 +237,6 @@ const decodeInterfaceBuilderBundle = async (
           nonFiniteReals.set(entry.path, nib.nonFiniteRealCount);
         if (nib !== null && nib.negativeZeroRealCount > 0)
           negativeZeroReals.set(entry.path, nib.negativeZeroRealCount);
-        if (omittedPrototypeKeys !== 0)
-          prototypeKeyOmissions.set(entry.path, omittedPrototypeKeys);
         if (unknownDateCount !== 0)
           unknownDates.set(entry.path, unknownDateCount);
         if (datePrecisionOverlapCount > 0)
@@ -321,7 +304,6 @@ const decodeInterfaceBuilderBundle = async (
     unexaminedSources,
     incompleteHierarchies,
     unresolvedConnections,
-    prototypeKeyOmissions,
     unknownDates,
     datePrecisionOverlaps,
     unknownScalars,
@@ -423,7 +405,6 @@ const finalizeHierarchyCoverage = (
     unexaminedSources: ReadonlyMap<string, readonly NibUnexaminedSource[]>;
     incompleteHierarchies: ReadonlyMap<string, number>;
     unresolvedConnections: ReadonlyMap<string, number>;
-    prototypeKeyOmissions: ReadonlyMap<string, number | null>;
     unknownDates: ReadonlyMap<string, number>;
     datePrecisionOverlaps: ReadonlyMap<string, number>;
     unknownScalars: ReadonlyMap<string, number>;
@@ -441,7 +422,6 @@ const finalizeHierarchyCoverage = (
     unexaminedSources,
     incompleteHierarchies,
     unresolvedConnections,
-    prototypeKeyOmissions,
     unknownDates,
     datePrecisionOverlaps,
     unknownScalars,
@@ -454,7 +434,6 @@ const finalizeHierarchyCoverage = (
   const archiveDecodePartial =
     invalid.length > 0 ||
     unexaminedSources.size > 0 ||
-    prototypeKeyOmissions.size > 0 ||
     counts.omitted > 0 ||
     counts.traversal.status === "unknown";
   return {
@@ -521,13 +500,11 @@ const finalizeHierarchyCoverage = (
                   ? "archive_decode_budget_exhausted"
                   : invalid.length > 0
                     ? "one_or_more_archives_invalid"
-                    : prototypeKeyOmissions.size > 0
-                      ? "dictionary_entries_omitted"
-                      : unexaminedSources.size > 0
-                        ? "serialized_archive_content_unexamined"
-                        : counts.traversal.status === "unknown"
-                          ? "source_traversal_unknown"
-                          : null,
+                    : unexaminedSources.size > 0
+                      ? "serialized_archive_content_unexamined"
+                      : counts.traversal.status === "unknown"
+                        ? "source_traversal_unknown"
+                        : null,
           examined: counts.attempted,
           omitted: counts.omitted,
         },
@@ -560,9 +537,6 @@ const finalizeHierarchyCoverage = (
         : [
             `Some Interface Builder archives could not be decoded: ${invalid.slice(0, 16).join("; ")}`,
           ]),
-      ...[...prototypeKeyOmissions].map(
-        ([path, count]) => `${path}: ${omittedPrototypeKeysLimitation(count)}`,
-      ),
       ...[...unknownDates].map(
         ([path, count]) => `${path}: ${unknownDateLimitation(count)}`,
       ),
@@ -1075,15 +1049,13 @@ const parseXmlWithinDecodeBudget = (text: string) => {
   }
 };
 
-/** Project decoded plist data and dates while retaining omitted-key coverage. */
+/** Project decoded plist data and dates while retaining scalar coverage. */
 const decodePlist = (
   bytes: Buffer,
   xmlText: string | undefined,
-  binaryPrototypeKeyObserved: boolean,
-  scalarPlan: BinaryPlistScalarDecodePlan,
+  scalarPlan: PlistDecodePreflight,
 ): {
   readonly value: JsonValue;
-  readonly omittedPrototypeKeys: number | null;
   readonly unknownDateCount: number;
   readonly unknownScalarCount: number;
   readonly numberLiterals: PlistNumberLiterals;
@@ -1092,22 +1064,15 @@ const decodePlist = (
   const binaryScalarMetadata = binary
     ? scanBinaryPlistScalars(bytes, scalarPlan)
     : undefined;
-  const { value, omittedPrototypeKeys, numberLiterals } = binary
+  const { value, numberLiterals } = binary
     ? {
-        value: retainBinaryPlistUidIdentity(
-          parseBinary(
-            decodeBinaryPlistScalars(bytes, binaryScalarMetadata!, scalarPlan),
-          ),
-          scalarPlan,
-        ),
-        omittedPrototypeKeys: binaryPrototypeKeyObserved ? null : 0,
+        value: decodeBinaryPlistValue(bytes, scalarPlan, binaryScalarMetadata),
         numberLiterals: binaryScalarMetadata!.literals,
       }
     : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
   const projected = projectPlistValue(value);
   return {
     value: projected.value,
-    omittedPrototypeKeys,
     unknownDateCount: projected.unknownDateCount,
     unknownScalarCount: projected.unknownScalarCount,
     numberLiterals,

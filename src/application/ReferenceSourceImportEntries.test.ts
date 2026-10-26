@@ -22,7 +22,7 @@ it("projects an unsupported non-regular entry as unknown kind instead of file", 
     bytesRead: 0,
     limitations: [],
   };
-  const parsed = parseReferenceSourceEntries(read, new Set(), []);
+  const parsed = parseReferenceSourceEntries(read, []);
   expect(parsed.entries).toContainEqual({
     path: "src/pipe",
     kind: "unknown",
@@ -49,7 +49,7 @@ it("keeps a failed regular file as file kind", () => {
     bytesRead: 0,
     limitations: [],
   };
-  const parsed = parseReferenceSourceEntries(read, new Set(), []);
+  const parsed = parseReferenceSourceEntries(read, []);
   expect(parsed.entries).toContainEqual({
     path: "src/broken.ts",
     kind: "file",
@@ -85,11 +85,7 @@ it("keeps source entries when a module has an empty specifier", () => {
     limitations: [],
   };
 
-  const parsed = parseReferenceSourceEntries(
-    read,
-    new Set(files.map(([path]) => path)),
-    [],
-  );
+  const parsed = parseReferenceSourceEntries(read, []);
 
   expect(parsed.entries.map(({ path }) => path)).toEqual([
     "main.mjs",
@@ -134,11 +130,7 @@ it("retains Kotlin source identity and language across the inventory projection"
     ),
     limitations: [],
   };
-  const parsed = parseReferenceSourceEntries(
-    read,
-    new Set(files.map(([path]) => path)),
-    [],
-  );
+  const parsed = parseReferenceSourceEntries(read, []);
   for (const [path, content, classifications, language] of files)
     expect(parsed.entries).toContainEqual({
       path,
@@ -206,11 +198,7 @@ it("resolves declared package mains and index fallback from source-owned fields"
       writable: true,
       value: "phantom.js",
     });
-    parsed = parseReferenceSourceEntries(
-      read,
-      new Set(files.map(([path]) => path)),
-      [],
-    );
+    parsed = parseReferenceSourceEntries(read, []);
   } finally {
     if (previous === undefined)
       Reflect.deleteProperty(Object.prototype, "main");
@@ -307,11 +295,7 @@ it("matches package manifests by exact or unique canonical directory identity", 
     limitations: [],
   };
 
-  const parsed = parseReferenceSourceEntries(
-    read,
-    new Set(files.map(([path]) => path)),
-    [],
-  );
+  const parsed = parseReferenceSourceEntries(read, []);
 
   expect(parsed.relationships.map(({ to }) => to)).toEqual([
     `${decomposed}/unique.js`,
@@ -346,11 +330,7 @@ it("resolves extensionless imports and requires to .mts and .cts files and direc
     ),
     limitations: [],
   };
-  const parsed = parseReferenceSourceEntries(
-    read,
-    new Set(files.map(([path]) => path)),
-    [],
-  );
+  const parsed = parseReferenceSourceEntries(read, []);
   expect(parsed.relationships).toEqual(
     expect.arrayContaining([
       {

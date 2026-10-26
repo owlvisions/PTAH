@@ -5,10 +5,10 @@ import {
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
   apiBaseLengths,
   at,
   collectionPathOf,
-  hasPrototypeKey,
   identifies,
   IDENTITY_NAMES,
   identityCandidates,
@@ -675,7 +675,8 @@ export class EnvironmentStateExtraction {
     const field = this.#identity.get(plan.type)!.field;
     let changed = previous.ids.size !== objects.length;
     for (const object of objects)
-      if (!previous.ids.delete(scalarText(object[field])!)) changed = true;
+      if (!previous.ids.delete(scalarText(ownMember(object, field))!))
+        changed = true;
     if (previous.ids.size > 0) changed = true;
     if (
       earlier !== undefined &&
@@ -691,7 +692,8 @@ export class EnvironmentStateExtraction {
       });
     }
     previous.ids.clear();
-    for (const object of objects) previous.ids.add(scalarText(object[field])!);
+    for (const object of objects)
+      previous.ids.add(scalarText(ownMember(object, field))!);
     previous.record = record;
   }
 
@@ -703,7 +705,7 @@ export class EnvironmentStateExtraction {
     index: number,
   ): void {
     const field = this.#identity.get(plan.type)!.field;
-    const id = scalarText(object[field]);
+    const id = scalarText(ownMember(object, field));
     if (id === undefined) return;
     const collection = collectionPathOf(record, plan.item);
     const key = entityKey(plan.type, collection, id);

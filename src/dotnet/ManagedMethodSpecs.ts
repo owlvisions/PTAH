@@ -1,3 +1,4 @@
+import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { createHash } from "node:crypto";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
@@ -163,10 +164,11 @@ const methodSignatureBlob = (
   if (table === 6) {
     signatureIndex = readMethodDefinitionRow(bytes, layout, row).signatureIndex;
   } else {
-    const cursor = metadataRowCursor(bytes, layout, table, row);
-    cursor.readIndex(layout.codedIndexSize("MemberRefParent"));
-    cursor.readIndex(layout.stringIndexSize);
-    signatureIndex = cursor.readIndex(layout.blobIndexSize);
+    signatureIndex = readMemberReferenceRowFacts(
+      bytes,
+      layout,
+      row,
+    ).signatureIndex;
   }
   return readMetadataBlob(
     bytes,

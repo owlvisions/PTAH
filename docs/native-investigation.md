@@ -641,11 +641,10 @@ complete observation.
   outcome instead of rounded reference identities.
   UID 0 cannot distinguish conditional nil from ordinary nil. Limits are
   64 MiB of input, 200,000 objects/references and 128 nesting levels.
-  XML dictionary entries decoded as `__proto__` are omitted with an explicit
-  count because REA results cannot represent that key. XML tag whitespace and
-  comments do not change that handling. XML key names combine their text and
-  CDATA segments without trimming or expanding literal CDATA entities. Other
-  values and the original archive digest are preserved.
+  XML, OpenStep and binary dictionary entries retain their source keys,
+  including `__proto__`, through archive projection and CLI/MCP results.
+  XML key names combine their text and CDATA segments without trimming or
+  expanding literal CDATA entities. The original archive digest is preserved.
   Symbol fallback accepts complete Objective-C class/metaclass symbol leaves,
   including qualified names. Pointer/string labels that merely contain a class
   marker do not establish classes. Provider namespace method labels are not

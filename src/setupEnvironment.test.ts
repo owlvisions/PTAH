@@ -1,8 +1,9 @@
+import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import * as macHopperInstaller from "./application/MacHopper.js";
@@ -11,7 +12,6 @@ import { discoverSetupState } from "./application/SetupPlan.js";
 import { options } from "./application/Setup.fixture.js";
 import { systemSetupHost } from "./application/SetupHost.js";
 import { systemUninstallHost } from "./application/Uninstall.js";
-import { runUpdateCommand } from "./application/UpdateRuntime.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import {
@@ -287,7 +287,7 @@ it.each([
 
 it("passes only selected environment to updater subprocesses and drops npm invocation identity", async () => {
   vi.stubEnv("REA_UPDATE_MARKER", "ambient");
-  const result = await runUpdateCommand(
+  const result = await updateCommands.runProbe(
     [
       process.execPath,
       "-e",
@@ -397,4 +397,12 @@ it("registers the selected Windows package runner after canonicalizing environme
   } finally {
     await host.close?.();
   }
+});
+
+let updateCommands: UpdateCommandRunner;
+beforeEach(() => {
+  updateCommands = new UpdateCommandRunner();
+});
+afterEach(async () => {
+  await updateCommands.close();
 });

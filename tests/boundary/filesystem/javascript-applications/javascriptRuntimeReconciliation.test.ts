@@ -42,43 +42,52 @@ const readInput = (input: unknown) => {
 const reconcileInput = (input: unknown) =>
   reconcileJavaScriptRuntime(readInput(input));
 
-it("preserves source-capture input paths for runtime Evidence", async () => {
-  const root = await applicationFixture();
-  const application = await analyzeFixture(root);
-  const runtime = electronRuntimeEvidence(root, SOURCE);
-  const invalidRuntime = createEvidence(undefined, runtime.provider, {
-    predicateType: runtime.predicate_type,
-    operation: runtime.operation,
-    parameters: { ...runtime.parameters, include_script_sources: false },
-    result: runtime.normalized_result,
-    confidence: runtime.confidence,
-    authority: runtime.authority,
-  });
+it.each([
+  {
+    parameter: "include_script_sources",
+    value: false,
+    message:
+      "Runtime Evidence contains source without source-capture selection",
+  },
+  {
+    parameter: "target_id",
+    value: " target-main ",
+    message: "Runtime Evidence target disagrees with its captured result",
+  },
+])(
+  "preserves $parameter input paths for runtime Evidence",
+  async ({ parameter, value, message }) => {
+    const root = await applicationFixture();
+    const application = await analyzeFixture(root);
+    const runtime = electronRuntimeEvidence(root, SOURCE);
+    const invalidRuntime = createEvidence(undefined, runtime.provider, {
+      predicateType: runtime.predicate_type,
+      operation: runtime.operation,
+      parameters: { ...runtime.parameters, [parameter]: value },
+      result: runtime.normalized_result,
+      confidence: runtime.confidence,
+      authority: runtime.authority,
+    });
 
-  const result = reconcileJavaScriptRuntimeEvidence({
-    static_layers: [{ role: "application", analysis: application }],
-    runtime_observations: [invalidRuntime],
-  });
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisInputError",
-      issues: [
-        {
-          path: [
-            "runtime_observations",
-            0,
-            "parameters",
-            "include_script_sources",
-          ],
-          reason: "invalid_value",
-          message:
-            "Runtime Evidence contains source without source-capture selection",
-        },
-      ],
-    },
-  });
-});
+    const result = reconcileJavaScriptRuntimeEvidence({
+      static_layers: [{ role: "application", analysis: application }],
+      runtime_observations: [invalidRuntime],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: ["runtime_observations", 0, "parameters", parameter],
+            reason: "invalid_value",
+            message,
+          },
+        ],
+      },
+    });
+  },
+);
 
 it("reconciles runtime scripts inside dot-prefixed child directories", async () => {
   const root = await applicationFixture();

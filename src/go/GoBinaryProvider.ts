@@ -1,8 +1,5 @@
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
-import {
-  readStableArtifact,
-  completedStableArtifact,
-} from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -40,7 +37,7 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../native/metadata/BinaryContainer.js";
-import { fileSnapshotPartialObservationSchema } from "../domain/fileSnapshotObservation.js";
+import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 
 /** Bundled format reader identity; embedded compiler versions are separate observed facts. */
 export const GO_BINARY_PROVIDER_IDENTITY = {
@@ -150,19 +147,8 @@ const failureForPrimary = (
 
 const failureFor = (cause: unknown, path: string): AnalysisError => {
   const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
-  const snapshot = completedStableArtifact(cause);
-  if (snapshot !== undefined) {
-    // This inspect boundary acquires exactly one StableArtifactSnapshot before
-    // metadata decoding. Completion describes that read, not a decoded report.
-    primary.retainPartialObservation(
-      fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
-        path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      }),
-    );
-  }
+  const observation = completedStableArtifactObservation(cause, path);
+  if (observation !== undefined) primary.retainPartialObservation(observation);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(

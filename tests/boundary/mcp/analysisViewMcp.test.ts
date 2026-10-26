@@ -1517,7 +1517,14 @@ it("projects an environment manifest identically from retained, portable and fil
     "inspect_analysis_view",
     schemaValidation.assertions,
   );
-  const capture = environmentManifestCaptureFixture();
+  const har = environmentManifestHar();
+  const request = har.log.entries.find(
+    (entry) => entry.request.postData,
+  )!.request;
+  request.postData!.text =
+    '{"__proto__":{"source":"recorded body value"},"constructor":"caller","name":1}';
+  request.bodySize = Buffer.byteLength(request.postData!.text);
+  const capture = environmentManifestCaptureFixture(har.log.entries);
   const parent = analysisViewCaptureEvidence(capture);
   expect(session.recordEvidence(parent).ok).toBe(true);
   const evidencePath = join(
@@ -1559,6 +1566,16 @@ it("projects an environment manifest identically from retained, portable and fil
       templated_groups: 13,
       tools: expect.arrayContaining([
         expect.objectContaining({
+          body_shape: {
+            type: "object",
+            properties: {
+              ["__proto__"]: "object",
+              constructor: "string",
+              name: "number",
+            },
+          },
+        }),
+        expect.objectContaining({
           name: "get_plugins_settings_by_plugin_id",
           path_template: "/api/plugins/{plugin_id}/settings",
         }),
@@ -1569,7 +1586,13 @@ it("projects an environment manifest identically from retained, portable and fil
       ]),
     });
     expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
-    for (const value of ["probe folder", "Main Org", "JFIF", "console.log"])
+    for (const value of [
+      "probe folder",
+      "Main Org",
+      "JFIF",
+      "console.log",
+      "recorded body value",
+    ])
       expect(JSON.stringify(response)).not.toContain(value);
     outputs.push(evidence.normalized_result);
   }

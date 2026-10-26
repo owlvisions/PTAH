@@ -22,6 +22,7 @@ import {
   buildNativePeFixture,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { readManagedMetadataLayout } from "../../../src/dotnet/ManagedMetadataLayout.js";
+import { readManagedPeLayout } from "../../../src/dotnet/ManagedPeReader.js";
 import { readAssemblyReference } from "../../../src/dotnet/ManagedMetadataInventoryRows.js";
 import {
   CPU,
@@ -29,6 +30,7 @@ import {
   fatImage,
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
+import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
@@ -52,6 +54,59 @@ const put = async (root: string, path: string, bytes: Buffer | string) => {
   await mkdir(join(destination, ".."), { recursive: true });
   await writeFile(destination, bytes);
 };
+
+it.each(["oversized-header", "prefix-only-section"] as const)(
+  "keeps desktop CLR prefix admission distinct from full managed admission: %s",
+  async (mode) => {
+    const original = buildManagedPeFixture({
+      references: ["UnityEngine.CoreModule"],
+    });
+    expect(readManagedPeLayout(original).cli).not.toBeNull();
+    let image = Buffer.from(original);
+    if (mode === "oversized-header") {
+      // The directory declares 72 bytes; desktop needs only cb >= 72.
+      image.writeUInt32LE(73, 0x200);
+    } else {
+      // Metadata remains in .text; a second section backs only the CLI prefix.
+      image = Buffer.concat([original, original.subarray(0x200, 0x210)]);
+      const coff = image.readUInt32LE(0x3c) + 4;
+      const optional = coff + 20;
+      const secondSection = optional + image.readUInt16LE(coff + 16) + 40;
+      image.writeUInt16LE(2, coff + 2);
+      image.writeUInt32LE(0x900000, optional + 96 + 14 * 8);
+      image.write(".cli", secondSection, "ascii");
+      image.writeUInt32LE(16, secondSection + 8);
+      image.writeUInt32LE(0x900000, secondSection + 12);
+      image.writeUInt32LE(16, secondSection + 16);
+      image.writeUInt32LE(original.length, secondSection + 20);
+    }
+    expect(readManagedPeLayout(image)).toMatchObject({
+      cli: null,
+      cliIssue: {
+        code:
+          mode === "oversized-header"
+            ? "invalid-cli-header"
+            : "invalid-directory",
+        scope: "cli.header",
+      },
+    });
+    const root = await createTestTempDirectory("rea-desktop-clr-prefix-");
+    const path = "Game_Data/Managed/Assembly-CSharp.dll";
+    await put(root, path, image);
+    const { report } = await inspect(root);
+    const file = report.files.find((row) => row.path === path);
+    expect(file?.issues).toEqual([]);
+    expect(file?.facts).toContainEqual({
+      kind: "unity-assembly-reference",
+      offset: expect.any(Number),
+      value: {
+        name: "UnityEngine.CoreModule",
+        token: expect.any(String),
+        managed_directory: "Game_Data/Managed",
+      },
+    });
+  },
+);
 
 it.skipIf(process.platform !== "linux")(
   "keeps desktop sibling files with partial coverage for invalid UTF-8 names",
@@ -192,6 +247,8 @@ it("reads sparse embedded PCK ranges without hashing or retaining a large execut
   pck.write("GDPC");
   pck.writeUInt32LE(3, 4);
   pck.writeUInt32LE(4, 8);
+  pck.writeUInt32LE(0x80000001, 12);
+  pck.writeUInt32LE(0xffffffff, 16);
   const trailer = Buffer.alloc(12);
   trailer.writeBigUInt64LE(BigInt(pck.length));
   trailer.write("GDPC", 8);
@@ -203,10 +260,65 @@ it("reads sparse embedded PCK ranges without hashing or retaining a large execut
   expect(report.candidates.map((row) => row.family)).toContain("godot");
   expect(report.coverage.bytes_read).toBeLessThan(4096);
   expect(report.files[0]?.bytes).toBe(size);
-  expect(report.files[0]?.facts).toContainEqual(
-    expect.objectContaining({ kind: "godot-pck-header", offset: size - 32 }),
-  );
+  expect(report.files[0]?.facts).toContainEqual({
+    kind: "godot-pck-header",
+    offset: size - 32,
+    value: {
+      pack_version: 3,
+      engine_version: [4, 0x80000001, 0xffffffff],
+      placement: "embedded-trailer",
+    },
+  });
 });
+
+it.each([4, 19, 20])(
+  "keeps PCK location separate from desktop header admission for %i-byte packs",
+  async (packBytes) => {
+    const root = await createTestTempDirectory("rea-desktop-pck-minimum-");
+    const path = join(root, "game.exe");
+    const carrier = Buffer.alloc(64);
+    carrier.set([0x7f, 0x45, 0x4c, 0x46]);
+    const pack = Buffer.alloc(packBytes);
+    pack.write("GDPC");
+    const trailer = Buffer.alloc(12);
+    trailer.writeBigUInt64LE(BigInt(packBytes));
+    trailer.write("GDPC", 8);
+    const bytes = Buffer.concat([carrier, pack, trailer]);
+    await writeFile(path, bytes);
+    const handle = await open(path, "r");
+    try {
+      expect(await locateGodotPck(handle, bytes.length)).toEqual({
+        start: carrier.length,
+        end: carrier.length + packBytes,
+        embedded: true,
+      });
+    } finally {
+      await handle.close();
+    }
+    const { report } = await inspect(root);
+    const file = report.files.find((row) => row.path === "game.exe");
+    expect(file).toBeDefined();
+    if (packBytes < 20) {
+      expect(file?.issues).toContain(
+        "Embedded PCK trailer declares an invalid pack extent",
+      );
+      expect(file?.facts.some((fact) => fact.kind === "godot-pck-header")).toBe(
+        false,
+      );
+    } else {
+      expect(file?.issues).toEqual([]);
+      expect(file?.facts).toContainEqual({
+        kind: "godot-pck-header",
+        offset: carrier.length,
+        value: {
+          pack_version: 0,
+          engine_version: [0, 0, 0],
+          placement: "embedded-trailer",
+        },
+      });
+    }
+  },
+);
 
 it("does not promote filenames, arbitrary pak files or symlink targets into byte facts", async () => {
   const root = await createTestTempDirectory("rea-desktop-unknown-");

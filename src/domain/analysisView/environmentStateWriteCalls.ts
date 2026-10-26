@@ -1,7 +1,7 @@
 import { jsonTextCodeUnits } from "../jsonSerialization.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { JsonValue } from "../jsonValue.js";
-import { same, type JsonObject } from "./environmentStateRules.js";
+import { ownMember, same, type JsonObject } from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
 import { composedValue } from "./environmentStateWriteComposed.js";
 import type { explainUpdate } from "./environmentStateWriteExplain.js";
@@ -48,7 +48,7 @@ export const disagreesWithCall = (
     (rule) =>
       (unsentChange(rule) &&
         Object.hasOwn(call.after, rule.field) &&
-        !same(call.written[rule.field], call.after[rule.field])) ||
+        !same(ownMember(call.written, rule.field), call.after[rule.field])) ||
       (regenerates(rule) && call.kept.includes(rule.field)),
   );
 
@@ -60,8 +60,8 @@ export const steadyFields = (
 ): string[] =>
   rules.flatMap((rule) =>
     rule.rule === "set" &&
-    same(before[rule.field], rule.value) &&
-    same(after[rule.field], rule.value)
+    same(ownMember(before, rule.field), rule.value) &&
+    same(ownMember(after, rule.field), rule.value)
       ? [rule.field]
       : [],
   );
@@ -265,7 +265,8 @@ export const appliedUpdate = (
   );
   const derived = Object.keys(written).filter(
     (field) =>
-      !Object.hasOwn(before, field) || !same(written[field], before[field]),
+      !Object.hasOwn(before, field) ||
+      !same(written[field], ownMember(before, field)),
   );
   const changed = {
     fields: [...new Set([...sent, ...derived])],

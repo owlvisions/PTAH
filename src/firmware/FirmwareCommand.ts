@@ -1,10 +1,14 @@
+import {
+  selectArtifactCommandPath,
+  type ArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   FIRMWARE_TOOL_REQUIREMENTS,
   type FirmwareEngineName,
 } from "../contracts/firmware/firmwareToolRequirements.js";
 import { randomUUID } from "node:crypto";
-import { access, realpath, stat } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
@@ -14,8 +18,8 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
-  AnalysisCapturedOutput,
   AnalysisError,
+  AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
@@ -47,7 +51,7 @@ export type FirmwareLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
 
-/** Captured tool output for one finished firmware command. */
+/** Captured tool output for one finished firmware command, including byte coverage. */
 const capturedFirmwareOutput = (
   snapshot: ProviderProcessSnapshot,
 ): AnalysisCapturedOutput => ({
@@ -94,19 +98,23 @@ export const resolveFirmwareCommand = async (
       operation,
       `This integration requires Linux and an absolute ${variable} path to the caller-supplied tool`,
     );
-  const command = await realpath(configured).catch((cause: unknown) => {
-    throw firmwareToolUnavailable(
-      engine,
-      operation,
-      `${variable} is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
-  });
+  const selection = await selectArtifactCommandPath(configured, signal).catch(
+    (cause: unknown) => {
+      if (cause instanceof ArtifactReaderFailure) throw cause;
+      throw firmwareToolUnavailable(
+        engine,
+        operation,
+        `${variable} is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    },
+  );
+  const command = selection.invocationPath;
   let sha256: string;
   try {
     await access(command, constants.R_OK | constants.X_OK);
     if (!(await stat(command)).isFile())
       throw new TypeError("Configured path is not a regular file");
-    sha256 = await files.hash(command, signal);
+    sha256 = await files.hash(selection.resolvedPath, signal);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     throw firmwareToolUnavailable(
@@ -123,11 +131,14 @@ export const resolveFirmwareCommand = async (
       operation,
       "REA_FIRMWARE_PRLIMIT_COMMAND must be absolute",
     );
+  let limiterSelection: ArtifactCommandPath;
   try {
-    await access(limiter, constants.X_OK);
+    limiterSelection = await selectArtifactCommandPath(limiter, signal);
+    await access(limiterSelection.resolvedPath, constants.X_OK);
     if (!(await stat(limiter)).isFile())
       throw new TypeError("Configured path is not a regular file");
   } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
     throw firmwareToolUnavailable(
       engine,
       operation,
@@ -135,8 +146,8 @@ export const resolveFirmwareCommand = async (
     );
   }
   return {
-    command,
-    limiter,
+    command: selection,
+    limiter: limiterSelection,
     sha256,
     fileSizeCeiling: await files.fileSizeCeiling(signal),
   };

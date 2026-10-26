@@ -120,6 +120,23 @@ it("attributes only an identical structured lint failure with matching task, con
   });
 });
 
+it.each(["path", "code"] as const)(
+  "keeps applicability unknown when the lint %s is unavailable on both runs",
+  (missing) => {
+    const { [missing]: _omitted, ...retained } = diagnostic;
+    expect(
+      classifyFailure({
+        ...comparison(),
+        diagnostics: [retained],
+        mainDiagnostics: [retained],
+      }),
+    ).toEqual({
+      classification: "unknown",
+      reason: "diagnostic_shape_not_supported",
+    });
+  },
+);
+
 it.each([
   ["task hash", { mainContext: context(sha("c"), "b".repeat(16)) }],
   ["dirty source", { context: { ...context(sha("a")), sourceClean: false } }],

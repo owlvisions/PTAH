@@ -8,7 +8,7 @@ import {
   buildJavaScriptRouteInventorySteps,
   type JavaScriptRouteInventory,
 } from "../../domain/javascript/javascriptRouteInventory.js";
-import { access, lstat, realpath } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -443,8 +443,10 @@ const resolveSelectedInput = async (
   inputPath: string,
 ): Promise<{ readonly path: string; readonly metadata: Stats }> => {
   try {
+    // Native lookup must admit the selected traversal first: Darwin realpath
+    // can collapse file/.. even though that path cannot be opened.
+    const metadata = await stat(inputPath);
     const path = await realpath(inputPath);
-    const metadata = await lstat(path);
     // Directory enumeration needs read access; resolving its entries also needs search access.
     await access(
       path,

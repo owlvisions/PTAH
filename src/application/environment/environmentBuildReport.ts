@@ -1,14 +1,16 @@
 import { basename } from "node:path";
 import { isIP } from "node:net";
 
-import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+import {
+  isJsonLike,
+  mediaTypeEssence,
+} from "../../domain/analysisView/recordedMediaType.js";
 import {
   decodeRetainedBase64,
   readRecordedResponseBody,
   type RecordedResponseBody,
 } from "../../domain/analysisView/recordedResponseBody.js";
 import { scenarioContentMediaType } from "../../domain/analysisView/scenarioCaptureRecords.js";
-import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import {

@@ -59,6 +59,7 @@ const DISCOVERY_COMMANDS = [["lipo", ["-detailed_info"]]] as const;
 // from dyld metadata. It takes seconds on large apps (Keynote arm64: 5.8 s
 // versus 0.01 s without it), and under -gU it can only add export-trie names.
 const SYMBOL_TABLE_EXPORTS = ["nm", ["-gjU", "--no-dyldinfo"]] as const;
+const SYMBOL_TABLE_IMPORTS = ["nm", ["-gju", "--no-dyldinfo"]] as const;
 const DYLD_INFO_EXPORTS = ["nm", ["-gjU"]] as const;
 
 const REQUIRED_SLICE_COMMANDS = [
@@ -232,6 +233,32 @@ export const inspectNativeMacho = async (
     if (!withDyldInfo.ok) return err(withDyldInfo.error);
     captures[nmIndex] = withDyldInfo.value;
   }
+  const dyldImports = captures.find(
+    ({ tool, arguments: arguments_ }) =>
+      tool === "dyld_info" && arguments_[0] === "-imports",
+  );
+  if (dyldImports === undefined)
+    throw new TypeError("Missing dyld_info import capture");
+  const hasChainedFixups = load.commands.some(
+    ({ kind }) => kind === "LC_DYLD_CHAINED_FIXUPS",
+  );
+  let parsedImports = parseDyldImports(
+    sliceOutput(dyldImports),
+    hasChainedFixups,
+  );
+  if (
+    !isMissingUuidDyldFailure(dyldImports) &&
+    parsedImports.needsNameInventory
+  ) {
+    const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
+    if (!importNames.ok) return err(importNames.error);
+    captures.push(importNames.value);
+    parsedImports = parseDyldImports(
+      sliceOutput(dyldImports),
+      hasChainedFixups,
+      new Set(parseNmSymbolNames(importNames.value.stdout)),
+    );
+  }
   const selectedArchitectureName =
     selectedArchitecture ??
     (architectures.length === 1 ? (architectures[0]?.name ?? null) : null);
@@ -248,6 +275,8 @@ export const inspectNativeMacho = async (
     context.invocation,
     limitations,
     load,
+    parsedImports.items,
+    captures[nmIndex]!,
     architectures,
     context.target.path,
     {
@@ -280,6 +309,8 @@ const normalizeMacho = (
   toInvocation: (capture: NativeCommandCapture) => NativeCommandInvocation,
   additionalLimitations: readonly string[],
   load: ReturnType<typeof parseOtoolLoadCommands>,
+  parsedImports: ReturnType<typeof parseDyldImports>["items"],
+  exportNames: NativeCommandCapture,
   architectures: readonly LipoArchitecture[],
   artifactPath: string,
   selectedArchitecture: {
@@ -292,19 +323,12 @@ const normalizeMacho = (
   const dyldExportsCapture = byTool("dyld_info", 1);
   const missingImportsUuid = isMissingUuidDyldFailure(dyldImportsCapture);
   const missingExportsUuid = isMissingUuidDyldFailure(dyldExportsCapture);
-  const hasChainedFixups = load.commands.some(
-    ({ kind }) => kind === "LC_DYLD_CHAINED_FIXUPS",
-  );
-  const imports = missingImportsUuid
-    ? []
-    : parseDyldImports(sliceOutput(dyldImportsCapture), hasChainedFixups).map(
-        withRuntimeName,
-      );
+  const imports = missingImportsUuid ? [] : parsedImports.map(withRuntimeName);
   const imageBase =
     load.segments.find(
       (segment) => segment.file_offset === 0 && (segment.file_size ?? 0) > 0,
     )?.vm_address ?? null;
-  const nmExports = parseNmExports(byTool("nm").stdout);
+  const nmExports = parseNmExports(exportNames.stdout);
   const dyldExports = missingExportsUuid
     ? []
     : parseDyldExports(
@@ -386,7 +410,7 @@ const normalizeMacho = (
       ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
       ...(imports.some(({ name_status }) => name_status === "ambiguous")
         ? [
-            "Chained import text contains symbol/addend expressions whose split is ambiguous.",
+            "Import text contains name, flags, library, or addend boundaries whose split is ambiguous.",
           ]
         : []),
     ]),
@@ -434,7 +458,7 @@ const namesEveryExport = (
   nmOutput: string,
   dyldExports: NativeCommandCapture,
 ): boolean => {
-  const names = new Set(parseNmExports(nmOutput).map(({ name }) => name));
+  const names = new Set(parseNmSymbolNames(nmOutput));
   return sliceOutput(dyldExports)
     .split("\n")
     .every((rawLine, index) => {
@@ -456,17 +480,17 @@ const namesEveryExport = (
 };
 
 // nm -j ends each name with LF; a carriage return before it is part of the name.
+const parseNmSymbolNames = (output: string): string[] =>
+  output.split("\n").filter((name) => name.length > 0);
+
 const parseNmExports = (output: string) =>
-  output
-    .split("\n")
-    .filter((name) => name.length > 0)
-    .map((name) => ({
-      name,
-      address: null,
-      weak: null,
-      reexport: null,
-      source: "nm",
-    }));
+  parseNmSymbolNames(output).map((name) => ({
+    name,
+    address: null,
+    weak: null,
+    reexport: null,
+    source: "nm",
+  }));
 
 const dependencyPayloadLimitations = (
   commands: readonly string[],

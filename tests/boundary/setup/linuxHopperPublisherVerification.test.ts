@@ -30,6 +30,7 @@ import {
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
+  HOPPER_RELEASES_URL,
   type LinuxHopperRelease,
 } from "../../../src/application/HopperReleaseFeed.js";
 import * as signatures from "../../../src/process/DetachedPgpSignature.js";
@@ -152,6 +153,82 @@ it.each([undefined, "", "/selected/cache", "relative/cache"])(
   },
 );
 
+const feedRelease = () => ({
+  version: "1.0",
+  filename:
+    "https://www.hopperapp.com:443/downloader/public/Hopper-1.0-Linux-demo.deb",
+  file_length: "1",
+  file_hash: "a".repeat(40),
+  main_exe_hash: "b".repeat(64),
+  signature: "AQ==",
+  public: "1",
+  beta: "0",
+  vendor_label: "valid � label",
+  ...JSON.parse(
+    '{"__proto__":{"constructor":"retained"},"vendor_details":{"__proto__":"nested"}}',
+  ),
+});
+
+it.each([false, true])(
+  "retains fetched vendor release JSON with initial BOM=%s",
+  async (bom) => {
+    const root = await createTestTempDirectory("rea-linux-feed-json-");
+    const publisher = new LinuxHopperPublisher(
+      { XDG_CACHE_HOME: root },
+      async () => "deb",
+    );
+    const release = feedRelease();
+    const text = JSON.stringify({ "Ubuntu / Mint": release });
+    const network = vi.fn(
+      async () => new Response(`${bom ? "\uFEFF" : ""}${text}`),
+    );
+    vi.stubGlobal("fetch", network);
+    try {
+      const selected = await publisher.currentRelease("deb");
+      expect(selected).toEqual({ ok: true, value: release });
+      if (!selected.ok) throw selected.error;
+      expect(Object.hasOwn(selected.value, "__proto__")).toBe(true);
+      expect(selected.value.vendor_label).toBe("valid � label");
+      expect(await publisher.currentRelease("deb")).toEqual(selected);
+      expect(network).toHaveBeenCalledOnce();
+      expect(network).toHaveBeenCalledWith(
+        HOPPER_RELEASES_URL,
+        expect.any(Object),
+      );
+    } finally {
+      await publisher.close();
+    }
+  },
+);
+
+it("rejects malformed UTF-8 fetched release metadata without repairing a vendor value", async () => {
+  const root = await createTestTempDirectory("rea-linux-feed-bytes-");
+  const publisher = new LinuxHopperPublisher(
+    { XDG_CACHE_HOME: root },
+    async () => "deb",
+  );
+  const bytes = Buffer.from(JSON.stringify({ "Ubuntu / Mint": feedRelease() }));
+  const offset = bytes.indexOf(Buffer.from("�"));
+  expect(offset).toBeGreaterThanOrEqual(0);
+  const invalid = Buffer.concat([
+    bytes.subarray(0, offset),
+    Buffer.from([0xff]),
+    bytes.subarray(offset + 3),
+  ]);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(Uint8Array.from(invalid).buffer)),
+  );
+  try {
+    expect(await publisher.currentRelease("deb")).toMatchObject({
+      ok: false,
+      error: { reason: "release_metadata" },
+    });
+  } finally {
+    await publisher.close();
+  }
+});
+
 describe("Linux signed package retention boundary", () => {
   linux(
     "rejects a cryptographically valid package signed by another publisher",
@@ -183,6 +260,14 @@ describe("Linux signed package retention boundary", () => {
     "authenticates a real %s payload and verifies a retained install without network",
     async (family) => {
       const f = await fixture(family);
+      const vendor = {
+        label: "valid � publisher",
+        nested: { ["__proto__"]: "retained" },
+      };
+      Object.defineProperty(f.release, "__proto__", {
+        value: vendor,
+        enumerable: true,
+      });
       admitFixturePublisher(f.fingerprint);
       const network = vi.fn(() => {
         throw new Error("Offline");
@@ -193,6 +278,11 @@ describe("Linux signed package retention boundary", () => {
         expect(
           await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
         ).toEqual({ ok: true, value: undefined });
+        const cached = JSON.parse(
+          await readFile(join(f.cache, "release.json"), "utf8"),
+        );
+        expect(Object.hasOwn(cached.release, "__proto__")).toBe(true);
+        expect(cached.release["__proto__"]).toEqual(vendor);
         await f.publisher.close();
         // A new instance alone still shares process-local cryptographic proofs.
         // Reload the owner and assert actual PGP and native payload inspection.
@@ -218,6 +308,9 @@ describe("Linux signed package retention boundary", () => {
               source: "signed_package_cache",
             },
           });
+          expect(
+            JSON.parse(await readFile(join(f.cache, "release.json"), "utf8")),
+          ).toEqual(cached);
           expect(network).not.toHaveBeenCalled();
           expect(signature).toHaveBeenCalledOnce();
           expect(extraction).toHaveBeenCalledWith(

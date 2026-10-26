@@ -1,5 +1,6 @@
 import { analysisDetailSchema } from "./analysisDetail.js";
 import { z } from "zod";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
 
 import { officialOutputSchemas } from "./toolOutputSchemaGroups.js";
@@ -220,7 +221,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "set_addresses_names",
     "Assign analyst names to multiple mapped addresses in one call and return per-address edit/readback success booleans. Hopper validates mapped destinations, native string representations, its 1024 UTF-16 code-unit symbol-name limit, and unique destinations/names before applying edits. Existing labels may move or swap only among explicitly selected addresses; unselected label owners remain unchanged. This mutates analysis metadata; verify failures individually.",
-    z.object({ names: z.record(z.string(), z.string()), document }),
+    z.object({ names: jsonRecordSchema(z.string()), document }),
   ),
   official(
     "set_bookmark",

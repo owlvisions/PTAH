@@ -214,8 +214,8 @@ const parseLinks = (
   allowedOrigins: ReadonlySet<string>,
 ): ParsedLink[] => {
   const links: ParsedLink[] = [];
-  // Compare resolved identities before safeDestination removes userinfo.
-  const responseIdentity = resolvedUrl(responseUrl, responseUrl);
+  // Keep resolved identity separate from the credential-redacted display URL.
+  const response = safeDestination(responseUrl, responseUrl, allowedOrigins);
   // Quoted delimiters belong to one field line.
   for (const line of lines ?? []) {
     for (const entry of splitLinkHeader(line)) {
@@ -223,18 +223,15 @@ const parseLinks = (
       if (match === null) continue;
       const parameters = linkParameters(match[2] ?? "");
       const anchor = firstLinkParameter(parameters, "anchor");
-      const contextReference = anchor?.value ?? responseUrl;
       const destination = safeDestination(
         match[1] ?? "",
         responseUrl,
         allowedOrigins,
       );
-      const context = safeDestination(
-        contextReference,
-        responseUrl,
-        allowedOrigins,
-      );
-      const contextIdentity = resolvedUrl(contextReference, responseUrl);
+      const context =
+        anchor === undefined
+          ? response
+          : safeDestination(anchor.value, responseUrl, allowedOrigins);
       // RFC 8288 assigns first-occurrence semantics to rel, anchor, and type.
       const rel = firstLinkParameter(parameters, "rel")?.value ?? "";
       links.push({
@@ -253,8 +250,8 @@ const parseLinks = (
           ),
         },
         contextMatchesResponse:
-          responseIdentity !== undefined &&
-          contextIdentity === responseIdentity,
+          response.identity !== undefined &&
+          context.identity === response.identity,
       });
     }
   }
@@ -321,39 +318,28 @@ const lastLinkParameter = (
   return undefined;
 };
 
-const resolvedUrl = (
-  reference: string,
-  baseUrl: string,
-): string | undefined => {
-  try {
-    return new URL(reference, baseUrl).href;
-  } catch (cause: unknown) {
-    // An unparseable Link URI has no usable identity for context comparison.
-    void cause;
-    return undefined;
-  }
-};
-
 const safeDestination = (
   value: string,
   baseUrl: string,
   allowedOrigins: ReadonlySet<string>,
 ): {
+  readonly identity: string | undefined;
   readonly url: string | null;
   readonly scope: LinkMetadata["destination_scope"];
 } => {
   try {
     const parsed = new URL(value, baseUrl);
-    const sanitized = sanitizeBrowserUrl(parsed.href).url;
+    const identity = parsed.href;
+    const sanitized = sanitizeBrowserUrl(identity).url;
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      return { url: sanitized, scope: "unsupported" };
+      return { identity, url: sanitized, scope: "unsupported" };
     if (!allowedOrigins.has(parsed.origin))
-      return { url: sanitized, scope: "outside_policy" };
-    return { url: sanitized, scope: "approved" };
+      return { identity, url: sanitized, scope: "outside_policy" };
+    return { identity, url: sanitized, scope: "approved" };
   } catch (cause: unknown) {
     // Unparseable link values keep their raw text for the analyst.
     void cause;
-    return { url: value, scope: "unsupported" };
+    return { identity: undefined, url: value, scope: "unsupported" };
   }
 };
 

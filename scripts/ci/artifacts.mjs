@@ -108,7 +108,11 @@ export function classifyFailure({
 }
 
 export function diagnosticPaths(item) {
-  return item.kind === "jscpd" ? item.paths : [item.path];
+  return item.kind === "jscpd"
+    ? item.paths
+    : item.path === undefined
+      ? []
+      : [item.path];
 }
 export function isFailedConclusion(value) {
   return value === "failure" || value === "timed_out";
@@ -269,16 +273,15 @@ function normalizeLint(report) {
     .filter((item) => item.severity === "error")
     .map((item) => {
       if (
-        typeof item.filename !== "string" ||
-        !repoPath(item.filename) ||
-        typeof item.code !== "string" ||
+        (item.filename !== undefined && !repoPath(item.filename)) ||
+        (item.code !== undefined && typeof item.code !== "string") ||
         typeof item.message !== "string"
       )
         throw new Error("oxlint error diagnostic is malformed");
       return {
         kind: "lint",
-        path: item.filename,
-        code: item.code,
+        ...(item.filename === undefined ? {} : { path: item.filename }),
+        ...(item.code === undefined ? {} : { code: item.code }),
         message: item.message,
         severity: "error",
       };

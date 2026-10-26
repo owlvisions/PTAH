@@ -26,6 +26,7 @@ const fault = vi.hoisted(() => ({
   hold: undefined as Promise<void> | undefined,
   releaseHold: (): void => undefined,
   afterRead: (): void => undefined,
+  afterStat: (): void => undefined,
   readRejection: undefined as { readonly cause: unknown } | undefined,
   handles: [] as FileHandle[],
   cause: Object.assign(new Error("controlled close refusal"), { code: "EIO" }),
@@ -35,6 +36,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    stat: async (...args: Parameters<typeof actual.stat>) => {
+      const state = await actual.stat(...args);
+      if (String(args[0]) === fault.span && fault.reads > 0) fault.afterStat();
+      return state;
+    },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
       if (String(args[0]) !== fault.span) return handle;
@@ -81,6 +87,7 @@ afterEach(() => {
   fault.hold = undefined;
   fault.releaseHold = () => undefined;
   fault.afterRead = () => undefined;
+  fault.afterStat = () => undefined;
   fault.readRejection = undefined;
   fault.handles = [];
 });
@@ -397,7 +404,7 @@ it("does not open a queued span after its caller aborts", async () => {
   }
 });
 
-it.each(["before close", "during close"] as const)(
+it.each(["before close", "during verification", "during close"] as const)(
   "keeps the caller abort reason when span close succeeds (%s)",
   async (when) => {
     const reason = { requested: "span-close" };
@@ -417,6 +424,8 @@ it.each(["before close", "during close"] as const)(
       );
       const abort = new AbortController();
       if (when === "before close") fault.afterRead = () => abort.abort(reason);
+      else if (when === "during verification")
+        fault.afterStat = () => abort.abort(reason);
       else {
         fault.hold = new Promise<void>((resolve) => {
           fault.releaseHold = resolve;

@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -48,7 +49,7 @@ const registrationSchema = z
         type: z.literal("stdio").optional(),
         command: z.string().min(1),
         args: z.array(z.string()).default([]),
-        env: z.record(z.string(), z.string()).default({}),
+        env: jsonRecordSchema(z.string()).default({}),
       })
       .strict(),
     z
@@ -64,7 +65,7 @@ const registrationSchema = z
             url.password === ""
           );
         }, "IDA MCP must use a local HTTP endpoint without URL credentials"),
-        headers: z.record(z.string(), z.string()).default({}),
+        headers: jsonRecordSchema(z.string()).default({}),
       })
       .strict(),
   ])

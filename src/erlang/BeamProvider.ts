@@ -9,6 +9,7 @@ import {
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import type { BeamPort } from "../application/erlang/BeamPort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
@@ -203,6 +204,8 @@ const beamFailurePrimary = (
 
 const beamFailure = (cause: unknown, input: InspectErlangBeamInput) => {
   const primary = beamFailurePrimary(artifactFilePrimaryFacts(cause), input);
+  const observation = completedStableArtifactObservation(cause, input.path);
+  if (observation !== undefined) primary.retainPartialObservation(observation);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(

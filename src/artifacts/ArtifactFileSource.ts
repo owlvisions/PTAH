@@ -135,7 +135,21 @@ export class ArtifactFileSource {
     const source = await this.#opening;
     const [observed, selected] = await Promise.all([
       source.handle.stat(),
-      lstat(this.path),
+      lstat(this.path).catch((cause: unknown) => {
+        // Admission already established this selected name. Its disappearance
+        // or a replaced ancestor is a source change, not an unrelated I/O fault.
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+        )
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `${this.diagnosticLabel} source identity changed: ${this.path}`,
+            { cause },
+          );
+        throw cause;
+      }),
     ]);
     if (
       !sameRegularFileState(source.initial, observed) ||

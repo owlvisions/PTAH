@@ -1,3 +1,4 @@
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -387,7 +388,9 @@ export class PwntoolsDecoder<
           undefined,
           this.#resources,
         );
-        reply = replySchema.parse(JSON.parse(file.bytes.toString("utf8")));
+        const decoded = safeParseUtf8Json(file.bytes);
+        if (!decoded.ok) throw decoded.cause;
+        reply = replySchema.parse(decoded.value);
       } catch (cause: unknown) {
         if (
           cause instanceof ArtifactReaderFailure &&

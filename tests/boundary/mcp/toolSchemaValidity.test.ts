@@ -13,6 +13,7 @@ import {
   arrayItemSchemaError,
   unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
+import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { servedCatalog } from "../../../src/application/environment/environmentState.js";
 import { servedFrom } from "../../fixtures/environmentStateServing.js";
@@ -29,47 +30,6 @@ interface ToolSchemas {
   readonly inputSchema: Record<string, unknown>;
   readonly outputSchema?: Record<string, unknown> | undefined;
   readonly annotations?: Record<string, unknown> | undefined;
-}
-
-function schemaErrors(tools: readonly ToolSchemas[]): string[] {
-  // Reuse Ajv's meta-schema validators, then clear each root's reference
-  // namespace, including nested IDs, before validating the next schema.
-  const ajv = new Ajv2020({
-    strict: false,
-    validateFormats: false,
-    addUsedSchema: false,
-  });
-  return tools.flatMap((tool) =>
-    ["inputSchema", "outputSchema"].flatMap((kind) => {
-      const schema =
-        kind === "inputSchema" ? tool.inputSchema : tool.outputSchema;
-      if (schema === undefined) return [];
-      try {
-        if (!ajv.validateSchema(schema))
-          return [`${tool.name}.${kind}: ${ajv.errorsText(ajv.errors)}`];
-        ajv.compile(schema);
-        const clientError = arrayItemSchemaError(
-          schema,
-          `${tool.name}.${kind}`,
-        );
-        if (clientError !== undefined) return [clientError];
-        if (kind === "inputSchema") {
-          const literalError = unsupportedInputLiteralSchemaError(
-            schema,
-            `${tool.name}.${kind}`,
-          );
-          if (literalError !== undefined) return [literalError];
-        }
-        return [];
-      } catch (cause: unknown) {
-        return [
-          `${tool.name}.${kind}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        ];
-      } finally {
-        ajv.removeSchema();
-      }
-    }),
-  );
 }
 
 function expectStrictInputSchemaParity(
@@ -484,7 +444,7 @@ describe("served environment catalogs", () => {
     );
     expect(tools.some((tool) => tool.name === "delete_books")).toBe(true);
     expect(
-      schemaErrors(
+      advertisedSchemaErrors(
         tools.map((tool) => ({
           name: tool.name,
           inputSchema: tool.inputSchema as unknown as Record<string, unknown>,
@@ -534,7 +494,7 @@ describe("MCP JSON Schema validity", () => {
       expect(tools.map(({ name }) => name).sort()).toEqual(
         TOOL_CONTRACTS.map(({ name }) => name).sort(),
       );
-      expect(schemaErrors(tools)).toEqual([]);
+      expect(advertisedSchemaErrors(tools)).toEqual([]);
       expect(localInputReferences(tools)).toEqual([]);
       expect(recursiveReferences(tools)).toEqual([]);
       expectKnownAuthorityHints(tools);
@@ -879,7 +839,7 @@ describe("MCP process input JSON Schema", () => {
 });
 
 it("ships nonrecursive input and output schemas in the generated catalog", () => {
-  expect(schemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
+  expect(advertisedSchemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
   expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
 });
 
@@ -888,7 +848,7 @@ it("ships input schemas without local references in the generated catalog", () =
 });
 
 it("rejects unresolved output-schema references even for uncalled tools", () => {
-  const errors = schemaErrors([
+  const errors = advertisedSchemaErrors([
     {
       name: "dangling",
       inputSchema: { type: "object" },
@@ -901,7 +861,7 @@ it("rejects unresolved output-schema references even for uncalled tools", () => 
 
 it("validates each tool independently when output schema IDs repeat", () => {
   const outputSchema = { $id: "urn:rea:test:shared-output", type: "string" };
-  const errors = schemaErrors([
+  const errors = advertisedSchemaErrors([
     { name: "first", inputSchema: { type: "object" }, outputSchema },
     {
       name: "second",
@@ -974,7 +934,7 @@ it.each([false, true])(
   "rejects references to another tool's nested IDs (earlier compilation fails: %s)",
   (invalidPrevious) => {
     const nestedId = "urn:rea:test:nested-output";
-    const errors = schemaErrors([
+    const errors = advertisedSchemaErrors([
       {
         name: "first",
         inputSchema: { type: "object" },

@@ -11,6 +11,7 @@ import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { safeResponseMetadata } from "./CdpSafeMetadata.js";
 import {
   allowedSanitizedUrl,
+  executionContextKey,
   isHttpUrl,
   numberValue,
   admitRecords,
@@ -27,7 +28,6 @@ import {
 import {
   consolePrimitive,
   exclusionReasonForUrl,
-  executionContextKey,
   initiatorLocation,
   integerOrNull,
   isJsonMediaType,
@@ -46,15 +46,9 @@ export const handleExecutionContextCreated = (
   params: UnknownRecord,
 ): void => {
   const context = recordValue(params.context);
-  const identifier = numberValue(context?.id);
+  const key = executionContextKey(context?.id);
   const frameId = cdpStringValue(recordValue(context?.auxData)?.frameId);
-  if (
-    identifier === undefined ||
-    !Number.isSafeInteger(identifier) ||
-    frameId === undefined
-  )
-    return;
-  const key = String(identifier);
+  if (key === null || frameId === undefined) return;
   // New contexts may reuse an id. Scripts already parsed keep the frame stored on them.
   state.executionContextFrames.set(key, frameId);
 };

@@ -970,7 +970,7 @@ it("inventories and extracts a Windows member name under its canonical path", as
   ).toBe(0);
 });
 
-it("preserves distinct POSIX backslash and slash member paths", async () => {
+it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ data", async () => {
   const backslashName = String.raw`a\b.txt`;
   const slashName = "a/b.txt";
   const backslashPayload = Buffer.from("literal-backslash");
@@ -994,6 +994,18 @@ it("preserves distinct POSIX backslash and slash member paths", async () => {
           payload: slashPayload,
           compress: false,
         },
+        {
+          name: "PYZ.pyz",
+          typeCode: "z",
+          payload: pyzArchive({
+            magic: PYTHON_39_MAGIC,
+            modules: [
+              { name: backslashName, typeCode: 2, body: backslashPayload },
+              { name: slashName, typeCode: 2, body: slashPayload },
+            ],
+          }),
+          compress: false,
+        },
       ],
     }),
   );
@@ -1008,6 +1020,19 @@ it("preserves distinct POSIX backslash and slash member paths", async () => {
     source_name: backslashName,
   });
   expect(slashEntry?.format_metadata).toMatchObject({ source_name: slashName });
+  for (const name of [backslashName, slashName])
+    expect(
+      snapshot.occurrences.find(
+        (occurrence) => occurrence.logical_path === `PYZ.pyz/${name}`,
+      ),
+    ).toMatchObject({
+      source_path: name,
+      format_metadata: {
+        source_name: name,
+        type_code: 2,
+        bytecode_header: "not-bytecode",
+      },
+    });
   expect(snapshot.coverage.status).toBe("complete");
   if (process.platform === "win32") return;
 
@@ -1033,6 +1058,13 @@ it("preserves distinct POSIX backslash and slash member paths", async () => {
   expect(
     Buffer.compare(await readFile(join(output, "a", "b.txt")), slashPayload),
   ).toBe(0);
+  for (const [name, body] of [
+    [backslashName, backslashPayload],
+    [slashName, slashPayload],
+  ] as const)
+    expect((await readFile(join(output, "PYZ.pyz", name))).equals(body)).toBe(
+      true,
+    );
 });
 
 it("reads a PE signature beyond the carrier prefix before projecting paths", async () => {

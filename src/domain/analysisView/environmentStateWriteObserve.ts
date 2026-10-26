@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import { overlapsWrite } from "./environmentStateWriteAttribution.js";
 import {
+  ownMember,
   at,
   collectionPathOf,
   isObject,
@@ -86,7 +87,9 @@ export const newEntityIn = (
   if (body === undefined) return undefined;
   for (const tier of entitySlots(body)) {
     const found = tier.flatMap(([pointer, object]) => {
-      const id = isObject(object) ? scalarText(object[idField]) : undefined;
+      const id = isObject(object)
+        ? scalarText(ownMember(object, idField))
+        : undefined;
       // An object holding only the identity names the entity without showing it.
       return isObject(object) &&
         id !== undefined &&
@@ -229,7 +232,8 @@ const itemObservation = (
         : entitySlots(body)
             .flat()
             .find(([at]) => at === pointer)?.[1];
-    return isObject(object) && scalarText(object[target.idField]) === id
+    return isObject(object) &&
+      scalarText(ownMember(object, target.idField)) === id
       ? { ordinal: record.ordinal, pointer, object, id }
       : undefined;
   });
@@ -248,7 +252,7 @@ const listObservation = (
       .map((object, index) => ({
         object,
         index,
-        id: scalarText(object[target.idField]),
+        id: scalarText(ownMember(object, target.idField)),
       }))
       .filter(
         (entry): entry is { object: JsonObject; index: number; id: string } =>

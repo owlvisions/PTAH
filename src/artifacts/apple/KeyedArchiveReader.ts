@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { parseBinary } from "plist";
 import { z } from "zod";
+
+import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -16,15 +17,10 @@ import {
 } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import {
-  decodeBinaryPlistScalars,
-  retainBinaryPlistUidIdentity,
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
 } from "./PlistScalars.js";
-import {
-  omittedPrototypeKeysLimitation,
-  parseXmlPropertyList,
-} from "../../domain/propertyListKeys.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   KeyedArchiveKindError,
   keyedArchiveInputSchema,
@@ -68,8 +64,8 @@ export const decodeKeyedArchiveBytes = (
     );
   const binary = hasBinaryPlistSignature(bytes);
   const xmlText = binary ? undefined : decodeXmlPlistText(bytes);
-  // plist.parseBinary recurses on every object reference and copies shared
-  // containers, so a few hundred bytes can exhaust memory or the stack.
+  // Scalar decoding and source container materialization expand shared references,
+  // so a few hundred bytes can exhaust memory or the stack without preflight.
   // RangeError reports a resource limit; a reference cycle is malformed.
   const binaryExpansion = binary
     ? estimateBinaryPlistExpansion(bytes, MAX_DECODE_BYTES, {
@@ -91,20 +87,12 @@ export const decodeKeyedArchiveBytes = (
   const parsed =
     binaryExpansion !== undefined
       ? {
-          value: retainBinaryPlistUidIdentity(
-            parseBinary(
-              decodeBinaryPlistScalars(
-                bytes,
-                binaryScalarMetadata!,
-                binaryExpansion!,
-              ),
-            ),
+          value: decodeBinaryPlistValue(
+            bytes,
             binaryExpansion,
+            binaryScalarMetadata,
           ),
           numberLiterals: binaryScalarMetadata!.literals,
-          omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
-            ? null
-            : 0,
         }
       : parseXmlPropertyList(xmlText ?? "");
   const {
@@ -135,9 +123,6 @@ export const decodeKeyedArchiveBytes = (
     limitations: [
       ...graph.limitations,
       ...numbers.limitations(),
-      ...(parsed.omittedPrototypeKeys === 0
-        ? []
-        : [omittedPrototypeKeysLimitation(parsed.omittedPrototypeKeys)]),
       ...(nonFiniteRealCount === 0
         ? []
         : [nonFiniteRealLimitation(nonFiniteRealCount)]),

@@ -937,14 +937,15 @@ const originalModuleEdges = (
   return { edges, incomplete };
 };
 
-/** Select source language from the URL path, excluding query/fragment. */
+/** Derive a language hint without changing the retained source URL identity. */
 const originalSourcePath = (source: string): string => {
+  const path = URL.parse(source)?.pathname ?? source;
   try {
-    return new URL(source).pathname;
+    return decodeURIComponent(path);
   } catch (cause: unknown) {
-    // Unresolved source identities can still carry a useful relative path.
-    void cause;
-    return source;
+    if (!(cause instanceof URIError)) throw cause;
+    // A literal or malformed escape must not discard an otherwise useful hint.
+    return path;
   }
 };
 

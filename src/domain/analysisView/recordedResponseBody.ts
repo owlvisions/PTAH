@@ -11,14 +11,31 @@ export interface RecordedResponseBody {
   readonly bodyCut?: true;
 }
 
-const contentTextSchema = z.object({
+const responseDeclarationSchema = z.object({
   response: z.object({
-    content: z.object({
-      text: z.unknown().optional(),
-      encoding: z.unknown().optional(),
-    }),
+    status: z.unknown().optional(),
+    content: z
+      .object({
+        text: z.unknown().optional(),
+        encoding: z.unknown().optional(),
+        size: z.unknown().optional(),
+      })
+      .nullable()
+      .optional(),
   }),
 });
+
+/** Retained response declarations shared by decoding and consumer-specific empty-body policies. */
+export const readRecordedResponseDeclaration = (
+  record: WebNetworkCaptureRecord,
+) => {
+  const parsed = responseDeclarationSchema.safeParse(record.reported);
+  return parsed.success ? parsed.data.response : undefined;
+};
+
+export type RecordedResponseDeclaration = ReturnType<
+  typeof readRecordedResponseDeclaration
+>;
 
 /** Strict, and keeping a leading byte-order mark, so callers see the recorded text unchanged. */
 const strictUtf8 = (): TextDecoder =>
@@ -53,10 +70,13 @@ export const decodeRetainedBase64 = (
 export const readRecordedResponseBody = (
   record: WebNetworkCaptureRecord,
   limitBytes: number,
+  declaration: RecordedResponseDeclaration = readRecordedResponseDeclaration(
+    record,
+  ),
 ): RecordedResponseBody => {
-  const content = contentTextSchema.safeParse(record.reported);
-  if (!content.success) return { bodyText: null };
-  const { text, encoding } = content.data.response.content;
+  const content = declaration?.content;
+  if (content == null) return { bodyText: null };
+  const { text, encoding } = content;
   if (typeof text !== "string") return { bodyText: null };
   if (encoding === undefined) {
     // A hidden content property could have been the encoding declaration;
@@ -80,8 +100,11 @@ export const readRecordedResponseBody = (
 /** Prove decoded emptiness with a bounded prefix, preserving encoding and cut uncertainty. */
 export const recordedResponseBodyIsEmpty = (
   record: WebNetworkCaptureRecord,
+  declaration: RecordedResponseDeclaration = readRecordedResponseDeclaration(
+    record,
+  ),
 ): boolean => {
-  const body = readRecordedResponseBody(record, 0);
+  const body = readRecordedResponseBody(record, 0, declaration);
   return (
     body.bodyText === "" &&
     body.bodyEncoding === undefined &&

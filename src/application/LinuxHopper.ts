@@ -7,7 +7,10 @@ import { join, posix } from "node:path";
 import { execFileBoundedOutput } from "../process/ExecFileBoundedOutput.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { downloadHopperPackage } from "./HopperDownload.js";
+import {
+  downloadHopperPackage,
+  type HopperDownload,
+} from "./HopperDownload.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
@@ -117,10 +120,7 @@ export const supportsReaHost = (
 ): boolean => distribution?.packageFamily !== undefined;
 
 /** Download response kept independent of Node's global fetch implementation. */
-export interface LinuxHopperDownload {
-  readonly ok: boolean;
-  readonly bytes: Uint8Array;
-}
+export type LinuxHopperDownload = HopperDownload;
 
 /** One failed package-manager command, with the output that explains it. */
 export interface LinuxPackageInstallFailure {
@@ -401,7 +401,19 @@ export const installLinuxHopper = async (
       const release = selected.value;
       stage = "download";
       const archiveDownload = await host.download(release.filename, options);
-      if (!archiveDownload.ok) return { status: "failed", reason: "download" };
+      if (!archiveDownload.ok)
+        return {
+          status: "failed",
+          reason: "download",
+          ...(archiveDownload.httpStatus === undefined
+            ? {}
+            : {
+                operationFailure: {
+                  operation: "download",
+                  detail: `Package download returned HTTP ${archiveDownload.httpStatus}.`,
+                },
+              }),
+        };
       stage = "archive_write";
       temporary = await host.createTemporaryDirectory();
       // Linux package paths stay POSIX even when this host is exercised from

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { inspectMachoSchema } from "../native/nativeInspection.js";
 
 import {
   projectAnalysisView,
@@ -268,4 +269,17 @@ describe("Mach-O analysis views", () => {
     expect(malformed.ok).toBe(false);
     if (!malformed.ok) expect(malformed.error._tag).toBe("AnalysisInputError");
   });
+});
+
+it("validates a prototype-named command field rather than dropping an invalid value", () => {
+  const fields =
+    inspectMachoSchema.shape.load_commands.shape.items.element.shape.fields;
+  const parsed = fields.safeParse(
+    Object.fromEntries([["__proto__", { invalid: true }]]),
+  );
+  expect(parsed.success).toBe(false);
+  if (parsed.success) throw new Error("Expected an invalid command field");
+  expect(parsed.error.issues).toContainEqual(
+    expect.objectContaining({ path: ["__proto__"] }),
+  );
 });

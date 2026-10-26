@@ -40,6 +40,8 @@ import {
   HOPPER_PUBLIC_KEY_URL,
   HOPPER_RELEASES_URL,
   HopperReleaseError,
+  hopperArchiveIntegrityMatches,
+  parseHopperReleaseJson,
   parseLinuxHopperRelease,
   parseLinuxHopperReleases,
   type LinuxHopperRelease,
@@ -126,9 +128,9 @@ export class LinuxHopperPublisher {
             "release_metadata",
             "The official Hopper release feed is unavailable.",
           );
-        this.#feed = parseLinuxHopperReleases(
-          JSON.parse(decodeUtf8(response.bytes)),
-        );
+        const decoded = parseHopperReleaseJson(response.bytes);
+        if (!decoded.ok) throw decoded.cause;
+        this.#feed = parseLinuxHopperReleases(decoded.value);
       }
       if (!this.#feed.ok) return this.#feed;
       return this.#feed.value[family];
@@ -171,10 +173,7 @@ export class LinuxHopperPublisher {
         signal,
         resources,
       );
-      if (
-        bytes.length !== Number(release.file_length) ||
-        createHash("sha1").update(bytes).digest("hex") !== release.file_hash
-      )
+      if (!hopperArchiveIntegrityMatches(bytes, release))
         return err(
           new HopperReleaseError(
             "integrity",
@@ -730,17 +729,14 @@ export class LinuxHopperPublisher {
         signal,
         resources,
       );
-      let value: unknown;
-      try {
-        value = JSON.parse(decodeUtf8(metadata));
-      } catch (cause: unknown) {
+      const decoded = parseHopperReleaseJson(metadata);
+      if (!decoded.ok)
         throw new HopperReleaseError(
           "release_metadata",
           "The retained Hopper package metadata is malformed.",
-          { cause },
+          { cause: decoded.cause },
         );
-      }
-      const parsed = cacheRecordSchema.safeParse(value);
+      const parsed = cacheRecordSchema.safeParse(decoded.value);
       if (!parsed.success)
         throw new HopperReleaseError(
           "release_metadata",

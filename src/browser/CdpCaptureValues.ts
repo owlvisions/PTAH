@@ -31,6 +31,13 @@ export const cdpStringValue = (value: unknown): string | undefined =>
 export const numberValue = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
+export const executionContextKey = (value: unknown): string | null => {
+  const identifier = numberValue(value);
+  return identifier !== undefined && Number.isSafeInteger(identifier)
+    ? String(identifier)
+    : null;
+};
+
 /** An omitted resource size is unknown; a supplied invalid size is malformed. */
 export const resourceContentSize = (
   value: unknown,

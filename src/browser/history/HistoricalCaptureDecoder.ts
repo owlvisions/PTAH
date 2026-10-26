@@ -24,6 +24,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import type { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   ArtifactResourceScope,
@@ -392,12 +393,18 @@ export class HistoricalCaptureDecoder {
           reply_finalization_error: projectAnalysisError(cancellation),
         });
       }
-      result = err(
-        redactExplicitFailure(
-          withCaptureReaderCleanup(error, replyFinalization ?? cause),
-          input.sensitive_values,
-        ),
+      const failure = withCaptureReaderCleanup(
+        error,
+        replyFinalization ?? cause,
       );
+      if (phase === "capture-read") {
+        const snapshot = completedStableArtifactObservation(
+          cause,
+          input.capture_path,
+        );
+        if (snapshot !== undefined) failure.retainPartialObservation(snapshot);
+      }
+      result = err(redactExplicitFailure(failure, input.sensitive_values));
     }
     const completedCapture = result.ok ? result.value : undefined;
     let cleanupFailure:

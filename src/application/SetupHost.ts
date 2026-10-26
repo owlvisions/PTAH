@@ -231,10 +231,10 @@ export const systemSetupHost = (
       const providerEnvironment: SetupProviderEnvironment = {
         ...providerRegistrationEnvironment(diagnosis.providerInspections ?? []),
         ...doctorHost.providerRegistrationEnvironment?.(),
-        ...explicitSetupRegistrationEnvironment(environment),
         ...(diagnosis.hopperPath === undefined
           ? {}
           : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
+        ...explicitSetupRegistrationEnvironment(environment),
       };
       const requestedProvider = analysisProviderSelectorSchema.safeParse(
         environment.REA_ANALYSIS_PROVIDER,

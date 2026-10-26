@@ -786,3 +786,26 @@ it("retains an owned partial thin image and exact cancellation reason after a wr
   expect(Buffer.compare(await readFile(destination), partial)).toBe(0);
   await expect(access(destination)).resolves.toBeUndefined();
 });
+
+it.each([0, 129])(
+  "keeps Hopper FAT count admission explicit for count %i",
+  async (count) => {
+    const directory = await createTestTempDirectory("rea-hopper-fat-count-");
+    const fixture = buildFat32Container([
+      { cpuType: CPU_TYPES.arm64, cpuSubtype: 0 },
+    ]);
+    fixture.container.writeUInt32BE(count, 4);
+    const path = await writeFixture(directory, "counts.fat", fixture);
+    const result = await resolveHopperMachOImage(
+      fat32Target(path, fixture, "arm64"),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Invalid FAT count was admitted");
+    expect(result.error).toMatchObject({
+      _tag: "BinaryTargetError",
+      path,
+      reason:
+        "FAT architecture table is truncated or exceeds the supported 128 entries",
+    });
+  },
+);

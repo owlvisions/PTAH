@@ -3,7 +3,7 @@ import { z } from "zod";
 import { fixedTupleSchema } from "./fixedTupleSchema.js";
 import { addressCoordinate } from "./native/addressCoordinate.js";
 
-import type { JsonValue } from "./jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "./jsonValue.js";
 
 import { err, ok, type Result } from "./result.js";
 import { nativeApiBoundarySchema } from "./native/nativeApiBoundary.js";
@@ -88,87 +88,88 @@ export const analysisBookmarkSchema = z.strictObject({
   name: z.string().nullable(),
 });
 /** Complete observed function-body ranges; every range endpoint is inclusive. */
-export const functionBodySchema = z.discriminatedUnion("available", [
-  unavailableAnalysisFactSchema,
-  z
-    .strictObject({
-      available: z.literal(true),
-      provenance: z.string().min(1),
-      ranges: z.array(
-        z.strictObject({
-          start: z.string(),
-          end: z
-            .string()
-            .describe("Inclusive last address of this observed body range."),
-        }),
-      ),
-      total_bytes: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
-      span_bytes: z.int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
-      non_contiguous: z.boolean(),
-      contains_entry: z.boolean(),
-    })
-    .superRefine((body, context) => {
-      let total = 0n;
-      const bounds = new Map<string | null, { start: bigint; end: bigint }>();
-      const closedSpaces = new Set<string | null>();
-      let previousSpace: string | null | undefined;
-      for (const range of body.ranges) {
-        const start = addressCoordinate(range.start);
-        const end = addressCoordinate(range.end);
-        if (
-          start === null ||
-          end === null ||
-          start.space !== end.space ||
-          end.offset < start.offset
-        ) {
-          context.addIssue({
-            code: "custom",
-            message: "Function body range has invalid inclusive endpoints",
-          });
-          return;
-        }
-        if (previousSpace !== undefined && previousSpace !== start.space)
-          closedSpaces.add(previousSpace);
-        const previous = bounds.get(start.space);
-        if (
-          closedSpaces.has(start.space) ||
-          (previous !== undefined && start.offset <= previous.end + 1n)
-        ) {
-          context.addIssue({
-            code: "custom",
-            message:
-              "Function body ranges must be ordered, disjoint and maximal within each address space",
-          });
-          return;
-        }
-        bounds.set(start.space, {
-          start: previous?.start ?? start.offset,
-          end: end.offset,
-        });
-        previousSpace = start.space;
-        total += end.offset - start.offset + 1n;
-      }
-      const onlyBounds =
-        bounds.size === 1 ? [...bounds.values()][0] : undefined;
-      const span =
-        bounds.size === 0
-          ? 0n
-          : onlyBounds === undefined
-            ? null
-            : onlyBounds.end - onlyBounds.start + 1n;
-      const reportedSpan =
-        body.span_bytes === null ? null : BigInt(body.span_bytes);
+export const availableFunctionBodySchema = z
+  .strictObject({
+    available: z.literal(true),
+    provenance: z.string().min(1),
+    ranges: z.array(
+      z.strictObject({
+        start: z.string(),
+        end: z
+          .string()
+          .describe("Inclusive last address of this observed body range."),
+      }),
+    ),
+    total_bytes: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+    span_bytes: z.int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+    non_contiguous: z.boolean(),
+    contains_entry: z.boolean(),
+  })
+  .superRefine((body, context) => {
+    let total = 0n;
+    const bounds = new Map<string | null, { start: bigint; end: bigint }>();
+    const closedSpaces = new Set<string | null>();
+    let previousSpace: string | null | undefined;
+    for (const range of body.ranges) {
+      const start = addressCoordinate(range.start);
+      const end = addressCoordinate(range.end);
       if (
-        total !== BigInt(body.total_bytes) ||
-        span !== reportedSpan ||
-        body.non_contiguous !== body.ranges.length > 1
-      )
+        start === null ||
+        end === null ||
+        start.space !== end.space ||
+        end.offset < start.offset
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Function body range has invalid inclusive endpoints",
+        });
+        return;
+      }
+      if (previousSpace !== undefined && previousSpace !== start.space)
+        closedSpaces.add(previousSpace);
+      const previous = bounds.get(start.space);
+      if (
+        closedSpaces.has(start.space) ||
+        (previous !== undefined && start.offset <= previous.end + 1n)
+      ) {
         context.addIssue({
           code: "custom",
           message:
-            "Function body counts, enclosing span or contiguity disagree with inclusive ranges",
+            "Function body ranges must be ordered, disjoint and maximal within each address space",
         });
-    }),
+        return;
+      }
+      bounds.set(start.space, {
+        start: previous?.start ?? start.offset,
+        end: end.offset,
+      });
+      previousSpace = start.space;
+      total += end.offset - start.offset + 1n;
+    }
+    const onlyBounds = bounds.size === 1 ? [...bounds.values()][0] : undefined;
+    const span =
+      bounds.size === 0
+        ? 0n
+        : onlyBounds === undefined
+          ? null
+          : onlyBounds.end - onlyBounds.start + 1n;
+    const reportedSpan =
+      body.span_bytes === null ? null : BigInt(body.span_bytes);
+    if (
+      total !== BigInt(body.total_bytes) ||
+      span !== reportedSpan ||
+      body.non_contiguous !== body.ranges.length > 1
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "Function body counts, enclosing span or contiguity disagree with inclusive ranges",
+      });
+  });
+
+export const functionBodySchema = z.discriminatedUnion("available", [
+  unavailableAnalysisFactSchema,
+  availableFunctionBodySchema,
 ]);
 
 /** Check the declared entry membership against complete, inclusive body ranges. */
@@ -325,23 +326,25 @@ const swiftStringLiteralFields = {
 };
 
 /** A Swift String literal decoded from the two words of its ABI value, not a data reference. */
+export const swiftSmallStringLiteralSchema = z.strictObject({
+  ...swiftStringLiteralFields,
+  representation: z
+    .literal("small")
+    .describe("The UTF-8 bytes are inside the two words."),
+  address: z.null().describe("A small literal has no storage of its own."),
+});
+export const swiftLargeStringLiteralSchema = z.strictObject({
+  ...swiftStringLiteralFields,
+  representation: z
+    .literal("large")
+    .describe(
+      "An immortal literal whose words hold its count and a pointer to its bytes.",
+    ),
+  address: z.string().describe("Address of a large literal's bytes."),
+});
 export const swiftStringLiteralSchema = z.discriminatedUnion("representation", [
-  z.strictObject({
-    ...swiftStringLiteralFields,
-    representation: z
-      .literal("small")
-      .describe("The UTF-8 bytes are inside the two words."),
-    address: z.null().describe("A small literal has no storage of its own."),
-  }),
-  z.strictObject({
-    ...swiftStringLiteralFields,
-    representation: z
-      .literal("large")
-      .describe(
-        "An immortal literal whose words hold its count and a pointer to its bytes.",
-      ),
-    address: z.string().describe("Address of a large literal's bytes."),
-  }),
+  swiftSmallStringLiteralSchema,
+  swiftLargeStringLiteralSchema,
 ]);
 
 const swiftStringLiteralOmissionFields = {
@@ -357,19 +360,21 @@ const swiftStringLiteralOmissionFields = {
 };
 
 /** A Swift literal candidate omitted because decoding capacity or control flow left it unknown. */
+export const swiftSmallStringLiteralOmissionSchema = z.strictObject({
+  ...swiftStringLiteralOmissionFields,
+  representation: z.literal("small"),
+  address: z.null(),
+});
+export const swiftLargeStringLiteralOmissionSchema = z.strictObject({
+  ...swiftStringLiteralOmissionFields,
+  representation: z.literal("large"),
+  address: z.string().describe("Address of the literal's bytes."),
+});
 export const swiftStringLiteralOmissionSchema = z.discriminatedUnion(
   "representation",
   [
-    z.strictObject({
-      ...swiftStringLiteralOmissionFields,
-      representation: z.literal("small"),
-      address: z.null(),
-    }),
-    z.strictObject({
-      ...swiftStringLiteralOmissionFields,
-      representation: z.literal("large"),
-      address: z.string().describe("Address of the literal's bytes."),
-    }),
+    swiftSmallStringLiteralOmissionSchema,
+    swiftLargeStringLiteralOmissionSchema,
   ],
 );
 
@@ -577,7 +582,7 @@ export const parseListCount = (
   const unwrapped = unwrapProperty(value, property);
   const list = z.array(z.unknown()).safeParse(unwrapped);
   if (list.success) return ok(list.data.length);
-  const map = z.record(z.string(), z.unknown()).safeParse(unwrapped);
+  const map = jsonObjectSchema.safeParse(unwrapped);
   return map.success
     ? ok(Object.keys(map.data).length)
     : invalid(operation, `${property} list`, map.error);

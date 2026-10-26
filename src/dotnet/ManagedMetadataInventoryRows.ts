@@ -1,3 +1,5 @@
+import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
+import { readTypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import { managedTypeReferences } from "./ManagedTypeReferences.js";
 import { MAX_TYPE_NESTING_DEPTH } from "./ManagedTypeNameDigests.js";
@@ -315,18 +317,18 @@ export const managedMetadataTypeNames = (
         namespace = parsed.namespace;
         flags = parsed.flags;
       } else {
-        const cursor = metadataRowCursor(bytes, layout, table, row);
-        flags = cursor.readUInt32();
+        const source = readTypeDefinitionRowFacts(bytes, layout, row);
+        flags = source.flags;
         name = readMetadataString(
           bytes,
           layout,
-          cursor.readIndex(layout.stringIndexSize),
+          source.nameIndex,
           layout.strings.size,
         );
         namespace = readMetadataString(
           bytes,
           layout,
-          cursor.readIndex(layout.stringIndexSize),
+          source.namespaceIndex,
           layout.strings.size,
         );
       }
@@ -407,13 +409,7 @@ const attributeTypeName = (
   const { table, row } = constructor;
   if (table === 6)
     return declaringTypeForMethod(bytes, layout, row, memberLists, typeName);
-  const cursor = metadataRowCursor(bytes, layout, 10, row);
-  const parent = decodeMetadataCodedIndex(
-    cursor.readIndex(layout.codedIndexSize("MemberRefParent")),
-    3,
-    [2, 1, 26, 6, 27],
-    layout.rowCounts,
-  );
+  const { parent } = readMemberReferenceRowFacts(bytes, layout, row);
   if (parent.kind === "null") return null;
   if (parent.table === 2 || parent.table === 1)
     return typeName(parent.table, parent.row);

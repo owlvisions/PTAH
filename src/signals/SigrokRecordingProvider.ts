@@ -19,7 +19,7 @@ import {
 } from "../process/LinuxResourceLimits.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, realpath, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
@@ -34,6 +34,10 @@ import {
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  assertArtifactCommandPath,
+  selectArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -147,7 +151,11 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         throw new Error(
           "Supply absolute REA_SIGROK_COMMAND for sigrok-cli 0.7.2 with libsigrokdecode.",
         );
-      const command = await realpath(configured);
+      const selectedCommand = await selectArtifactCommandPath(
+        configured,
+        options?.signal,
+      );
+      const command = selectedCommand.resolvedPath;
       await access(command, constants.X_OK);
       const tool = await this.#resources.read(
         command,
@@ -158,7 +166,11 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         this.environment.REA_SIGROK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
       if (!isAbsolute(configuredLimiter))
         throw new Error("REA_SIGROK_PRLIMIT_COMMAND must be absolute.");
-      const limiter = await realpath(configuredLimiter);
+      const selectedLimiter = await selectArtifactCommandPath(
+        configuredLimiter,
+        options?.signal,
+      );
+      const limiter = selectedLimiter.resolvedPath;
       await access(limiter, constants.X_OK);
       const limiterIdentity = await this.#resources.read(
         limiter,
@@ -166,7 +178,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         options?.signal,
       );
       effectiveLimits = await this.#resources.readLimits(LIMITS);
-      const limitArguments = prlimitArgumentVector(effectiveLimits, command);
+      const limitArguments = prlimitArgumentVector(
+        effectiveLimits,
+        selectedCommand.invocationPath,
+      );
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
@@ -180,9 +195,15 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         selection?: SigrokSelection,
       ) => {
         capturedOutput = undefined;
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          signal: options?.signal,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          signal: options?.signal,
+        });
         const output = await runOwnedCommand(
           {
-            command: limiter,
+            command: selectedLimiter.invocationPath,
             arguments: [...limitArguments, ...args],
             ...(root === undefined ? {} : { cwd: root.path }),
             expectedCommand: null,
@@ -202,6 +223,12 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           },
         );
         capturedOutput = artifactCommandOutput(output);
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          capturedOutput,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          capturedOutput,
+        });
         const current = await this.#resources.readCommandAfterRun(
           command,
           { path: limiter, sha256: limiterIdentity.sha256 },

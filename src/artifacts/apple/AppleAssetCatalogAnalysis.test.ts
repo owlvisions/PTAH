@@ -659,3 +659,34 @@ it.each(["Toolbar", "MissingToolbar"])(
     expect(result.resource_key_coverage.status).toBe("complete");
   },
 );
+
+it("preserves every own JSON metadata field through catalog inspection and page projection", async () => {
+  const bundle = await createTestTempDirectory("rea-asset-metadata-members-");
+  const catalog = Buffer.from("inert catalog for the output-decoding boundary");
+  await writeFile(join(bundle, "Assets.car"), catalog);
+  // Authored producer text exercises the accepted metadata contract; it is not
+  // evidence that native assetutil emits these additional field names.
+  const output =
+    '[{"Name":"Toolbar","RenditionName":"Toolbar@2x","__proto__":{"Name":"metadata, not an inherited asset name"},"constructor":"retained constructor metadata","toString":false,"Unknown":{"__proto__":{"value":0}},"Empty":"","Zero":0,"Absent":null}]';
+  const result = await analyzeAppleAssetCatalogs({
+    bundlePath: bundle,
+    targetSha256: "a".repeat(64),
+    environment: {},
+    runAssetUtil: async (path) => {
+      expect(path).toBe(join(bundle, "Assets.car"));
+      return output;
+    },
+  });
+  const expected: unknown = JSON.parse(output);
+  expect(result.records.map(({ metadata }) => metadata)).toEqual(expected);
+  expect(result.records[0]).toMatchObject({
+    asset_name: "Toolbar",
+    rendition_name: "Toolbar@2x",
+    catalog_path: "Assets.car",
+    catalog_sha256: createHash("sha256").update(catalog).digest("hex"),
+  });
+  const metadata = result.records[0]?.metadata;
+  if (metadata === undefined) throw new Error("missing catalog metadata");
+  expect(Object.hasOwn(metadata, "__proto__")).toBe(true);
+  expect(Object.getPrototypeOf(metadata)).toBe(Object.prototype);
+});

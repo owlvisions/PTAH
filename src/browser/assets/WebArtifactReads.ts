@@ -1,8 +1,15 @@
 import { z } from "zod";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
+  bindArtifactFileCleanup,
+  type ArtifactFilePrimaryFacts,
+} from "../../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
@@ -65,44 +72,74 @@ export const webArtifactReadError = (
   context: WebArtifactReadContext,
   signal?: AbortSignal,
 ): AnalysisError => {
+  const primary = webArtifactPrimaryError(
+    artifactFilePrimaryFacts(cause),
+    context,
+    signal,
+  );
+  const observation = completedStableArtifactObservation(
+    cause,
+    context.targetPath,
+  );
+  if (observation !== undefined) primary.retainPartialObservation(observation);
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-    const primary =
-      signal?.aborted === true
-        ? new AnalysisCancelledError(context.operation, {
-            cause: signal.reason,
-          })
-        : new ArtifactOperationError(
-            context.operation,
-            cause.reason,
-            cause.details,
-            cause.message,
-            { cause },
-          );
+    const cleanup = new ProviderCleanupError(
+      "captured-web-artifacts",
+      cause.cleanup.resources,
+      { reason: cause.cleanup.reason },
+      { cause, operation: context.operation },
+    );
+    bindArtifactFileCleanup(cause, cleanup);
     return analysisErrorWithCleanupFailure(
       primary,
-      new ProviderCleanupError(
-        "captured-web-artifacts",
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: context.operation },
-      ),
+      cleanup,
       context.operation,
-    );
+    ).bindCleanupDependencies([primary, cleanup]);
   }
-  if (signal?.aborted === true)
+  return primary;
+};
+
+const webArtifactPrimaryError = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  context: WebArtifactReadContext,
+  signal?: AbortSignal,
+): AnalysisError => {
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
+    return new AnalysisCancelledError(context.operation, {
+      cause: artifactFileCancellationCause(cause),
+    });
+  if (
+    origin === "owned-or-classified" &&
+    signal?.aborted === true &&
+    (cause === signal.reason ||
+      (cause instanceof Error &&
+        cause.name === "AbortError" &&
+        "code" in cause &&
+        cause.code === "ABORT_ERR"))
+  )
     return new AnalysisCancelledError(context.operation, {
       cause: signal.reason,
     });
   const selection = context.callerSelected
-    ? selectedFileError(cause, context)
+    ? selectedFileError({ cause, origin }, context)
     : undefined;
   if (selection !== undefined) return selection;
-  if (cause instanceof ArtifactReaderFailure)
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  )
     return new ArtifactOperationError(
       context.operation,
       cause.reason,
       cause.details,
       cause.message,
+      { cause },
     );
   if (
     cause instanceof Error &&
@@ -149,14 +186,17 @@ export const webArtifactReadError = (
  * caller's selection or a host permission denial, not an artifact fault.
  */
 const selectedFileError = (
-  cause: unknown,
+  { cause, origin }: ArtifactFilePrimaryFacts,
   context: WebArtifactReadContext,
 ): AnalysisError | undefined => {
   const selected = (message: string) =>
     new AnalysisInputError(context.operation, { cause }, [
       { path: context.field, reason: "invalid_value", message },
     ]);
-  if (cause instanceof ArtifactReaderFailure)
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  )
     return cause.reason === "path" ? selected(cause.message) : undefined;
   const code =
     cause instanceof Error && "code" in cause ? String(cause.code) : "";

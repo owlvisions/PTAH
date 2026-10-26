@@ -4,13 +4,8 @@ import { z } from "zod";
 import {
   offsetDateTimeSchema,
   readRecordedDateTime,
+  utcDateTimeSchema,
 } from "./offsetDateTime.js";
-
-/** Freeze the Zod 4.4.3 accepted set: later releases require seconds.
- * Recorded evidence must continue accepting historical minute-precision timestamps. */
-const legacyPattern =
-  "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$";
-const replaced = new RegExp(legacyPattern, "u");
 
 const ACCEPTED: readonly (readonly [string, string])[] = [
   ["a UTC timestamp", "2026-10-09T04:00:00Z"],
@@ -48,8 +43,6 @@ const REJECTED: readonly (readonly [string, string])[] = [
   ["unrelated text", "not a timestamp"],
 ];
 
-const CASES = [...ACCEPTED, ...REJECTED];
-
 describe("offset datetime schema", () => {
   it.each(ACCEPTED)("accepts %s", (_label, value) => {
     expect(offsetDateTimeSchema.safeParse(value).success).toBe(true);
@@ -58,28 +51,42 @@ describe("offset datetime schema", () => {
   it.each(REJECTED)("rejects %s", (_label, value) => {
     expect(offsetDateTimeSchema.safeParse(value).success).toBe(false);
   });
+});
 
-  it("classifies every case exactly as the replaced Zod validator does", () => {
-    const divergences = CASES.filter(
-      ([, value]) =>
-        offsetDateTimeSchema.safeParse(value).success !== replaced.test(value),
-    ).map(([label]) => label);
-    expect(divergences).toEqual([]);
+describe("UTC datetime schema", () => {
+  it.each(ACCEPTED.filter(([, value]) => value.endsWith("Z")))(
+    "preserves %s without rewriting the source value",
+    (_label, value) => {
+      expect(utcDateTimeSchema.parse(value)).toBe(value);
+    },
+  );
+
+  it.each([
+    ...REJECTED,
+    ...ACCEPTED.filter(([, value]) => !value.endsWith("Z")),
+    [
+      "omitted seconds with a numeric offset",
+      "2026-10-09T04:00+02:00",
+    ] as const,
+  ])("rejects %s", (_label, value) => {
+    expect(utcDateTimeSchema.safeParse(value).success).toBe(false);
   });
+});
 
+describe.each([
+  ["offset", offsetDateTimeSchema],
+  ["UTC", utcDateTimeSchema],
+] as const)("%s datetime advertisement", (_name, schema) => {
   it("emits a pattern that compiles in every mode a client may use", () => {
-    const emitted = z.toJSONSchema(
-      z.object({ observed_at: offsetDateTimeSchema }),
-      { target: "draft-2020-12" },
-    );
+    const emitted = z.toJSONSchema(z.object({ observed_at: schema }), {
+      target: "draft-2020-12",
+    });
     const pattern = findPattern(emitted);
     expect(pattern).toBeDefined();
     if (pattern === undefined) return;
-    // Annex B and `u` accept the pattern the replaced validator emitted; `v` does
-    // not, which is the reason this schema exists.
+    expect(() => new RegExp(pattern)).not.toThrow();
     expect(() => new RegExp(pattern, "u")).not.toThrow();
     expect(() => new RegExp(pattern, "v")).not.toThrow();
-    expect(() => new RegExp(replacedSource(), "v")).toThrow();
   });
 });
 
@@ -224,6 +231,3 @@ const findPattern = (value: unknown): string | undefined => {
   }
   return undefined;
 };
-
-/** Historical pattern used to prove the client Unicode-mode incompatibility. */
-const replacedSource = (): string => legacyPattern;

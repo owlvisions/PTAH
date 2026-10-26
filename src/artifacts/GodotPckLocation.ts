@@ -1,5 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
-import { GODOT_PCK_MAGIC } from "../domain/godotPckFormat.js";
+import {
+  hasGodotPckHeader,
+  readGodotPckTrailerFacts,
+} from "../domain/godotPckFormat.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 
@@ -62,20 +65,15 @@ export const locateGodotPck = async (
     prefix !== undefined && prefix.length >= 4
       ? Buffer.from(prefix.buffer, prefix.byteOffset, 4)
       : await readPckBytes(handle, 0, 4, size, signal);
-  if (magic.readUInt32LE(0) === GODOT_PCK_MAGIC)
-    return { start: 0, end: size, embedded: false };
+  if (hasGodotPckHeader(magic)) return { start: 0, end: size, embedded: false };
   if (size < 12) return undefined;
   const trailer = await readPckBytes(handle, size - 12, 12, size, signal);
-  if (trailer.readUInt32LE(8) !== GODOT_PCK_MAGIC) return undefined;
-  const end = size - 12;
-  const bytes = trailer.readBigUInt64LE(0);
+  const declaration = readGodotPckTrailerFacts(trailer, size);
   // The terminal marker is only a candidate until its range resolves to a PCK header.
-  if (bytes < 4n || bytes > BigInt(end)) return undefined;
-  const start = end - Number(bytes);
-  if (
-    (await readPckBytes(handle, start, 4, end, signal)).readUInt32LE(0) !==
-    GODOT_PCK_MAGIC
-  )
+  if (declaration.state === "absent") return undefined;
+  const { start, end, packBytes } = declaration;
+  if (start === null || packBytes < 4n) return undefined;
+  if (!hasGodotPckHeader(await readPckBytes(handle, start, 4, end, signal)))
     return undefined;
   return { start, end, embedded: true };
 };

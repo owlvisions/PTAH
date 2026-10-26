@@ -1,3 +1,9 @@
+import type { RegularFileState } from "../filesystem/RegularFile.js";
+import {
+  RegularFileChangedError,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
+import { assertKunaFileState } from "./KunaProjectState.js";
 import { createReadStream } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
@@ -67,6 +73,7 @@ export interface KunaSpanOwnership {
 const readSpan = async (
   operation: string,
   path: string,
+  expected: RegularFileState,
   offset: number,
   length: number,
   ownership: KunaSpanOwnership,
@@ -101,10 +108,15 @@ const readSpan = async (
   const owner = new OwnedFileHandle(opened.value);
   let read: Result<string, unknown>;
   try {
+    if (!sameRegularFileState(expected, await owner.handle.stat()))
+      throw new RegularFileChangedError(path);
     const buffer = Buffer.alloc(length);
     const { bytesRead } = await owner.handle.read(buffer, 0, length, offset);
     if (bytesRead !== length)
       throw new Error(`${path} is shorter than its recorded span`);
+    if (!sameRegularFileState(expected, await owner.handle.stat()))
+      throw new RegularFileChangedError(path);
+    await assertKunaFileState(path, expected);
     read = ok(buffer.toString("utf8"));
   } catch (cause: unknown) {
     read = err(cause);
@@ -136,12 +148,15 @@ const readSpan = async (
         : await ownership.finishSpan(finish);
     return ok(value);
   } catch (cause: unknown) {
-    if (cause instanceof OwnedRegularFileOperationFailure)
+    if (cause instanceof OwnedRegularFileOperationFailure) {
+      if (cause.operationCause instanceof RegularFileChangedError)
+        throw cause.operationCause;
       return err(
         new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
           cause: cause.operationCause,
         }),
       );
+    }
     if (cause instanceof RegularFileCleanupFailure)
       return err(
         spanCloseFailure(
@@ -268,6 +283,11 @@ export class KunaProjectReader {
     operation: string,
     signal?: AbortSignal,
   ): Promise<Result<KunaProjectText, AnalysisError>> {
+    await assertKunaFileState(
+      join(this.project.directory, this.project.manifest.files.c.path),
+      this.project.fileStates.c,
+      signal ?? this.lifetime.signal,
+    );
     this.#blocks ??= new Map(
       this.project.functions.map((block) => [block.address, block]),
     );
@@ -296,6 +316,7 @@ export class KunaProjectReader {
     const text = await readSpan(
       operation,
       join(this.project.directory, this.project.manifest.files.c.path),
+      this.project.fileStates.c,
       block.cOffset,
       block.cLength,
       this.lifetime,
@@ -329,6 +350,7 @@ export class KunaProjectReader {
     const text = await readSpan(
       operation,
       join(this.project.directory, this.project.manifest.files.asm.path),
+      this.project.fileStates.asm,
       span.offset,
       span.length,
       this.lifetime,
@@ -362,13 +384,29 @@ export class KunaProjectReader {
     operation: string,
     signal: AbortSignal | undefined,
   ): Promise<Result<KunaAssemblyIndex, AnalysisError>> {
+    const path = join(
+      this.project.directory,
+      this.project.manifest.files.asm.path,
+    );
+    await assertKunaFileState(
+      path,
+      this.project.fileStates.asm,
+      signal ?? this.lifetime.signal,
+    );
     this.#assembly ??= this.lifetime.own(
       scanKunaAssembly(
         createReadStream(
           join(this.project.directory, this.project.manifest.files.asm.path),
           { signal: this.lifetime.signal },
         ),
-      ),
+      ).then(async (index) => {
+        await assertKunaFileState(
+          path,
+          this.project.fileStates.asm,
+          this.lifetime.signal,
+        );
+        return index;
+      }),
     );
     const index = await waitForAbortable(this.#assembly, signal);
     if (index === ABORTED)

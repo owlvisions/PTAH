@@ -20,7 +20,8 @@ import {
 } from "../ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
-import { hasMachoMagic, readMachoImage } from "./MachoLoadCommandReader.js";
+import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
+import { readMachoImage } from "./MachoLoadCommandReader.js";
 
 /** One owner for dyld descriptor admission, physical identity and finalization. */
 export class DylibFileAccess {

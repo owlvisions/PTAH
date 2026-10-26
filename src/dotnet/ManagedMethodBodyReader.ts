@@ -136,8 +136,10 @@ export const methodBody = (
     };
   }
   try {
-    const offset = pe.rvaToOffset(rva, 1, "method.body");
-    const methodExtent = pe.rvaAvailableBytes(rva, "method.body");
+    const { offset, available: methodExtent } = pe.rvaFileRange(
+      rva,
+      "method.body",
+    );
     const header = readMethodBodyHeader(bytes, offset);
     if (
       header.size > methodExtent ||

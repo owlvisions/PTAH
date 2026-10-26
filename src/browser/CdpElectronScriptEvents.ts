@@ -4,7 +4,7 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { CDP_CAPTURE_SCRIPT_METADATA_LIMITS } from "./CdpCaptureEventTypes.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import {
-  numberValue,
+  executionContextKey,
   recordValue,
   scriptMetadataValues,
   cdpStringValue,
@@ -128,11 +128,4 @@ const retainExecutionContext = (
   const frameId = cdpStringValue(recordValue(runtimeContext?.auxData)?.frameId);
   if (contextKey === null || frameId === undefined || frameId === "") return;
   frames.set(contextKey, frameId);
-};
-
-const executionContextKey = (value: unknown): string | null => {
-  const identifier = numberValue(value);
-  return identifier !== undefined && Number.isSafeInteger(identifier)
-    ? String(identifier)
-    : null;
 };

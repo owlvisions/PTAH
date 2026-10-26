@@ -1,12 +1,13 @@
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { join } from "node:path";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
   PWNTOOLS_MEMORY_FAILURE_EXIT,
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
+  PWNTOOLS_LIMITS,
 } from "./PwntoolsRelease.js";
 import { z } from "zod";
-import { PWNTOOLS_LIMITS } from "./PwntoolsRelease.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 /** Actual limits reported by the owned bridge after lowering inherited soft limits. */
@@ -94,10 +95,10 @@ export const readPwntoolsFailureEvidence = async (
         undefined,
         resources,
       );
+      const decoded = safeParseUtf8Json(reported.bytes);
+      if (!decoded.ok) throw decoded.cause;
       limitReport = {
-        limits: pwntoolsResourceLimitsSchema.parse(
-          JSON.parse(reported.bytes.toString("utf8")),
-        ),
+        limits: pwntoolsResourceLimitsSchema.parse(decoded.value),
         failure: null,
       };
     } catch (reportFailure: unknown) {

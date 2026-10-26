@@ -1,11 +1,15 @@
 import { z } from "zod";
-import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+
+import { readRecordedRequestBody } from "../../domain/analysisView/recordedExchangeBody.js";
+import {
+  isJsonLike,
+  mediaTypeEssence,
+} from "../../domain/analysisView/recordedMediaType.js";
 import {
   primaryOrigin,
   type OriginStats,
 } from "../../domain/analysisView/environmentManifestOrigin.js";
 import {
-  mediaTypeEssence,
   readRecordedRequestLine,
   type RecordedRequestLine,
   type RequestLineExclusion,
@@ -44,12 +48,6 @@ export interface ProbeStep {
 const BODYLESS_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
 
 const startedSchema = z.object({ startedDateTime: z.string() });
-const postDataSchema = z.object({
-  request: z.object({
-    postData: z.object({ mimeType: z.string(), text: z.string() }),
-  }),
-});
-
 const methodSchema = z.object({ request: z.object({ method: z.string() }) });
 
 const startedInstant = (
@@ -90,9 +88,11 @@ export const sendsBodies = (
 export const requestBody = (
   record: WebNetworkCaptureRecord,
 ): JsonValue | undefined => {
-  const parsed = postDataSchema.safeParse(record.reported);
-  if (!parsed.success) return undefined;
-  const { mimeType, text } = parsed.data.request.postData;
+  const facts = readRecordedRequestBody(record.reported);
+  if (facts.kind !== "request" || facts.postData.kind !== "object")
+    return undefined;
+  const { mimeType, text } = facts.postData;
+  if (mimeType === undefined || text === undefined) return undefined;
   return isJsonLike(mediaTypeEssence(mimeType))
     ? (parseExactJson(text) ?? text)
     : text;

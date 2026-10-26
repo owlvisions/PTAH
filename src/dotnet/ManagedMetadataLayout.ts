@@ -118,6 +118,9 @@ const CODED_INDEXES = {
   TypeOrMethodDef: { bits: 1, tables: [2, 6] },
 } as const;
 
+/** Shared MemberRef parent tag mapping, also used to select its column width. */
+export const MEMBER_REF_PARENT_CODED_INDEX = CODED_INDEXES.MemberRefParent;
+
 const SUPPORTED_TABLE_MASK = (1n << BigInt(METADATA_TABLE_NAMES.length)) - 1n;
 
 /** Check a range within `bytes`, which start at artifact file offset `base`. */

@@ -141,7 +141,8 @@ const browserScenarioPageValueSchemas = [
 const requestHeaderSchema = z.strictObject({
   name: z
     .string()
-    .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u)
+    // Hex escapes retain HTTP token characters in Unicode-set client regexes.
+    .regex(/^[!#$%&'*+.^_`\x7C~0-9A-Za-z\x2D]+$/u)
     .refine(settableRequestHeader, {
       message: "A page's fetch cannot set this header",
     }),
@@ -182,7 +183,7 @@ export const browserScenarioBrowserSchema = z.discriminatedUnion("mode", [
   z.strictObject({
     mode: z.literal("connect"),
     cdp_endpoint: browserEndpointSchema,
-    target_id: z.string().trim().min(1),
+    target_id: z.string().min(1),
   }),
 ]);
 
@@ -319,7 +320,8 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
     method: z.enum(BROWSER_SCENARIO_REQUEST_METHODS),
     path: z
       .string()
-      .regex(/^\/(?![/\\])/u)
+      // Preserve the prefix grammar without look-around or reserved class syntax.
+      .regex(/^\x2F(?:[^\x2F\x5C]|$)/u)
       .describe(
         "Path, and optional literal query, on the start URL's origin, such as /api/folders; it must resolve to that origin.",
       ),

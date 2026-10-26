@@ -343,6 +343,7 @@ export const pwntoolsUnavailable = (
     rejections: [
       {
         providerId: context.providerId,
+        origin: "availability",
         code: "provider_unavailable",
         reason,
         diagnostics: {

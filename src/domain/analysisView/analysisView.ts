@@ -61,6 +61,14 @@ import {
   javaScriptRoutesSourceReferenceSchema,
   projectJavaScriptRoutesView,
 } from "./javascriptRoutesView.js";
+import {
+  webBundleViewRequestSchema,
+  webBundleViewItemsSchema,
+  webBundleSummarySchema,
+  projectWebBundleView,
+} from "./webBundleView.js";
+import { webBundleAnalysisSchema } from "../webBundleAnalysis.js";
+import { recordedBrowserOriginSchema } from "../browserObservation.js";
 import { javaScriptRouteInventorySchema } from "../javascript/javascriptRouteInventory.js";
 import {
   sourceToBundleViewRequestSchema,
@@ -395,6 +403,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   pythonPycViewRequestSchema,
   nativeExportsViewRequestSchema,
   javaScriptRoutesViewRequestSchema,
+  webBundleViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   summaryViewSchema,
@@ -881,6 +890,32 @@ export const javaScriptRoutesViewResultSchema = z.strictObject({
   byte_limited: z.boolean(),
 });
 
+/** Compact web bundle findings retain endpoint observations and inference candidates. */
+export const webBundleSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("analyze_web_bundle"),
+  target_url: z.string(),
+  target_origin: recordedBrowserOriginSchema.nullable().optional(),
+  source_unknowns: webBundleAnalysisSchema.shape.unknowns,
+  summary: webBundleSummarySchema,
+});
+
+export const webBundlePageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  artifact: artifactSchema.nullable(),
+  kind: z.literal("web-bundle"),
+  parent_operation: z.literal("analyze_web_bundle"),
+  target_url: z.string(),
+  target_origin: recordedBrowserOriginSchema.nullable().optional(),
+  source_unknowns: webBundleAnalysisSchema.shape.unknowns,
+  view: webBundleViewRequestSchema,
+  completeness: webBundleAnalysisSchema.shape.completeness,
+  items: webBundleViewItemsSchema,
+  summary: webBundleSummarySchema.nullable(),
+  byte_limited: z.boolean(),
+});
+
 export const gpuCodeObjectsSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_gpu_code_objects"),
@@ -1072,6 +1107,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   nativeObservationPageViewResultSchema,
   nativeContextViewResultSchema,
   javaScriptRoutesViewResultSchema,
+  webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
@@ -1159,6 +1195,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
+    webBundleSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,
@@ -1372,6 +1409,13 @@ export type InspectAnalysisViewInput = z.output<
 export type AnalysisViewResult = z.output<typeof analysisViewResultSchema>;
 export type AnalysisViewCoverage = z.output<typeof coverageSchema>;
 
+export {
+  webBundleViewRequestSchema,
+  webBundleViewItemsSchema,
+  webBundleSummarySchema,
+  projectWebBundleView,
+};
+
 /** Parent record already resolved from inline Evidence or a session reference. */
 export interface AnalysisViewParent {
   readonly evidenceId: string;
@@ -1490,6 +1534,7 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["compare_source_to_bundle", projectSourceToBundleView],
   ["inspect_artifact", projectArtifactInventoryView],
   ["inventory_artifact", projectArtifactInventoryView],
+  ["analyze_web_bundle", projectWebBundleView],
 ]);
 
 /** Budgets retained across source admission and the selected grouping projection. */
@@ -1591,6 +1636,10 @@ export const projectAnalysisView = (
     );
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
+  if (view.kind === "web-bundle") {
+    const projected = projectWebBundleView(parent, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (isGroupingView(view)) {

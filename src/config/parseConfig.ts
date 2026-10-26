@@ -100,6 +100,9 @@ export const parseConfig = (
   if (!parsed.ok) return parsed;
   const env = parsed.value;
   return ok({
+    ...(env.REA_MCP_TOOL_FAMILIES === undefined
+      ? {}
+      : { mcpToolFamilies: env.REA_MCP_TOOL_FAMILIES }),
     ...(env.REA_MCP_MAX_RESPONSE_BYTES === undefined
       ? {}
       : { mcpMaxResponseBytes: env.REA_MCP_MAX_RESPONSE_BYTES }),
@@ -113,6 +116,16 @@ export const parseConfig = (
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
       : { idaMcpConfigPath: env.REA_IDA_MCP_CONFIG }),
+    ...(env.REA_GHIDRA_PROJECT_PATH === undefined
+      ? {}
+      : {
+          ghidraExistingProject: {
+            path: env.REA_GHIDRA_PROJECT_PATH,
+            ...(env.REA_GHIDRA_PROGRAM_NAME === undefined
+              ? {}
+              : { programName: env.REA_GHIDRA_PROGRAM_NAME }),
+          },
+        }),
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: env.REA_GHIDRA_STARTUP_TIMEOUT_MS,

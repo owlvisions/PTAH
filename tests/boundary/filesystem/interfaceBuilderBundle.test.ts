@@ -1306,8 +1306,8 @@ cliTest(
   },
 );
 
-describe("binary Interface Builder archive omissions", () => {
-  it("reports omitted __proto__ entries as partial decoding", async () => {
+describe("binary Interface Builder dictionary keys", () => {
+  it("does not report decoded __proto__ entries as omitted", async () => {
     const placeholder = "proto_key";
     const encoded = Buffer.from(
       buildBinary({
@@ -1336,13 +1336,13 @@ describe("binary Interface Builder archive omissions", () => {
     expect(result.graph.coverage).toContainEqual(
       expect.objectContaining({
         facet: "archive_decode",
-        status: "partial",
-        reason: "dictionary_entries_omitted",
+        status: "complete",
+        reason: null,
       }),
     );
-    expect(result.limitations).toContain(
-      "Contents/Resources/Prototype.nib: Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(
+      result.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 });
 
@@ -1505,7 +1505,7 @@ describe("bounded Interface Builder archive decoding", () => {
     expect(result.graph.truncated).toBe(true);
   });
 
-  it("marks archive decoding partial when __proto__ entries are omitted", async () => {
+  it("does not mark XML archive decoding partial for __proto__ entries", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
     const bundle = join(root, "Example.app");
     const resources = join(bundle, "Contents", "Resources");
@@ -1523,14 +1523,13 @@ describe("bounded Interface Builder archive decoding", () => {
     expect(result.graph.coverage).toContainEqual(
       expect.objectContaining({
         facet: "archive_decode",
-        status: "partial",
-        reason: "dictionary_entries_omitted",
+        status: "complete",
+        reason: null,
       }),
     );
-    expect(result.graph.truncated).toBe(true);
-    expect(result.limitations).toContain(
-      "Contents/Resources/Prototype.nib: 1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-    );
+    expect(
+      result.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 
   it("decodes an archive with a date year beyond four digits", async () => {

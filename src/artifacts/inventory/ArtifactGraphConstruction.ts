@@ -30,7 +30,7 @@ import {
 } from "../../domain/zipPackageFormat.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
-  classifyFatContainerIdentity,
+  classifyFatContainerEvidence,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
@@ -582,9 +582,7 @@ export const classifyArtifactBytes = (
   const fatFormat = classifyFatArtifact(evidence, fileSize);
   if (fatFormat !== null) return fatFormat;
   if (prefix.length >= 4) {
-    const magic = prefix.readUInt32BE(0);
-    if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
-      return "mach-o";
+    if (readMachoHeaderPrefixFacts(prefix).format !== null) return "mach-o";
     if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
       return "elf";
   }
@@ -631,21 +629,11 @@ const classifyFatArtifact = (
   if (fatHeader.state === "needs-data" || fatHeader.state === "malformed")
     return "unknown";
   if (fatHeader.state === "not-fat") return null;
-  const identity = classifyFatContainerIdentity(fatHeader, (offset) => {
-    if (fatSliceHeaders?.sliceHeadersByOffset.has(offset) === true)
-      return fatSliceHeaders.sliceHeadersByOffset.get(offset)?.magic;
-    const slice = fatHeader.slices.find(
-      (candidate) => candidate.offset === offset,
-    );
-    if (slice === undefined || offset >= prefix.length) return undefined;
-    const available = Math.max(
-      0,
-      Math.min(slice.size, prefix.length - offset, 12),
-    );
-    return readMachoHeaderPrefixFacts(
-      prefix.subarray(offset, offset + available),
-    ).magic;
-  });
+  const identity = classifyFatContainerEvidence(
+    fatHeader,
+    prefix,
+    fatSliceHeaders?.sliceHeadersByOffset,
+  );
   return identity.state === "mach-o" ? "mach-o-universal" : "unknown";
 };
 

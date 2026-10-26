@@ -1,9 +1,6 @@
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -27,7 +24,7 @@ import {
   MAX_DEVICETREE_FILE_BYTES,
   type InspectDevicetreeInput,
 } from "../../domain/firmware/devicetree.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import { err, ok } from "../../domain/result.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
@@ -202,17 +199,8 @@ const devicetreeFailure = (cause: unknown, input: InspectDevicetreeInput) => {
     artifactFilePrimaryFacts(cause),
     input,
   );
-  const snapshot = completedStableArtifact(cause);
-  if (snapshot !== undefined)
-    // The one stable read completed before finalization failed; keep its identity.
-    primary.retainPartialObservation(
-      fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
-        path: input.path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      }),
-    );
+  const observation = completedStableArtifactObservation(cause, input.path);
+  if (observation !== undefined) primary.retainPartialObservation(observation);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(

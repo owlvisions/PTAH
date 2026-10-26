@@ -33,7 +33,7 @@ export interface StateToolFacts {
   readonly record_ordinals: readonly number[];
 }
 
-/** A record's response body as JSON, or unusable when absent, cut, not JSON, not exactly representable or carrying a `__proto__` member. */
+/** A record's response body as JSON, or unusable when absent, cut, not JSON, not exactly representable. */
 export type ParsedBody =
   | { readonly kind: "json"; readonly value: JsonValue }
   | { readonly kind: "unusable" };
@@ -265,6 +265,29 @@ export const scalarText = (value: JsonValue | undefined): string | undefined =>
     : typeof value === "number"
       ? String(value)
       : undefined;
+/** A JSON dictionary lookup observes only its own members, preserving absent fields. */
+export const ownMember = <Value>(
+  object: Readonly<Record<string, Value>> | undefined,
+  member: string,
+): Value | undefined =>
+  object !== undefined && Object.hasOwn(object, member)
+    ? object[member]
+    : undefined;
+
+/** Write one JSON member without interpreting its name as an inherited setter. */
+export const setOwnMember = (
+  object: JsonObject,
+  member: string,
+  value: JsonValue,
+): void => {
+  Object.defineProperty(object, member, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+};
+
 /** Equal JSON values; object member order carries no meaning. */
 export const same = (
   left: JsonValue | undefined,
@@ -463,15 +486,6 @@ export const deeperThan = (value: JsonValue, limit: number): boolean => {
   return false;
 };
 
-/** JSON parsers keep a `__proto__` member that plain object construction would turn into a prototype. */
-export const hasPrototypeKey = (value: JsonValue): boolean =>
-  Array.isArray(value)
-    ? value.some(hasPrototypeKey)
-    : isObject(value) &&
-      Object.entries(value).some(
-        ([name, item]) => name === "__proto__" || hasPrototypeKey(item),
-      );
-
 export const pointerTo = (name: string): string =>
   `/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`;
 /** The unescaped reference tokens of a pointer. */
@@ -487,7 +501,7 @@ const memberOf = (
   body: JsonValue | undefined,
   name: string,
 ): JsonValue | undefined =>
-  isObject(body) && Object.hasOwn(body, name) ? body[name] : undefined;
+  isObject(body) ? ownMember(body, name) : undefined;
 
 /** The element of a one-element array. */
 const soleElement = (value: JsonValue | undefined): JsonValue | undefined =>
@@ -570,7 +584,7 @@ export const identifies = (
   // Stop at the first missing or repeated value, so a sparse list costs one read per field.
   const seen = new Set<string>();
   for (const item of items) {
-    const value = scalarText(item[name]);
+    const value = scalarText(ownMember(item, name));
     if (value === undefined || seen.has(value)) return false;
     seen.add(value);
   }
@@ -603,7 +617,9 @@ export const locateList = (
   if (Array.isArray(body)) return body.every(isObject) ? "" : undefined;
   if (
     !isObject(body) ||
-    IDENTITY_NAMES.some((name) => scalarText(body[name]) !== undefined)
+    IDENTITY_NAMES.some(
+      (name) => scalarText(ownMember(body, name)) !== undefined,
+    )
   )
     return undefined;
   const arrays = Object.entries(body).filter(

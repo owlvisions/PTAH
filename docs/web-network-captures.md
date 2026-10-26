@@ -696,8 +696,9 @@ more than one query) and `rendered-oversize` (a document value whose JSON
 renders to more than 256 KiB). A document holds the value of its one `path`, so for such
 a template it says nothing about the template's other paths. A body is usable
 when its content type is
-JSON-like, it is UTF-8 text of at most 256 KiB, every number survives native
-conversion exactly, and no member is named `__proto__`.
+JSON-like, it is UTF-8 text of at most 256 KiB, and every number survives native
+conversion exactly. JSON member names, including `__proto__`, remain ordinary
+own data members through extraction and serving.
 
 A list view also learns, from its checked lines that do not list the whole
 collection, what each query parameter does, and names the result in `query`.
