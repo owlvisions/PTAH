@@ -1,0 +1,120 @@
+
+/bin/true:     file format elf64-x86-64
+
+
+Disassembly of section .init:
+
+0000000000002000 <.init>:
+    2000:	sub    $0x8,%rsp
+    2004:	mov    0x7fd5(%rip),%rax        # 9fe0 <__gmon_start__>
+    200b:	test   %rax,%rax
+    200e:	je     2012 <getenv@plt-0x1e>
+    2010:	call   *%rax
+    2012:	add    $0x8,%rsp
+    2016:	ret
+
+Disassembly of section .plt:
+
+0000000000002020 <getenv@plt-0x10>:
+    2020:	push   0x7e4a(%rip)        # 9e70 <error_at_line@@Base+0x7855>
+    2026:	jmp    *0x7e4c(%rip)        # 9e78 <error_at_line@@Base+0x785d>
+    202c:	nopl   0x0(%rax)
+
+0000000000002030 <getenv@plt>:
+    2030:	jmp    *0x7e4a(%rip)        # 9e80 <getenv@GLIBC_2.2.5>
+    2036:	push   $0x0
+    203b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002040 <free@plt>:
+    2040:	jmp    *0x7e42(%rip)        # 9e88 <free@GLIBC_2.2.5>
+    2046:	push   $0x1
+    204b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002050 <__vfprintf_chk@plt>:
+    2050:	jmp    *0x7e3a(%rip)        # 9e90 <__vfprintf_chk@GLIBC_2.3.4>
+    2056:	push   $0x2
+    205b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002060 <abort@plt>:
+    2060:	jmp    *0x7e32(%rip)        # 9e98 <abort@GLIBC_2.2.5>
+    2066:	push   $0x3
+    206b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002070 <__errno_location@plt>:
+    2070:	jmp    *0x7e2a(%rip)        # 9ea0 <__errno_location@GLIBC_2.2.5>
+    2076:	push   $0x4
+    207b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002080 <strncmp@plt>:
+    2080:	jmp    *0x7e22(%rip)        # 9ea8 <strncmp@GLIBC_2.2.5>
+    2086:	push   $0x5
+    208b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002090 <_exit@plt>:
+    2090:	jmp    *0x7e1a(%rip)        # 9eb0 <_exit@GLIBC_2.2.5>
+    2096:	push   $0x6
+    209b:	jmp    2020 <getenv@plt-0x10>
+
+00000000000020a0 <__fpending@plt>:
+    20a0:	jmp    *0x7e12(%rip)        # 9eb8 <__fpending@GLIBC_2.2.5>
+    20a6:	push   $0x7
+    20ab:	jmp    2020 <getenv@plt-0x10>
+
+00000000000020b0 <fcntl@plt>:
+    20b0:	jmp    *0x7e0a(%rip)        # 9ec0 <fcntl@GLIBC_2.2.5>
+    20b6:	push   $0x8
+    20bb:	jmp    2020 <getenv@plt-0x10>
+
+00000000000020c0 <textdomain@plt>:
+    20c0:	jmp    *0x7e02(%rip)        # 9ec8 <textdomain@GLIBC_2.2.5>
+    20c6:	push   $0x9
+    20cb:	jmp    2020 <getenv@plt-0x10>
+
+00000000000020d0 <fclose@plt>:
+    20d0:	jmp    *0x7dfa(%rip)        # 9ed0 <fclose@GLIBC_2.2.5>
+    20d6:	push   $0xa
+    20db:	jmp    2020 <getenv@plt-0x10>
+
+00000000000020e0 <bindtextdomain@plt>:
+    20e0:	jmp    *0x7df2(%rip)        # 9ed8 <bindtextdomain@GLIBC_2.2.5>
+    20e6:	push   $0xb
+    20eb:	jmp    2020 <getenv@plt-0x10>
+
+00000000000020f0 <dcgettext@plt>:
+    20f0:	jmp    *0x7dea(%rip)        # 9ee0 <dcgettext@GLIBC_2.2.5>
+    20f6:	push   $0xc
+    20fb:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002100 <__ctype_get_mb_cur_max@plt>:
+    2100:	jmp    *0x7de2(%rip)        # 9ee8 <__ctype_get_mb_cur_max@GLIBC_2.2.5>
+    2106:	push   $0xd
+    210b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002110 <strlen@plt>:
+    2110:	jmp    *0x7dda(%rip)        # 9ef0 <strlen@GLIBC_2.2.5>
+    2116:	push   $0xe
+    211b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002120 <__stack_chk_fail@plt>:
+    2120:	jmp    *0x7dd2(%rip)        # 9ef8 <__stack_chk_fail@GLIBC_2.4>
+    2126:	push   $0xf
+    212b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002130 <strchr@plt>:
+    2130:	jmp    *0x7dca(%rip)        # 9f00 <strchr@GLIBC_2.2.5>
+    2136:	push   $0x10
+    213b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002140 <__overflow@plt>:
+    2140:	jmp    *0x7dc2(%rip)        # 9f08 <__overflow@GLIBC_2.2.5>
+    2146:	push   $0x11
+    214b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002150 <strrchr@plt>:
+    2150:	jmp    *0x7dba(%rip)        # 9f10 <strrchr@GLIBC_2.2.5>
+    2156:	push   $0x12
+    215b:	jmp    2020 <getenv@plt-0x10>
+
+0000000000002160 <memset@plt>:
+    2160:	jmp    *0x7db2(%rip)        # 9f18 <memset@GLIBC_2.2.5>
+    2166:	push   $0x13

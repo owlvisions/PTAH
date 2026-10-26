@@ -1,0 +1,21 @@
+{
+  "name": "@owlvisions/ptah-engine",
+  "version": "0.1.0",
+  "description": "PTAH Engine: evidence-first analysis core with a provider contract, capability registry, and native adapters. No runtime dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

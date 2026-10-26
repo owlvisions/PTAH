@@ -1,0 +1,11 @@
+000000000000a0a0 B __progname@GLIBC_2.2.5
+000000000000a0b0 B __progname_full@GLIBC_2.2.5
+0000000000002476 T error
+000000000000261b T error_at_line
+000000000000a0e4 B error_message_count
+000000000000a0e0 B error_one_per_line
+000000000000a0e8 B error_print_progname
+000000000000a0b0 V program_invocation_name@GLIBC_2.2.5
+000000000000a0a0 V program_invocation_short_name@GLIBC_2.2.5
+000000000000a0c0 B stderr@GLIBC_2.2.5
+000000000000a0a8 B stdout@GLIBC_2.2.5
