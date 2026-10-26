@@ -12,6 +12,7 @@ import type {
   ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
 import {
+  MANAGED_CODED_INDEXES,
   metadataRowOffset,
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
@@ -35,13 +36,6 @@ type AssemblyIdentity = NonNullable<ManagedArtifactInspection["assembly"]>;
 type AssemblyReference = ManagedArtifactInspection["references"][number];
 type ManagedResource = ManagedArtifactInspection["resources"][number];
 type CustomAttribute = ManagedArtifactInspection["attributes"][number];
-
-const HAS_CUSTOM_ATTRIBUTE_TABLES = [
-  6, 4, 1, 2, 8, 9, 10, 0, 14, 23, 20, 17, 26, 27, 32, 35, 38, 39, 40, 42, 44,
-  43,
-] as const;
-
-const CUSTOM_ATTRIBUTE_TYPE_TABLES = [undefined, undefined, 6, 10] as const;
 
 const publicKeyIdentity = (
   bytes: Buffer,
@@ -475,8 +469,8 @@ export const readCustomAttribute = (
   );
   const parent = decodeMetadataCodedIndex(
     parentRaw,
-    5,
-    HAS_CUSTOM_ATTRIBUTE_TABLES,
+    MANAGED_CODED_INDEXES.HasCustomAttribute.bits,
+    MANAGED_CODED_INDEXES.HasCustomAttribute.tables,
     layout.rowCounts,
   );
   if (parent.kind !== "valid") {
@@ -489,8 +483,8 @@ export const readCustomAttribute = (
   }
   const constructor = decodeMetadataCodedIndex(
     typeRaw,
-    3,
-    CUSTOM_ATTRIBUTE_TYPE_TABLES,
+    MANAGED_CODED_INDEXES.CustomAttributeType.bits,
+    MANAGED_CODED_INDEXES.CustomAttributeType.tables,
     layout.rowCounts,
   );
   if (constructor.kind !== "valid") {
@@ -557,8 +551,8 @@ export const readResource = ({
   );
   const implementation = decodeMetadataCodedIndex(
     implementationRaw,
-    2,
-    [38, 35, 39],
+    MANAGED_CODED_INDEXES.Implementation.bits,
+    MANAGED_CODED_INDEXES.Implementation.tables,
     layout.rowCounts,
   );
   if (implementation.kind === "invalid")

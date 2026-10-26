@@ -43,6 +43,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { recordedCrashSchema } from "../../../src/domain/native/recordedCrash.js";
 import { PwntoolsRecordedCrashProvider } from "../../../src/native/pwntools/PwntoolsRecordedCrashProvider.js";
 import { runOwnedCommand } from "../../../src/process/OwnedCommand.js";
+import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js";
 import {
   recordedCrashDebuggerFixture,
   recordedCrashFixture,
@@ -73,11 +74,12 @@ const fixture = async (
   replyClose.denied = false;
   replyClose.onClose = undefined;
   replyClose.handles = [];
-  const provider = new PwntoolsRecordedCrashProvider({
+  const environment = snapshotEnvironment({
     REA_PWNDBG_GDB: process.execPath,
     REA_PWNDBG_GDBINIT: init,
     REA_PWNDBG_VENV_PATH: venv,
   });
+  const provider = new PwntoolsRecordedCrashProvider(environment);
   onTestFinished(async () => {
     replyClose.denied = false;
     replyClose.onClose = undefined;
@@ -97,6 +99,7 @@ const fixture = async (
   // The child authors debugger output; this does not establish GDB/pwndbg support.
   const project = async (signal: AbortSignal) =>
     provider.profile.enrich!({
+      environment,
       input: { path, include_debugger_context: true },
       report: provider.profile.project({
         input: { path, include_debugger_context: true },

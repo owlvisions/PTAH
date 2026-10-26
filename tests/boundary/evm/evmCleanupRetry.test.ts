@@ -1016,3 +1016,55 @@ it.each([
     }
   },
 );
+
+it("keeps the selected limiter and child environment together while later inspections reconfigure", async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const arch = Object.getOwnPropertyDescriptor(process, "arch");
+  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
+  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-environment-"));
+  const input = join(workspace, "selected.hex");
+  const limiter = join(workspace, "selected-limiter");
+  const { symlink } = await import("node:fs/promises");
+  await symlink(process.execPath, limiter);
+  await writeFile(input, "0x60006000f3\n");
+  const environment = {
+    REA_EVM_PRLIMIT_COMMAND: limiter,
+    REA_ENV_MARKER: "first",
+  };
+  let expectedLimiter = limiter;
+  closeState.onLimits = () => {
+    environment.REA_EVM_PRLIMIT_COMMAND = "/missing-limiter";
+    environment.REA_ENV_MARKER = "changed-during-inspection";
+  };
+  const provider = new EvmoleInterfaceProvider(environment, async (spawn) => {
+    expect(spawn.command).toBe(expectedLimiter);
+    return spawnOwnedProviderProcess({
+      ...spawn,
+      command: process.execPath,
+      arguments: [
+        "-e",
+        "process.stdout.write(process.env.REA_ENV_MARKER, () => { process.exitCode = 9; })",
+      ],
+    });
+  });
+  try {
+    for (const marker of ["first", "second"]) {
+      if (marker === "second") {
+        expectedLimiter = process.execPath;
+        environment.REA_EVM_PRLIMIT_COMMAND = process.execPath;
+        environment.REA_ENV_MARKER = marker;
+      }
+      const result = await provider.inspect({ path: input, encoding: "hex" });
+      if (result.ok) throw new Error("Expected inert worker failure");
+      expect(result.error.capturedOutput?.stdout).toBe(marker);
+    }
+  } finally {
+    closeState.onLimits = undefined;
+    await provider.close();
+    await rm(workspace, { recursive: true, force: true });
+    if (platform !== undefined)
+      Object.defineProperty(process, "platform", platform);
+    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+  }
+});

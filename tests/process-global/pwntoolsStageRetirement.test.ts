@@ -110,7 +110,7 @@ const fixture = async () => {
       arguments: ["-e", "process.stdout.write('basic diagnostic')"],
     });
   };
-  return { path, root, environment, basic };
+  return { path, root, environment, basic, reply };
 };
 
 const changingWorker = async (
@@ -642,5 +642,88 @@ it.runIf(supportedHost).each(
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.runIf(supportedHost)(
+  "keeps decoder and debugger children on one selected environment while later calls reconfigure",
+  async () => {
+    const { path, root, environment: selected, reply } = await fixture();
+    const environment: NodeJS.ProcessEnv = {
+      ...selected,
+      REA_ENV_MARKER: "first",
+    };
+    const originalPython = join(root.path, "..", "python-selected");
+    const { symlink } = await import("node:fs/promises");
+    await symlink(process.execPath, originalPython);
+    environment.REA_PWNTOOLS_PYTHON = originalPython;
+    const commands: string[] = [];
+    const provider = new PwntoolsRecordedCrashProvider(
+      environment,
+      async (spawn) => {
+        const request = z
+          .object({ reply_path: z.string(), gdb: z.string().optional() })
+          .parse(
+            JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
+          );
+        const debuggerStage = request.gdb !== undefined;
+        commands.push(spawn.command);
+        if (debuggerStage) expect(request.gdb).toBe(selected.REA_PWNDBG_GDB);
+        await writeFile(
+          request.reply_path,
+          debuggerStage
+            ? JSON.stringify({
+                ok: true,
+                value: recordedCrashDebuggerFixture(),
+              })
+            : reply,
+        );
+        environment.REA_ENV_MARKER = "changed-during-launch";
+        environment.REA_PWNTOOLS_PYTHON = "/missing-python";
+        environment.REA_PWNDBG_GDB = "/missing-gdb";
+        const child = await spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: ["-e", "process.stdout.write(process.env.REA_ENV_MARKER)"],
+        });
+        return child;
+      },
+      async () => {
+        environment.REA_ENV_MARKER = "changed-during-runtime";
+        environment.REA_PWNTOOLS_PYTHON = "/missing-python";
+        return PrivateRuntimeRoot.create({
+          parent: root.path,
+          prefix: "operation-",
+        });
+      },
+    );
+    onTestFinished(async () => {
+      await provider.close();
+      await root.close();
+    });
+    for (const marker of ["first", "second"]) {
+      if (marker === "second")
+        Object.assign(environment, selected, { REA_ENV_MARKER: marker });
+      const result = await provider.inspect({
+        path,
+        include_debugger_context: true,
+      });
+      expect(
+        result.ok
+          ? result.value.decoder_diagnostics.stdout
+          : result.error.capturedOutput?.stdout,
+      ).toBe(marker);
+      if (!result.ok) throw result.error;
+      expect(result.value.debugger).toMatchObject({
+        status: "available",
+        diagnostics: { stdout: marker },
+      });
+    }
+    expect(commands).toEqual([
+      originalPython,
+      originalPython,
+      process.execPath,
+      process.execPath,
+    ]);
   },
 );

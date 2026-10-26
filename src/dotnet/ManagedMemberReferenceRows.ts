@@ -1,5 +1,5 @@
 import {
-  MEMBER_REF_PARENT_CODED_INDEX,
+  MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
 import {
@@ -23,8 +23,8 @@ export const readMemberReferenceRowFacts = (
     parentRaw,
     parent: decodeMetadataCodedIndex(
       parentRaw,
-      MEMBER_REF_PARENT_CODED_INDEX.bits,
-      MEMBER_REF_PARENT_CODED_INDEX.tables,
+      MANAGED_CODED_INDEXES.MemberRefParent.bits,
+      MANAGED_CODED_INDEXES.MemberRefParent.tables,
       layout.rowCounts,
     ),
     nameIndex: cursor.readIndex(layout.stringIndexSize),

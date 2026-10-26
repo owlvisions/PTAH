@@ -9,7 +9,10 @@ import {
   type DecodedMethod,
   type MemberCore,
 } from "./ManagedMemberInspectorCore.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  type ManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
 import {
   decodeMetadataCodedIndex,
   type MetadataTokenFact,
@@ -84,8 +87,8 @@ const readMethodSpec = (
   const instantiation = cursor.readIndex(layout.blobIndexSize);
   const method = decodeMetadataCodedIndex(
     methodRaw,
-    1,
-    [6, 10],
+    MANAGED_CODED_INDEXES.MethodDefOrRef.bits,
+    MANAGED_CODED_INDEXES.MethodDefOrRef.tables,
     layout.rowCounts,
   );
   if (method.kind !== "valid")

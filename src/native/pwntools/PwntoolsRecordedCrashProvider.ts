@@ -118,6 +118,7 @@ export class PwntoolsRecordedCrashProvider
         partialObservation: (input, value) =>
           input.include_debugger_context ? unavailableDebugger(value) : value,
         enrich: async ({
+          environment,
           input,
           report: value,
           snapshot,

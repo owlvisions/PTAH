@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access, readFile, stat, writeFile } from "node:fs/promises";
@@ -393,16 +394,18 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     if (this.#closing) return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(async () => {
       if (this.#closing) return err(this.#closedError());
+      const environment = snapshotEnvironment(this.environment);
       try {
-        return await this.#resources.run(() => this.#inspect(input, options));
+        return await this.#resources.run(() =>
+          this.#inspect(input, environment, options),
+        );
       } catch (cause: unknown) {
         const failure = evmInterfaceFailure(
           cause,
           "artifact-read",
           input.path,
           undefined,
-          this.environment.REA_EVM_PRLIMIT_COMMAND ??
-            EVM_PRLIMIT_COMMAND_DEFAULT,
+          environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT,
           undefined,
           input.timeout_ms ?? DEFAULT_EVM_TIMEOUT_MS,
         );
@@ -420,6 +423,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
 
   async #inspect(
     input: InspectEvmInterfaceInput,
+    environment: Readonly<NodeJS.ProcessEnv>,
     options?: ExecutionOptions,
   ): Promise<Result<EvmInterfaceExecution, AnalysisError>> {
     const pending = await this.#retire();
@@ -473,7 +477,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     let phase: "configuration" | "artifact-read" | "worker" = "configuration";
     let workerLimits: EvmWorkerLimits | undefined;
     let limiter =
-      this.environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT;
+      environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT;
     let result: Result<EvmInterfaceExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
@@ -488,7 +492,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           { userMessage: HOST_REQUIREMENT },
         );
       const selectedLimiter = await selectEvmLimiter(
-        this.environment,
+        environment,
         undefined,
         options?.signal,
       );
@@ -562,8 +566,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         }),
         { flag: "wx", mode: 0o600 },
       );
-      const { NODE_OPTIONS: _ambientNodeOptions, ...environment } =
-        this.environment;
+      const { NODE_OPTIONS: _ambientNodeOptions, ...workerEnvironment } =
+        environment;
       const execution = await runOwnedCommand(
         {
           command: limiter,
@@ -585,7 +589,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cwd: root.path,
           expectedCommand: null,
           runId: `rea-evm-interface-${randomUUID()}`,
-          hostEnvironment: environment,
+          hostEnvironment: workerEnvironment,
         },
         {
           timeoutMs,

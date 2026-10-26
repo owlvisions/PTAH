@@ -598,3 +598,185 @@ it.each([
       expect(members.methods[0]?.body.il_sha256).toEqual(expect.any(String));
   },
 );
+
+it.each(
+  [2, 4].flatMap((stringWidth) =>
+    [2, 4].flatMap((blobWidth) =>
+      [false, true].map((badName) => ({ stringWidth, blobWidth, badName })),
+    ),
+  ),
+)(
+  "keeps Field heap admission consumer-specific with string=$stringWidth/blob=$blobWidth/badName=$badName",
+  ({ stringWidth, blobWidth, badName }) => {
+    const bytes = buildManagedPeFixture({
+      pinvoke: { memberForwardedRaw: 2 },
+      methodFlags: 0x0016,
+      ...(stringWidth === 4 ? { assemblyName: "A".repeat(65536) } : {}),
+      ...(blobWidth === 4
+        ? { standaloneSignatures: [Buffer.alloc(65536)] }
+        : {}),
+    });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Expected CLI fixture");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "cli.metadata"),
+      size,
+    );
+    expect(layout.stringIndexSize).toBe(stringWidth);
+    expect(layout.blobIndexSize).toBe(blobWidth);
+    const row = metadataRowOffset(layout, 4, 1);
+    if (badName)
+      bytes.writeUIntLE(
+        stringWidth === 2 ? 0xffff : 0xffffffff,
+        row + 2,
+        stringWidth,
+      );
+    bytes.writeUIntLE(
+      blobWidth === 2 ? 0xffff : 0xffffffff,
+      row + 2 + stringWidth,
+      blobWidth,
+    );
+    const target = managedPeFixtureTarget(bytes);
+    const members = inspectManagedMembersBytes(bytes, target);
+    const native = inspectManagedNativeBoundariesBytes(bytes, target);
+    expect(members.fields).toEqual([]);
+    expect(
+      members.coverage.issues.filter(
+        ({ scope }) =>
+          scope === "metadata.#Strings" || scope === "metadata.#Blob",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: badName ? "metadata.#Strings" : "metadata.#Blob",
+      }),
+    ]);
+    expect(native.pinvoke_imports).toMatchObject([
+      {
+        member_kind: "field",
+        member_token: "0x04000001",
+        member_name: badName ? null : "counter",
+      },
+    ]);
+    expect(
+      native.coverage.issues.filter(
+        ({ scope }) =>
+          scope === "metadata.#Strings" || scope === "metadata.#Blob",
+      ),
+    ).toEqual(
+      badName
+        ? [
+            expect.objectContaining({
+              code: "invalid-heap-index",
+              scope: "metadata.#Strings",
+            }),
+          ]
+        : [],
+    );
+    if (!badName)
+      expect(members.field_accesses).toContainEqual(
+        expect.objectContaining({
+          field_token: "0x04000001",
+          field_name: "counter",
+        }),
+      );
+  },
+);
+
+it.each([8, 9])(
+  "keeps reserved CustomAttributeType tag %i distinct from a valid constructor",
+  (constructor) => {
+    const value = Buffer.from([1, 0, 0, 0, 0]);
+    const bytes = buildManagedPeFixture({
+      customAttributeTypeRaw: constructor,
+      customAttributeValue: value,
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.attributes).toMatchObject([
+      {
+        parent_token: "0x20000001",
+        constructor_token: null,
+        type_name: null,
+        value_length: value.length,
+        value_sha256: createHash("sha256").update(value).digest("hex"),
+      },
+    ]);
+    expect(result.coverage.issues).toContainEqual(
+      expect.objectContaining({
+        code: "invalid-row",
+        scope: "metadata.CustomAttribute:0x0c000001",
+        detail: expect.stringContaining(
+          `coded index tag ${constructor - 8} is not defined`,
+        ),
+      }),
+    );
+  },
+);
+
+it.each([
+  { options: { methodRowCount: 8191 }, table: 6, count: 8191, width: 2 },
+  { options: { methodRowCount: 8192 }, table: 6, count: 8192, width: 4 },
+  { options: { memberRefRowCount: 8191 }, table: 10, count: 8191, width: 2 },
+  { options: { memberRefRowCount: 8192 }, table: 10, count: 8192, width: 4 },
+  { options: { moduleRowCount: 8192 }, table: 0, count: 8192, width: 2 },
+])(
+  "sizes CustomAttributeType from real target-table $table count $count",
+  ({ options, table, count, width }) => {
+    const bytes = buildManagedPeFixture(options);
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Expected CLI fixture");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "cli.metadata"),
+      size,
+    );
+    expect(layout.table(table)?.rowCount).toBe(count);
+    expect(layout.codedIndexSize("CustomAttributeType")).toBe(width);
+  },
+);
+
+it("retains an ImplMap method identity independently of its unreadable name", () => {
+  const bytes = buildManagedPeFixture({ pinvoke: {} });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  const row = metadataRowOffset(layout, 6, 1);
+  bytes.writeUIntLE(
+    layout.stringIndexSize === 2 ? 0xffff : 0xffffffff,
+    row + 8,
+    layout.stringIndexSize,
+  );
+  const result = inspectManagedNativeBoundariesBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(result.pinvoke_imports).toMatchObject([
+    {
+      member_token: "0x06000001",
+      member_kind: "method",
+      member_name: null,
+      import_name: "MessageBoxW",
+      import_scope_name: "user32.dll",
+    },
+  ]);
+  expect(result.coverage).toMatchObject({
+    state: "partial",
+    issues: [
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: "metadata.#Strings",
+      }),
+    ],
+  });
+});

@@ -2863,3 +2863,74 @@ describe("managed member method paging", () => {
     ).toThrow(RangeError);
   });
 });
+
+it("retains names of unselected fields without admitting their malformed signatures", () => {
+  const bytes = buildManagedNestedTypeFixture({ topLevelTypes: true });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  const field = metadataRowOffset(layout, 4, 1);
+  bytes.writeUIntLE(
+    layout.blobIndexSize === 2 ? 0xffff : 0xffffffff,
+    field + 2 + layout.stringIndexSize,
+    layout.blobIndexSize,
+  );
+  const method = metadataRowOffset(layout, 6, 2);
+  const methodRva = bytes.readUInt32LE(method);
+  const body = tokenBody([[ldsfld, 0x04000001]]);
+  bytes.set(body, pe.rvaToOffset(methodRva, body.length, "fixture CIL"));
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["OtherInner"],
+    },
+  );
+  expect(result.fields).toMatchObject([{ token: "0x04000002", name: "F" }]);
+  expect(result.methods).toMatchObject([{ token: "0x06000002", name: "M" }]);
+  expect(result.field_accesses).toMatchObject([
+    {
+      field_token: "0x04000001",
+      field_name: "F",
+      field_declaring_type: "Inner",
+    },
+  ]);
+  expect(
+    result.coverage.issues.filter(
+      ({ scope }) =>
+        scope === "metadata.#Blob" || scope === "Field:0x04000001.signature",
+    ),
+  ).toEqual([]);
+});
+
+it.each([false, true])(
+  "keeps ordinary TypeSpec operands distinct from GENERICINST heads (generic=%s)",
+  (generic) => {
+    const bytes = buildManagedPeFixture({
+      typeSpecSignatures: [Buffer.from([0x15, 0x12, 0x05, 0x01, 0x0e])],
+      fieldSignature: Buffer.from(
+        generic ? [0x06, 0x15, 0x12, 0x06, 0x01, 0x0e] : [0x06, 0x12, 0x06],
+      ),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.fields[0]?.signature).toMatchObject({
+      kind: "field",
+      parse_status: generic ? "malformed" : "decoded",
+      field_type: generic ? null : "class:6",
+    });
+    const issues = result.coverage.issues.filter(
+      ({ scope }) => scope === "Field:0x04000001.signature",
+    );
+    expect(issues).toEqual(
+      generic ? [expect.objectContaining({ code: "invalid-row" })] : [],
+    );
+  },
+);

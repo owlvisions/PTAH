@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
@@ -118,6 +119,7 @@ export interface PwntoolsDecoderProfile<
   ) => AnalysisPartialObservation;
   /** Optional resource-acquiring work starts only after base report admission and reply finalization. */
   readonly enrich?: (context: {
+    readonly environment: Readonly<NodeJS.ProcessEnv>;
     readonly input: Input;
     readonly report: Report;
     readonly snapshot: { readonly bytes: Buffer; readonly sha256: string };
@@ -239,6 +241,7 @@ export class PwntoolsDecoder<
     input: Input,
     options?: ExecutionOptions,
   ): Promise<Result<Report, AnalysisError>> {
+    const environment = snapshotEnvironment(this.environment);
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     const OPERATION = this.profile.operation;
@@ -273,7 +276,7 @@ export class PwntoolsDecoder<
     let result: Result<Report, AnalysisError>;
     let replyFinalization: AnalysisError | undefined;
     let phase: "configuration" | "artifact-read" | "decoder" = "configuration";
-    const executablePath = this.environment.REA_PWNTOOLS_PYTHON ?? "";
+    const executablePath = environment.REA_PWNTOOLS_PYTHON ?? "";
     let selectedPath = executablePath;
     const failure = (cause: unknown) =>
       pwntoolsDecoderFailure(
@@ -314,7 +317,7 @@ export class PwntoolsDecoder<
           undefined,
           context,
         );
-      const inputLimit = pwntoolsInputBytes(this.environment);
+      const inputLimit = pwntoolsInputBytes(environment);
       if (!inputLimit.configured)
         throw pwntoolsUnavailable(
           inputLimit.error,
@@ -376,7 +379,7 @@ export class PwntoolsDecoder<
       const execution = await this.#runCommand(
         timeoutMs,
         {
-          command: this.environment.REA_PWNTOOLS_PYTHON ?? "",
+          command: environment.REA_PWNTOOLS_PYTHON ?? "",
           arguments: [
             "-I",
             fileURLToPath(this.profile.bridge),
@@ -386,7 +389,7 @@ export class PwntoolsDecoder<
           cwd: root.path,
           runId: `rea-artifact-decoder-${randomUUID()}`,
           hostEnvironment: {
-            ...this.environment,
+            ...environment,
             PWNLIB_NOTERM: "1",
             OPENBLAS_NUM_THREADS: "1",
             OMP_NUM_THREADS: "1",
@@ -511,7 +514,7 @@ export class PwntoolsDecoder<
         if (reply.reason === "unavailable")
           throw pwntoolsUnavailable(
             reply.message,
-            this.environment.REA_PWNTOOLS_PYTHON ?? "",
+            environment.REA_PWNTOOLS_PYTHON ?? "",
             undefined,
             capturedOutput,
             context,
@@ -555,6 +558,7 @@ export class PwntoolsDecoder<
           this.profile.enrich === undefined
             ? admitted
             : await this.profile.enrich({
+                environment,
                 input,
                 report: admitted,
                 snapshot,

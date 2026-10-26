@@ -61,10 +61,20 @@ it("verifies canonical names, converted schemas and session metadata together", 
       }))
       .filter((group) => group.names.length > 0);
     toolContract("binary_session").outputSchema.parse(body);
-    const matchingOmission = {
+    const disagreeingOmission = {
       ...status,
       content: [{ type: "text" as const, text: JSON.stringify(body) }],
     };
+    const matchingOmission = {
+      ...disagreeingOmission,
+      structuredContent: body,
+    };
+    await expect(
+      verifyCompleteToolCatalog({
+        ...client,
+        callTool: async () => disagreeingOmission,
+      }),
+    ).rejects.toThrow("binary_session text and structured results disagree");
     // Equal inventories are insufficient when both omit the same canonical tool.
     await expect(
       verifyCompleteToolCatalog({
