@@ -793,3 +793,74 @@ void test("upstream sync workflow proposes reviewed updates without auto-merging
   assert.match(guide, /never auto-merges/i);
   assert.match(guide, /15 minutes/);
 });
+
+void test("carve, asar, wasm, isolation, and extended analyze providers work from the CLI", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-cli-analyzers-"));
+  try {
+    const ok = (result) => assert.equal(result.status, 0, result.stderr);
+    const wasm = join(dir, "m.wasm");
+    await writeFile(wasm, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    const parsed = run(["wasm", "--target", wasm]);
+    ok(parsed);
+    assert.equal(JSON.parse(parsed.stdout).format, "WebAssembly");
+    const carve = run(["carve", "--target", wasm, "--max-results", "5"]);
+    ok(carve);
+    assert.equal(JSON.parse(carve.stdout).executed, false);
+    const asar = run(["asar", "--target", wasm]);
+    assert.equal(asar.status, 1);
+    assert.match(asar.stderr, /ASAR/);
+    const isolation = run(["isolation"]);
+    ok(isolation);
+    assert.equal(
+      typeof JSON.parse(isolation.stdout).bubblewrap.available,
+      "boolean",
+    );
+    const help = run(["help"]);
+    assert.match(
+      help.stdout,
+      /providers: objdump, llvm-objdump, readelf, nm, file, rabin2, rz-bin, monodis, aapt2, wasm-objdump, wasm-tools/,
+    );
+    const tool = join(dir, "file");
+    await writeFile(tool, '#!/bin/sh\nprintf "data\\n"\nexit 0\n');
+    await (await import("node:fs/promises")).chmod(tool, 0o755);
+    const analyzed = spawnSync(
+      process.execPath,
+      [
+        entrypoint,
+        "analyze",
+        "--target",
+        wasm,
+        "--provider",
+        "file",
+        "--isolation",
+        "none",
+      ],
+      { cwd: root, encoding: "utf8", env: { ...process.env, PATH: dir } },
+    );
+    assert.equal(analyzed.status, 0, analyzed.stderr);
+    const analysis = JSON.parse(analyzed.stdout);
+    assert.equal(analysis.analysisKind, "file-type-identification");
+    assert.equal(analysis.isolation.applied, "none");
+    const required = spawnSync(
+      process.execPath,
+      [
+        entrypoint,
+        "analyze",
+        "--target",
+        wasm,
+        "--provider",
+        "file",
+        "--isolation",
+        "required",
+      ],
+      { cwd: root, encoding: "utf8", env: { ...process.env, PATH: dir } },
+    );
+    assert.equal(required.status, 1);
+    assert.match(required.stderr, /isolation required but unavailable/);
+    const unknown = run(["analyze", "--target", wasm, "--provider", "docker"]);
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /unsupported static analyzer/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -356,7 +356,7 @@
     "licenses:check": "node scripts/generate-third-party-inventory.mjs --check",
     "lint:typed": "node scripts/ci/static-check-report.mjs typed-lint",
     "knip:production": "node scripts/ci/production-reachability-report.mjs",
-    "test:ptah": "node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs scripts/tests/ptah-case-tools.test.mjs",
+    "test:ptah": "node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs scripts/tests/ptah-case-tools.test.mjs scripts/tests/ptah-analyzers.test.mjs",
     "start:ptah-mcp": "node scripts/ptah-mcp.mjs"
   },
   "lint-staged": {

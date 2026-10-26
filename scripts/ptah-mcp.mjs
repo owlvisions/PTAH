@@ -24,8 +24,15 @@ import {
   planSteps,
   renderEvidenceGraph,
   investigationJsonSchema,
+  STATIC_ANALYZER_IDS,
+  detectIsolationSupport,
 } from "./ptah-engine.mjs";
-import { extractStrings } from "./ptah-analysis.mjs";
+import {
+  extractStrings,
+  findEmbeddedSignatures,
+  parseAsarHeader,
+  parseWasmSections,
+} from "./ptah-analysis.mjs";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const tools = [
@@ -182,6 +189,54 @@ const tools = [
     },
   },
   {
+    name: "ptah_isolation",
+    description:
+      "Report whether bubblewrap and prlimit are available for analyzer sandboxing.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_carve",
+    description:
+      "Find embedded file signatures (ZIP, ELF, PE, archives, images, WASM, DEX…) at any offset. Carving hints only; nothing is extracted or executed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string" },
+        maxResults: { type: "integer", minimum: 1 },
+        minimumSignatureLength: { type: "integer", minimum: 2 },
+        maxBytes: { type: "integer", minimum: 1 },
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_asar",
+    description:
+      "List Electron ASAR archive entries from the header without extracting.",
+    inputSchema: {
+      type: "object",
+      properties: { target: { type: "string" } },
+      required: ["target"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_wasm",
+    description:
+      "Parse WebAssembly sections, imports, exports, and custom section names natively.",
+    inputSchema: {
+      type: "object",
+      properties: { target: { type: "string" } },
+      required: ["target"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "ptah_report",
     description:
       "Create a provenance-aware report from a validated PTAH investigation as JSON or Markdown.",
@@ -274,16 +329,19 @@ const tools = [
   {
     name: "ptah_static_analyze",
     description:
-      "Run allow-listed objdump metadata inspection with a wall-clock timeout and output cap; the target itself is not executed.",
+      "Run an allow-listed static analyzer (objdump, readelf, nm, file, rabin2, rz-bin, monodis, aapt2, wasm-objdump, wasm-tools) with fixed argv, timeout, output cap, and optional bubblewrap isolation and prlimit limits; the target itself is not executed.",
     inputSchema: {
       type: "object",
       properties: {
         target: { type: "string" },
         provider: {
           type: "string",
-          enum: ["objdump", "llvm-objdump", "wasm-tools"],
+          enum: [...STATIC_ANALYZER_IDS],
         },
         timeoutMs: { type: "integer", minimum: 100, maximum: 10000 },
+        isolation: { type: "string", enum: ["auto", "required", "none"] },
+        cpuSeconds: { type: "integer", minimum: 1 },
+        memoryBytes: { type: "integer", minimum: 1 },
         maxOutputBytes: { type: "integer", minimum: 256, maximum: 65536 },
       },
       required: ["target", "provider"],
@@ -403,14 +461,41 @@ async function callTool(name, args) {
     case "ptah_static_analyze":
       if (typeof args.target !== "string" || !args.target.trim())
         throw new TypeError("target must be a non-empty file path");
-      if (!["objdump", "llvm-objdump", "wasm-tools"].includes(args.provider))
+      if (!STATIC_ANALYZER_IDS.includes(args.provider))
         throw new TypeError(
-          "provider must be objdump, llvm-objdump, or wasm-tools",
+          `provider must be one of ${STATIC_ANALYZER_IDS.join(", ")}`,
         );
       return await analyzeTarget(args.target, args.provider, {
         timeoutMs: args.timeoutMs ?? 5000,
         maxOutputBytes: args.maxOutputBytes ?? 16384,
+        isolation: args.isolation ?? "auto",
+        ...(args.cpuSeconds || args.memoryBytes
+          ? {
+              limits: {
+                ...(args.cpuSeconds ? { cpuSeconds: args.cpuSeconds } : {}),
+                ...(args.memoryBytes ? { memoryBytes: args.memoryBytes } : {}),
+              },
+            }
+          : {}),
       });
+    case "ptah_isolation":
+      return await detectIsolationSupport();
+    case "ptah_carve":
+      if (typeof args.target !== "string" || !args.target.trim())
+        throw new TypeError("target must be a non-empty file path");
+      return await findEmbeddedSignatures(args.target, {
+        maxResults: args.maxResults,
+        minimumSignatureLength: args.minimumSignatureLength,
+        maxBytes: args.maxBytes,
+      });
+    case "ptah_asar":
+      if (typeof args.target !== "string" || !args.target.trim())
+        throw new TypeError("target must be a non-empty file path");
+      return await parseAsarHeader(args.target);
+    case "ptah_wasm":
+      if (typeof args.target !== "string" || !args.target.trim())
+        throw new TypeError("target must be a non-empty file path");
+      return await parseWasmSections(args.target);
     default:
       throw new Error(`unknown tool: ${name}`);
   }

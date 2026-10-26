@@ -274,3 +274,344 @@ export async function extractStrings(filePath, options = {}) {
     strings: results,
   };
 }
+
+const EMBEDDED_SIGNATURES = [
+  { format: "ELF", bytes: [0x7f, 0x45, 0x4c, 0x46] },
+  { format: "PE/MZ", bytes: [0x4d, 0x5a] },
+  { format: "Mach-O 64-bit", bytes: [0xcf, 0xfa, 0xed, 0xfe] },
+  { format: "ZIP", bytes: [0x50, 0x4b, 0x03, 0x04] },
+  { format: "gzip", bytes: [0x1f, 0x8b, 0x08] },
+  { format: "xz", bytes: [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00] },
+  { format: "zstd", bytes: [0x28, 0xb5, 0x2f, 0xfd] },
+  { format: "7-Zip", bytes: [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c] },
+  { format: "bzip2", bytes: [0x42, 0x5a, 0x68] },
+  { format: "PNG", bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+  { format: "PDF", bytes: [0x25, 0x50, 0x44, 0x46, 0x2d] },
+  { format: "SQLite", bytes: [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20] },
+  {
+    format: "WebAssembly",
+    bytes: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+  },
+  { format: "Java class", bytes: [0xca, 0xfe, 0xba, 0xbe] },
+  { format: "DEX", bytes: [0x64, 0x65, 0x78, 0x0a, 0x30] },
+  { format: "squashfs", bytes: [0x68, 0x73, 0x71, 0x73] },
+  { format: "cpio (newc)", bytes: [0x30, 0x37, 0x30, 0x37, 0x30, 0x31] },
+  { format: "LZMA", bytes: [0x5d, 0x00, 0x00] },
+];
+
+/**
+ * Scan a file for embedded signatures at any offset (carving hints). Offset 0
+ * is skipped because it is the container's own signature. Bounded and read-only.
+ */
+export async function findEmbeddedSignatures(filePath, options = {}) {
+  const maxBytes = options.maxBytes ?? 64 * 1024 * 1024;
+  const maxResults = options.maxResults ?? 200;
+  const minimumLength = options.minimumSignatureLength ?? 4;
+  if (!Number.isInteger(maxResults) || maxResults < 1)
+    throw new TypeError("maxResults must be a positive integer");
+  const absolutePath = resolve(filePath);
+  const fileStat = await stat(absolutePath);
+  if (!fileStat.isFile()) throw new TypeError("target must be a regular file");
+  const signatures = EMBEDDED_SIGNATURES.filter(
+    (sig) => sig.bytes.length >= minimumLength,
+  ).map((sig) => ({ ...sig, buffer: Buffer.from(sig.bytes) }));
+  const longest = Math.max(...signatures.map((sig) => sig.buffer.length));
+  const hits = [];
+  let carry = Buffer.alloc(0);
+  let scanned = 0;
+  let truncated = false;
+  for await (const chunk of createReadStream(absolutePath, {
+    end: Math.min(fileStat.size, maxBytes) - 1,
+  })) {
+    const window = Buffer.concat([carry, chunk]);
+    const base = scanned - carry.length;
+    for (const sig of signatures) {
+      let index = window.indexOf(sig.buffer, 0);
+      while (index !== -1) {
+        const offset = base + index;
+        if (offset > 0) {
+          if (hits.length >= maxResults) {
+            truncated = true;
+            break;
+          }
+          if (
+            !hits.some(
+              (hit) => hit.offset === offset && hit.format === sig.format,
+            )
+          )
+            hits.push({
+              offset,
+              format: sig.format,
+              signatureLength: sig.buffer.length,
+            });
+        }
+        index = window.indexOf(sig.buffer, index + 1);
+      }
+      if (truncated) break;
+    }
+    scanned += chunk.length;
+    carry = window.subarray(Math.max(0, window.length - (longest - 1)));
+    if (truncated) break;
+  }
+  hits.sort((a, b) => a.offset - b.offset || a.format.localeCompare(b.format));
+  return {
+    path: absolutePath,
+    sizeBytes: fileStat.size,
+    scannedBytes: Math.min(scanned, fileStat.size),
+    truncated: truncated || scanned < fileStat.size,
+    count: hits.length,
+    executed: false,
+    note: "Signature hits are carving hints, not proof of a valid embedded object; MZ and short signatures produce false positives.",
+    embedded: hits,
+  };
+}
+
+/**
+ * Parse an Electron ASAR archive header natively: 8-byte pickle (header size)
+ * + 8-byte pickle (JSON string size) + JSON directory. Returns the file list
+ * without extracting anything.
+ */
+export async function parseAsarHeader(filePath, options = {}) {
+  const maxHeaderBytes = options.maxHeaderBytes ?? 16 * 1024 * 1024;
+  const maxEntries = options.maxEntries ?? 5000;
+  const absolutePath = resolve(filePath);
+  const fileStat = await stat(absolutePath);
+  if (!fileStat.isFile()) throw new TypeError("target must be a regular file");
+  const handle = await open(absolutePath, "r");
+  try {
+    const prefix = Buffer.alloc(16);
+    const { bytesRead } = await handle.read(prefix, 0, 16, 0);
+    if (bytesRead < 16)
+      throw new TypeError("file is too small to be an ASAR archive");
+    const pickleSize = prefix.readUInt32LE(0);
+    const headerSize = prefix.readUInt32LE(4);
+    const stringPickleSize = prefix.readUInt32LE(8);
+    const jsonLength = prefix.readUInt32LE(12);
+    if (
+      pickleSize !== 4 ||
+      headerSize !== stringPickleSize + 4 ||
+      jsonLength > stringPickleSize
+    )
+      throw new TypeError(
+        "not a valid ASAR header (pickle sizes are inconsistent)",
+      );
+    if (jsonLength > maxHeaderBytes)
+      throw new TypeError(`ASAR header JSON exceeds ${maxHeaderBytes} bytes`);
+    if (16 + jsonLength > fileStat.size)
+      throw new TypeError("ASAR header extends past end of file");
+    const json = Buffer.alloc(jsonLength);
+    await handle.read(json, 0, jsonLength, 16);
+    let header;
+    try {
+      header = JSON.parse(json.toString("utf8"));
+    } catch {
+      throw new TypeError("ASAR header JSON is not parseable");
+    }
+    if (!header || typeof header.files !== "object")
+      throw new TypeError("ASAR header lacks a files directory");
+    const dataOffset = 8 + headerSize;
+    const entries = [];
+    let truncated = false;
+    const walk = (node, prefixPath) => {
+      for (const [name, value] of Object.entries(node.files ?? {})) {
+        if (entries.length >= maxEntries) {
+          truncated = true;
+          return;
+        }
+        const path = prefixPath ? `${prefixPath}/${name}` : name;
+        if (value && typeof value.files === "object") {
+          entries.push({ path, type: "directory" });
+          walk(value, path);
+        } else {
+          const size = Number(value?.size ?? 0);
+          const offset =
+            value?.offset !== undefined ? Number(value.offset) : null;
+          entries.push({
+            path,
+            type: value?.link ? "link" : "file",
+            sizeBytes: size,
+            dataOffset: offset === null ? null : dataOffset + offset,
+            unpacked: value?.unpacked === true,
+            executable: value?.executable === true,
+            ...(value?.link ? { link: value.link } : {}),
+            ...(value?.integrity?.hash
+              ? {
+                  integrity: {
+                    algorithm: value.integrity.algorithm,
+                    hash: value.integrity.hash,
+                  },
+                }
+              : {}),
+          });
+        }
+      }
+    };
+    walk(header, "");
+    const files = entries.filter((entry) => entry.type === "file");
+    return {
+      path: absolutePath,
+      sizeBytes: fileStat.size,
+      format: "Electron ASAR",
+      headerBytes: jsonLength,
+      dataOffset,
+      entryCount: entries.length,
+      fileCount: files.length,
+      directoryCount: entries.filter((entry) => entry.type === "directory")
+        .length,
+      totalFileBytes: files.reduce((sum, entry) => sum + entry.sizeBytes, 0),
+      truncated,
+      executed: false,
+      entries,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+const WASM_SECTION_NAMES = [
+  "custom",
+  "type",
+  "import",
+  "function",
+  "table",
+  "memory",
+  "global",
+  "export",
+  "start",
+  "element",
+  "code",
+  "data",
+  "datacount",
+  "tag",
+];
+
+function readLeb128(buffer, offset) {
+  let result = 0;
+  let shift = 0;
+  let position = offset;
+  for (;;) {
+    if (position >= buffer.length)
+      throw new TypeError("truncated LEB128 value");
+    const byte = buffer[position];
+    position += 1;
+    result += (byte & 0x7f) * 2 ** shift;
+    if ((byte & 0x80) === 0) break;
+    shift += 7;
+    if (shift > 35) throw new TypeError("LEB128 value too large");
+  }
+  return { value: result, next: position };
+}
+
+function readName(buffer, offset) {
+  const { value: length, next } = readLeb128(buffer, offset);
+  if (next + length > buffer.length) throw new TypeError("truncated name");
+  return {
+    value: buffer.subarray(next, next + length).toString("utf8"),
+    next: next + length,
+  };
+}
+
+/** Parse WebAssembly module sections natively, with import/export names when bounded. */
+export async function parseWasmSections(filePath, options = {}) {
+  const maxBytes = options.maxBytes ?? 32 * 1024 * 1024;
+  const maxNames = options.maxNames ?? 500;
+  const absolutePath = resolve(filePath);
+  const fileStat = await stat(absolutePath);
+  if (!fileStat.isFile()) throw new TypeError("target must be a regular file");
+  if (fileStat.size > maxBytes)
+    throw new TypeError(`module exceeds ${maxBytes} bytes`);
+  const handle = await open(absolutePath, "r");
+  let bytes;
+  try {
+    bytes = Buffer.alloc(fileStat.size);
+    await handle.read(bytes, 0, fileStat.size, 0);
+  } finally {
+    await handle.close();
+  }
+  if (bytes.length < 8 || bytes.readUInt32BE(0) !== 0x0061736d)
+    throw new TypeError("not a WebAssembly module (magic mismatch)");
+  const version = bytes.readUInt32LE(4);
+  const sections = [];
+  const imports = [];
+  const exports_ = [];
+  const customNames = [];
+  let offset = 8;
+  let truncatedNames = false;
+  while (offset < bytes.length) {
+    const id = bytes[offset];
+    const { value: size, next } = readLeb128(bytes, offset + 1);
+    if (next + size > bytes.length)
+      throw new TypeError(`section ${id} extends past end of module`);
+    const body = bytes.subarray(next, next + size);
+    const name = WASM_SECTION_NAMES[id] ?? `unknown(${id})`;
+    const section = { id, name, offset, sizeBytes: size };
+    if (id === 0) {
+      const custom = readName(body, 0);
+      section.customName = custom.value;
+      customNames.push(custom.value);
+    }
+    if (id === 2 || id === 7) {
+      const { value: count, next: start } = readLeb128(body, 0);
+      section.count = count;
+      let cursor = start;
+      for (let index = 0; index < count && cursor < body.length; index += 1) {
+        if ((id === 2 ? imports : exports_).length >= maxNames) {
+          truncatedNames = true;
+          break;
+        }
+        if (id === 2) {
+          const module = readName(body, cursor);
+          const field = readName(body, module.next);
+          const kind = body[field.next];
+          imports.push({
+            module: module.value,
+            name: field.value,
+            kind:
+              ["function", "table", "memory", "global", "tag"][kind] ??
+              `unknown(${kind})`,
+          });
+          cursor = field.next + 1;
+          const skip = readLeb128(body, cursor);
+          cursor = kind === 1 ? cursor + 1 : kind === 2 ? cursor : skip.next;
+          if (kind === 1 || kind === 2) {
+            const flags = body[cursor];
+            cursor += 1;
+            cursor = readLeb128(body, cursor).next;
+            if (flags & 1) cursor = readLeb128(body, cursor).next;
+          } else if (kind === 3) cursor += 1;
+        } else {
+          const field = readName(body, cursor);
+          const kind = body[field.next];
+          const indexValue = readLeb128(body, field.next + 1);
+          exports_.push({
+            name: field.value,
+            kind:
+              ["function", "table", "memory", "global", "tag"][kind] ??
+              `unknown(${kind})`,
+            index: indexValue.value,
+          });
+          cursor = indexValue.next;
+        }
+      }
+    } else if ([1, 3, 4, 5, 6, 9, 10, 11].includes(id)) {
+      section.count = readLeb128(body, 0).value;
+    }
+    sections.push(section);
+    offset = next + size;
+  }
+  return {
+    path: absolutePath,
+    sizeBytes: fileStat.size,
+    format: "WebAssembly",
+    version,
+    sectionCount: sections.length,
+    sections,
+    imports,
+    exports: exports_,
+    customSections: customNames,
+    hasStart: sections.some((section) => section.id === 8),
+    truncatedNames,
+    executed: false,
+    note: "Structural parse only; use wasm-tools validate for specification conformance.",
+  };
+}

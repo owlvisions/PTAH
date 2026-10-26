@@ -46,8 +46,15 @@ import {
   mergeInvestigations,
   migrateInvestigation,
   listMigrations,
+  STATIC_ANALYZER_IDS,
+  detectIsolationSupport,
 } from "./ptah-engine.mjs";
-import { extractStrings } from "./ptah-analysis.mjs";
+import {
+  extractStrings,
+  findEmbeddedSignatures,
+  parseAsarHeader,
+  parseWasmSections,
+} from "./ptah-analysis.mjs";
 import {
   generateCaseKeyPair,
   signCase,
@@ -96,7 +103,20 @@ function printHelp() {
     `  ptah providers [--json] [--probe]  Detect tools; --probe runs bounded version/help checks\n`,
   );
   process.stdout.write(
-    `  ptah analyze --target FILE --provider objdump|llvm-objdump|wasm-tools  Run bounded static metadata analysis\n`,
+    `  ptah analyze --target FILE --provider ID [--isolation auto|required|none] [--cpu-seconds N] [--memory-mb N]  Run a bounded allow-listed analyzer\n`,
+  );
+  process.stdout.write(`       providers: ${STATIC_ANALYZER_IDS.join(", ")}\n`);
+  process.stdout.write(
+    `  ptah isolation            Report bubblewrap/prlimit availability for analyzer sandboxing\n`,
+  );
+  process.stdout.write(
+    `  ptah carve --target FILE [--max-results N] [--min-signature 4]  Find embedded file signatures at any offset\n`,
+  );
+  process.stdout.write(
+    `  ptah asar --target FILE   List Electron ASAR entries from the header without extracting\n`,
+  );
+  process.stdout.write(
+    `  ptah wasm --target FILE   Parse WebAssembly sections, imports, and exports natively\n`,
   );
   process.stdout.write(
     `       [--investigation FILE --save-investigation FILE --evidence-id ID]  Record successful analysis as evidence\n`,
@@ -868,7 +888,22 @@ async function runHistory() {
   });
 }
 
+async function runTargetTool(fn, extra = {}) {
+  const target = optionValue("--target");
+  if (!target) throw new Error("Missing required --target FILE argument.");
+  emit(await fn(target, extra));
+}
+
 const COMMAND_HANDLERS = {
+  isolation: async () => emit(await detectIsolationSupport()),
+  carve: () =>
+    runTargetTool(findEmbeddedSignatures, {
+      maxResults: integerOption("--max-results", 200),
+      minimumSignatureLength: integerOption("--min-signature", 4),
+      maxBytes: integerOption("--max-bytes", 64 * 1024 * 1024),
+    }),
+  asar: () => runTargetTool(parseAsarHeader),
+  wasm: () => runTargetTool(parseWasmSections),
   strings: runStrings,
   "set-claim-status": runSetClaimStatus,
   "resolve-question": runResolveQuestion,
@@ -1049,13 +1084,21 @@ if (
     if (!target) throw new Error("Missing required --target FILE argument.");
     if (!provider)
       throw new Error(
-        "Missing required --provider objdump|llvm-objdump|wasm-tools argument.",
+        `Missing required --provider argument; allowed: ${STATIC_ANALYZER_IDS.join("|")}.`,
       );
     const timeoutValue = optionValue("--timeout-ms");
     const outputLimit = optionValue("--max-output-bytes");
+    const limits = {};
+    const cpuSeconds = optionValue("--cpu-seconds");
+    const memoryMb = optionValue("--memory-mb");
+    if (cpuSeconds !== undefined) limits.cpuSeconds = Number(cpuSeconds);
+    if (memoryMb !== undefined)
+      limits.memoryBytes = Number(memoryMb) * 1024 * 1024;
     const result = await analyzeTarget(target, provider, {
       timeoutMs: timeoutValue === undefined ? 5000 : Number(timeoutValue),
       maxOutputBytes: outputLimit === undefined ? 16384 : Number(outputLimit),
+      isolation: optionValue("--isolation") ?? "auto",
+      ...(Object.keys(limits).length ? { limits } : {}),
     });
     const investigationPath = optionValue("--investigation");
     const savePath = optionValue("--save-investigation");
