@@ -15,6 +15,10 @@ import {
   analyzeTarget,
   attachAnalysisEvidence,
   createInvestigationForTarget,
+  createInvestigationCase,
+  verifyInvestigationCase,
+  importInvestigationCase,
+  saveInvestigationCase,
 } from "../ptah-engine.mjs";
 
 const targetDigest = "a".repeat(64);
@@ -172,6 +176,74 @@ void test("verification checks schema and detects target-byte drift", async () =
     assert.equal(stale.valid, false);
     assert.equal(stale.targetMatches, false);
     assert.match(stale.error, /digest mismatch/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+void test("case bundles are deterministic, integrity-checked, and target-bound on import", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-case-"));
+  try {
+    const targetPath = join(dir, "target.bin");
+    const casePath = join(dir, "case.json");
+    const targetBytes = Buffer.from("authorized fixture target bytes");
+    await writeFile(targetPath, targetBytes);
+    const { fingerprintTarget } = await import("../ptah-engine.mjs");
+    const fingerprint = await fingerprintTarget(targetPath);
+    const investigation = fixture({
+      target: { id: "fixture-target", sha256: fingerprint.sha256 },
+      evidence: [
+        {
+          ...fixture().evidence[0],
+          targetSha256: fingerprint.sha256,
+        },
+      ],
+    });
+    const bundle = createInvestigationCase(investigation);
+    assert.throws(
+      () =>
+        createInvestigationCase({ ...investigation, unsupported: undefined }),
+      /JSON values/,
+    );
+    const reordered = Object.fromEntries(
+      Object.entries(investigation).reverse(),
+    );
+    assert.equal(
+      createInvestigationCase(reordered).integrity.payloadSha256,
+      bundle.integrity.payloadSha256,
+    );
+    assert.equal(verifyInvestigationCase(bundle).valid, true);
+    assert.equal(
+      JSON.stringify(bundle).includes(targetBytes.toString()),
+      false,
+      "case bundles must not embed target bytes",
+    );
+    await saveInvestigationCase(casePath, investigation);
+    const { readFile } = await import("node:fs/promises");
+    assert.deepEqual(
+      await importInvestigationCase(
+        JSON.parse(await readFile(casePath, "utf8")),
+        targetPath,
+      ),
+      validateInvestigation(investigation),
+    );
+
+    const tampered = structuredClone(bundle);
+    tampered.investigation.evidence[0].summary = "altered after export";
+    assert.equal(verifyInvestigationCase(tampered).valid, false);
+    await assert.rejects(
+      () => importInvestigationCase(tampered),
+      /checksum mismatch/,
+    );
+    await writeFile(targetPath, "different target bytes");
+    await assert.rejects(
+      () => importInvestigationCase(bundle, targetPath),
+      /target digest mismatch/,
+    );
+    assert.throws(
+      () => verifyInvestigationCase({ ...bundle, formatVersion: 99 }),
+      /formatVersion/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -670,6 +742,102 @@ void test("PTAH MCP returns tool errors as MCP tool results rather than crashing
   assert.match(message.result.content[0].text, /ENOENT/);
 });
 
+void test("PTAH MCP exports, verifies, and imports portable case bundles", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-mcp-case-"));
+  try {
+    const targetPath = join(dir, "target.bin");
+    const inputPath = join(dir, "investigation.json");
+    const bundlePath = join(dir, "case.json");
+    const restoredPath = join(dir, "restored.json");
+    await writeFile(targetPath, "mcp portable target");
+    const { fingerprintTarget } = await import("../ptah-engine.mjs");
+    const fingerprint = await fingerprintTarget(targetPath);
+    await writeFile(
+      inputPath,
+      JSON.stringify(
+        fixture({
+          target: { id: "mcp-target", sha256: fingerprint.sha256 },
+          evidence: [],
+          claims: [],
+        }),
+      ),
+    );
+    const server = new URL("../ptah-mcp.mjs", import.meta.url).pathname;
+    const requests = [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "ptah_case_export",
+          arguments: { input: inputPath, output: bundlePath },
+        },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "ptah_case_verify",
+          arguments: { input: bundlePath, target: targetPath },
+        },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "ptah_case_import",
+          arguments: {
+            input: bundlePath,
+            output: restoredPath,
+            target: targetPath,
+          },
+        },
+      },
+    ];
+    const run = spawnSync(process.execPath, [server], {
+      input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const messages = run.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const listed = messages.find((message) => message.id === 1);
+    assert.deepEqual(
+      listed.result.tools
+        .filter((tool) => tool.name.startsWith("ptah_case_"))
+        .map((tool) => tool.name)
+        .sort(),
+      ["ptah_case_export", "ptah_case_import", "ptah_case_verify"],
+    );
+    const exported = messages.find((message) => message.id === 2);
+    assert.equal(exported.result.isError, false);
+    const verified = messages.find((message) => message.id === 3);
+    assert.equal(JSON.parse(verified.result.content[0].text).valid, true);
+    const imported = messages.find((message) => message.id === 4);
+    assert.equal(imported.result.isError, false);
+    assert.deepEqual(
+      JSON.parse(
+        await (await import("node:fs/promises")).readFile(restoredPath, "utf8"),
+      ),
+      JSON.parse(
+        await (await import("node:fs/promises")).readFile(inputPath, "utf8"),
+      ),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 void test("static analyzer adapter passes target paths as argv, bounds execution, and never launches the target", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-static-analyzer-"));
   try {
@@ -829,7 +997,9 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     const base = `http://127.0.0.1:${address.port}`;
     const page = await fetch(base);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /PTAH.*Local Investigation Workbench/s);
+    const pageHtml = await page.text();
+    assert.match(pageHtml, /PTAH.*Local Investigation Workbench/s);
+    assert.match(pageHtml, /Export verified case/);
     const upload = await fetch(`${base}/api/init`, {
       method: "POST",
       headers: {
@@ -857,8 +1027,14 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     const report = await fetch(`${base}/api/report`);
     assert.equal((await report.json()).summary.evidenceCount, 1);
     const download = await fetch(`${base}/api/download`);
+    assert.equal(download.status, 200);
+    assert.match(
+      download.headers.get("content-disposition"),
+      /ptah-case\.json/,
+    );
     const saved = JSON.parse(await download.text());
-    assert.equal(saved.evidence[0].id, "ev-ui");
+    assert.equal(verifyInvestigationCase(saved).valid, true);
+    assert.equal(saved.investigation.evidence[0].id, "ev-ui");
   } finally {
     await app.close();
   }

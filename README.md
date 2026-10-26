@@ -1,6 +1,6 @@
 # PTAH — Program Understanding & Analysis Toolkit
 
-PTAH combines a dependency-free investigation engine, CLI, MCP interface and early local workbench with the inherited REA analysis runtime. This is a migration preview; existing REA package identifiers remain compatibility interfaces. See `docs/PTAH-BRAND-AUDIT.md` for current status and remaining release gates.
+PTAH combines a dependency-free investigation engine, CLI, MCP interface and early local workbench with the inherited REA analysis runtime. PTAH investigations can be exported as checksummed portable case bundles and restored after schema, integrity, and optional target-digest verification. This is a migration preview; existing REA package identifiers remain compatibility interfaces. See `docs/PTAH-BRAND-AUDIT.md` for current status and remaining release gates.
 
 For PTAH-native commands and current limitations, read `docs/PTAH-GETTING-STARTED.md`. The inherited runtime documentation below retains upstream package, release and provenance links; those refer to REA.
 

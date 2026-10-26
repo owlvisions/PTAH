@@ -11,6 +11,7 @@ import {
   planNextAction,
   analyzeTarget,
   attachAnalysisEvidence,
+  createInvestigationCase,
 } from "./ptah-engine.mjs";
 
 const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
@@ -258,12 +259,13 @@ export async function createPtahUiServer(options = {}) {
       if (request.method === "GET" && request.url === "/api/download") {
         if (!investigation)
           return sendJson(response, 409, { error: "upload a target first" });
-        const data = Buffer.from(`${JSON.stringify(investigation, null, 2)}\n`);
+        const data = Buffer.from(
+          `${JSON.stringify(createInvestigationCase(investigation), null, 2)}\n`,
+        );
         response.writeHead(200, {
           "content-type": "application/json; charset=utf-8",
           "content-length": data.length,
-          "content-disposition":
-            'attachment; filename="ptah-investigation.json"',
+          "content-disposition": 'attachment; filename="ptah-case.json"',
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
         });

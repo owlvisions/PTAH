@@ -17,6 +17,20 @@ npm run test:ptah
 
 `plan` chooses one deterministic action that can address the highest-priority unresolved question's missing evidence kinds. It respects `--max-calls` and `--max-cost`; it does not itself invoke tools. `blocked`, `budget-exhausted`, and `no-action-needed` are explicit outcomes rather than fabricated progress.
 
+## Portable case bundles
+
+Export an investigation as a portable JSON case, verify it, then restore the ordinary investigation document:
+
+```bash
+ptah export-case --input ./sample.investigation.json --output ./sample.ptah-case.json
+ptah verify-case --input ./sample.ptah-case.json --target ./sample.bin
+ptah import-case --input ./sample.ptah-case.json --output ./restored.investigation.json --target ./sample.bin
+```
+
+The versioned `ptah-investigation-case` envelope includes the validated investigation and a SHA-256 checksum over its canonical JSON payload. Import refuses invalid schemas, checksum mismatches, and—when `--target` is supplied—a target whose current bytes do not match the recorded digest. The target file itself is never embedded or executed. The checksum detects accidental corruption; it is not a digital signature and does not authenticate who created or modified a bundle.
+
+The MCP server exposes matching `ptah_case_export`, `ptah_case_verify`, and `ptah_case_import` tools. The local workbench download now emits the same portable case format.
+
 ## Schema v1
 
 - `target`: stable identifier and SHA-256 digest of the analyzed target.

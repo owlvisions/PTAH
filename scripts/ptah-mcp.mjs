@@ -11,6 +11,11 @@ import {
   planNextAction,
   discoverProviders,
   analyzeTarget,
+  createInvestigationCase,
+  importInvestigationCase,
+  verifyInvestigationCase,
+  saveInvestigationCase,
+  saveInvestigation,
 } from "./ptah-engine.mjs";
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -48,6 +53,58 @@ const tools = [
         },
       },
       required: ["input"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_case_export",
+    description:
+      "Write a portable investigation case bundle with a SHA-256 corruption checksum. The checksum does not authenticate the author.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Investigation JSON file path" },
+        output: { type: "string", description: "Case bundle output path" },
+      },
+      required: ["input", "output"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_case_verify",
+    description:
+      "Verify case schema and checksum, optionally comparing the current target bytes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Case bundle JSON file path" },
+        target: {
+          type: "string",
+          description: "Optional target file to re-hash",
+        },
+      },
+      required: ["input"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_case_import",
+    description:
+      "Verify a portable case bundle and atomically restore its investigation JSON.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Case bundle JSON file path" },
+        output: {
+          type: "string",
+          description: "Restored investigation output path",
+        },
+        target: {
+          type: "string",
+          description: "Optional target file to verify before import",
+        },
+      },
+      required: ["input", "output"],
       additionalProperties: false,
     },
   },
@@ -149,6 +206,46 @@ async function callTool(name, args) {
         await loadInvestigation(args.input),
         args.target,
       );
+    case "ptah_case_export": {
+      const investigation = await loadInvestigation(args.input);
+      const bundle = createInvestigationCase(investigation);
+      const path = await saveInvestigationCase(args.output, investigation);
+      return {
+        status: "exported",
+        path,
+        ...bundle.integrity,
+        target: investigation.target,
+      };
+    }
+    case "ptah_case_verify": {
+      const bundle = await loadInvestigation(args.input);
+      const result = verifyInvestigationCase(bundle);
+      if (result.valid && args.target !== undefined) {
+        const target = await verifyInvestigation(
+          bundle.investigation,
+          args.target,
+        );
+        result.targetChecked = true;
+        result.targetMatches = target.targetMatches;
+        if (!target.valid) {
+          result.valid = false;
+          result.error = target.error;
+        }
+      }
+      return result;
+    }
+    case "ptah_case_import": {
+      const bundle = await loadInvestigation(args.input);
+      const investigation = await importInvestigationCase(bundle, args.target);
+      const path = await saveInvestigation(args.output, investigation);
+      return {
+        status: "imported",
+        path,
+        target: investigation.target,
+        evidenceCount: investigation.evidence.length,
+        claimCount: investigation.claims.length,
+      };
+    }
     case "ptah_report":
       return buildEvidenceReport(await loadInvestigation(args.input));
     case "ptah_graph":

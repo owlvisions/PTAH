@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { isSupportedPtahNodeVersion } from "../ptah-runtime.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const entrypoint = join(root, "scripts/ptah.mjs");
@@ -43,6 +45,106 @@ void test("PTAH self-check emits machine-readable readiness details", () => {
   assert.equal(typeof report.dependenciesInstalled, "boolean");
   assert.equal(typeof report.readyForLegacyCommands, "boolean");
   assert.ok(Array.isArray(report.issues));
+});
+
+void test("PTAH runtime readiness matches the package Node engine boundaries", () => {
+  for (const version of [
+    "22.23.4",
+    "22.99.0",
+    "24.22.1",
+    "24.99.0",
+    "26.12.1",
+    "27.0.0",
+  ])
+    assert.equal(isSupportedPtahNodeVersion(version), true, version);
+  for (const version of [
+    "22.23.3",
+    "23.0.0",
+    "24.22.0",
+    "25.0.0",
+    "26.12.0",
+    "24.22.1-rc.1",
+    "not-a-version",
+  ])
+    assert.equal(isSupportedPtahNodeVersion(version), false, version);
+});
+
+void test("case export, verification, and import preserve investigations and refuse tampering", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-case-cli-"));
+  try {
+    const target = join(dir, "target.bin");
+    const investigation = join(dir, "investigation.json");
+    const bundle = join(dir, "case.json");
+    const restored = join(dir, "restored.json");
+    const rejected = join(dir, "rejected.json");
+    await writeFile(target, "portable case target");
+    assert.equal(
+      run(["init", "--target", target, "--output", investigation]).status,
+      0,
+    );
+    assert.equal(
+      run([
+        "add-evidence",
+        "--input",
+        investigation,
+        "--output",
+        investigation,
+        "--id",
+        "ev-case",
+        "--kind",
+        "static-analysis",
+        "--summary",
+        "Fixture metadata recorded",
+        "--source",
+        "case test",
+      ]).status,
+      0,
+    );
+    const exported = run([
+      "export-case",
+      "--input",
+      investigation,
+      "--output",
+      bundle,
+    ]);
+    assert.equal(exported.status, 0, exported.stderr);
+    assert.match(JSON.parse(exported.stdout).payloadSha256, /^[a-f0-9]{64}$/);
+    const checked = run(["verify-case", "--input", bundle, "--target", target]);
+    assert.equal(checked.status, 0, checked.stderr);
+    assert.equal(JSON.parse(checked.stdout).valid, true);
+    const imported = run([
+      "import-case",
+      "--input",
+      bundle,
+      "--output",
+      restored,
+      "--target",
+      target,
+    ]);
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.deepEqual(
+      JSON.parse(await readFile(restored, "utf8")),
+      JSON.parse(await readFile(investigation, "utf8")),
+    );
+    const tampered = JSON.parse(await readFile(bundle, "utf8"));
+    tampered.investigation.evidence[0].summary = "tampered";
+    await writeFile(bundle, JSON.stringify(tampered));
+    const invalid = run(["verify-case", "--input", bundle]);
+    assert.equal(invalid.status, 2);
+    assert.equal(JSON.parse(invalid.stdout).valid, false);
+    const refused = run([
+      "import-case",
+      "--input",
+      bundle,
+      "--output",
+      rejected,
+    ]);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /checksum mismatch/);
+    await assert.rejects(readFile(rejected), { code: "ENOENT" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 void test("root branding identifies PTAH and documents the remaining compatibility migration", async () => {

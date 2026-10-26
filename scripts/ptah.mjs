@@ -25,7 +25,12 @@ import {
   analyzeTarget,
   attachAnalysisEvidence,
   verifyInvestigation,
+  createInvestigationCase,
+  importInvestigationCase,
+  verifyInvestigationCase,
+  saveInvestigationCase,
 } from "./ptah-engine.mjs";
+import { isSupportedPtahNodeVersion } from "./ptah-runtime.mjs";
 
 process.stdout.on("error", (error) => {
   if (error.code === "EPIPE") process.exit(0);
@@ -79,6 +84,15 @@ function printHelp() {
   );
   process.stdout.write(
     `  ptah verify --input FILE [--target FILE]  Validate evidence and optionally re-hash target bytes\n`,
+  );
+  process.stdout.write(
+    `  ptah export-case --input FILE --output FILE  Create a portable checksummed case bundle\n`,
+  );
+  process.stdout.write(
+    `  ptah verify-case --input FILE [--target FILE]  Verify a case bundle and optionally its target\n`,
+  );
+  process.stdout.write(
+    `  ptah import-case --input FILE --output FILE [--target FILE]  Verify and restore a case bundle\n`,
   );
   process.stdout.write(
     `  ptah ui [--port 4177]  Start the loopback-only local GUI\n`,
@@ -140,10 +154,7 @@ async function fileExists(path) {
 async function selfCheck(json = false) {
   const [major, minor, patch] = process.versions.node.split(".").map(Number);
   const nodeVersion = { major, minor, patch };
-  const supported =
-    (major === 22 && (minor > 19 || (minor === 19 && patch >= 0))) ||
-    (major === 24 && (minor > 11 || (minor === 11 && patch >= 0))) ||
-    major >= 26;
+  const supported = isSupportedPtahNodeVersion(process.versions.node);
   const runtimeCandidates = [
     join(root, "dist/cli-runtime/cli.js"),
     join(root, "dist/mcp/main.js"),
@@ -365,6 +376,55 @@ async function runVerify() {
   if (!result.valid) process.exitCode = 2;
 }
 
+async function readJsonFile(filePath) {
+  return JSON.parse(await readFile(resolve(process.cwd(), filePath), "utf8"));
+}
+
+async function runExportCase() {
+  const output = optionValue("--output");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const bundle = createInvestigationCase(await readInvestigationInput());
+  const savedTo = await saveInvestigationCase(output, bundle.investigation);
+  process.stdout.write(
+    `${JSON.stringify({ status: "exported", path: savedTo, ...bundle.integrity }, null, 2)}\n`,
+  );
+}
+
+async function runVerifyCase() {
+  const inputPath = optionValue("--input");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  const bundle = await readJsonFile(inputPath);
+  const result = verifyInvestigationCase(bundle);
+  const targetPath = optionValue("--target");
+  if (result.valid && targetPath !== undefined) {
+    const target = await verifyInvestigation(bundle.investigation, targetPath);
+    result.targetChecked = true;
+    result.targetMatches = target.targetMatches;
+    if (!target.valid) {
+      result.valid = false;
+      result.error = target.error;
+    }
+  }
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (!result.valid) process.exitCode = 2;
+}
+
+async function runImportCase() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const bundle = await readJsonFile(inputPath);
+  const investigation = await importInvestigationCase(
+    bundle,
+    optionValue("--target"),
+  );
+  const savedTo = await saveInvestigation(output, investigation);
+  process.stdout.write(
+    `${JSON.stringify({ status: "imported", path: savedTo, target: investigation.target, evidenceCount: investigation.evidence.length, claimCount: investigation.claims.length }, null, 2)}\n`,
+  );
+}
+
 async function runEngineCommand(command) {
   try {
     const input = await readInvestigationInput();
@@ -548,6 +608,17 @@ if (
   } catch (error) {
     process.stderr.write(
       `PTAH verify failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  }
+} else if (["export-case", "verify-case", "import-case"].includes(args[0])) {
+  try {
+    if (args[0] === "export-case") await runExportCase();
+    else if (args[0] === "verify-case") await runVerifyCase();
+    else await runImportCase();
+  } catch (error) {
+    process.stderr.write(
+      `PTAH ${args[0]} failed: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 1;
   }
