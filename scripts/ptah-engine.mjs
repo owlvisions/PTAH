@@ -538,6 +538,180 @@ export function buildEvidenceReport(input) {
   };
 }
 
+function markdownCell(value) {
+  return String(value ?? "")
+    .replaceAll("|", "\\|")
+    .replaceAll(/\r?\n/g, " ")
+    .trim();
+}
+
+function evidenceRow(item) {
+  return `| ${markdownCell(item.id)} | ${markdownCell(item.kind)} | ${markdownCell(item.confidence)} | ${markdownCell(item.source)} | ${markdownCell(item.summary)} |`;
+}
+
+const EVIDENCE_TABLE_HEADER = [
+  "| ID | Kind | Confidence | Source | Summary |",
+  "| --- | --- | --- | --- | --- |",
+];
+
+/** Render a provenance-preserving Markdown report; no claim is upgraded beyond its evidence. */
+export function renderEvidenceReportMarkdown(input) {
+  const investigation = validateInvestigation(input);
+  const report = buildEvidenceReport(investigation);
+  const lines = [
+    `# PTAH evidence report — ${markdownCell(report.target.id)}`,
+    "",
+    `- Target SHA-256: \`${report.target.sha256}\``,
+    `- Schema version: ${report.schemaVersion}`,
+    `- Evidence items: ${report.summary.evidenceCount}`,
+    `- Claims: ${report.summary.claimCount}`,
+    `- Open questions: ${report.summary.unresolvedQuestionCount} of ${report.summary.questionCount}`,
+    "",
+    "## Claims",
+    "",
+  ];
+  if (report.claims.length === 0) lines.push("_No claims recorded._", "");
+  for (const claim of report.claims) {
+    lines.push(
+      `### ${markdownCell(claim.id)} — ${claim.supportLabel} (${claim.status})`,
+      "",
+      claim.text.trim(),
+      "",
+      ...EVIDENCE_TABLE_HEADER,
+      ...claim.evidence.map(evidenceRow),
+      "",
+    );
+  }
+  lines.push("## Evidence", "");
+  if (investigation.evidence.length === 0)
+    lines.push("_No evidence recorded._", "");
+  else
+    lines.push(
+      ...EVIDENCE_TABLE_HEADER,
+      ...investigation.evidence.map(evidenceRow),
+      "",
+    );
+  const openQuestions = investigation.questions
+    .filter((q) => !q.resolved)
+    .sort(
+      (a, b) =>
+        (b.priority ?? 50) - (a.priority ?? 50) || a.id.localeCompare(b.id),
+    );
+  lines.push("## Open questions", "");
+  if (openQuestions.length === 0) lines.push("_None._", "");
+  for (const question of openQuestions) {
+    const needs = question.requiredEvidenceKinds?.length
+      ? ` — needs ${question.requiredEvidenceKinds.join(", ")}`
+      : "";
+    lines.push(
+      `- **${markdownCell(question.id)}** (priority ${question.priority ?? 50}): ${markdownCell(question.text)}${needs}`,
+    );
+  }
+  if (openQuestions.length > 0) lines.push("");
+  lines.push(
+    "---",
+    "",
+    "Support labels are derived from cited evidence confidence. `verified` appears only when the investigation workflow recorded that status; PTAH does not infer verification. Inferred-only claims require independent confirmation before being relied upon.",
+    "",
+  );
+  return lines.join("\n");
+}
+
+function indexById(items) {
+  return new Map(items.map((item) => [item.id, item]));
+}
+
+function changedFields(before, after) {
+  const serialize = (owner, key) =>
+    Object.hasOwn(owner, key) ? canonicalJson(owner[key]) : undefined;
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((key) => key !== "id")
+    .sort()
+    .filter((key) => serialize(before, key) !== serialize(after, key));
+}
+
+function diffCollection(baseItems, headItems) {
+  const base = indexById(baseItems);
+  const head = indexById(headItems);
+  const added = [...head.keys()].filter((id) => !base.has(id)).sort();
+  const removed = [...base.keys()].filter((id) => !head.has(id)).sort();
+  const changed = [...head.keys()]
+    .filter((id) => base.has(id))
+    .sort()
+    .map((id) => ({ id, fields: changedFields(base.get(id), head.get(id)) }))
+    .filter((entry) => entry.fields.length > 0);
+  return { added, removed, changed };
+}
+
+function unwrapInvestigation(input) {
+  if (
+    input &&
+    typeof input === "object" &&
+    input.format === INVESTIGATION_CASE_FORMAT
+  ) {
+    const checked = validateInvestigationCase(input);
+    if (!checked.matches)
+      throw new Error("case payload checksum mismatch; refusing to diff");
+    return checked.investigation;
+  }
+  return validateInvestigation(input);
+}
+
+/** Deterministically compare two investigations or verified case bundles. */
+export function diffInvestigations(baseInput, headInput) {
+  const base = unwrapInvestigation(baseInput);
+  const head = unwrapInvestigation(headInput);
+  const sameTarget =
+    base.target.sha256.toLowerCase() === head.target.sha256.toLowerCase();
+  const headClaims = indexById(head.claims);
+  const claimStatusChanges = base.claims
+    .filter((claim) => headClaims.has(claim.id))
+    .map((claim) => ({
+      id: claim.id,
+      from: claim.status ?? "hypothesis",
+      to: headClaims.get(claim.id).status ?? "hypothesis",
+    }))
+    .filter((change) => change.from !== change.to)
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const headQuestions = indexById(head.questions);
+  const questionsResolved = base.questions
+    .filter((q) => !q.resolved && headQuestions.get(q.id)?.resolved === true)
+    .map((q) => q.id)
+    .sort();
+  const questionsReopened = base.questions
+    .filter((q) => q.resolved && headQuestions.get(q.id)?.resolved === false)
+    .map((q) => q.id)
+    .sort();
+  const sections = {
+    evidence: diffCollection(base.evidence, head.evidence),
+    claims: diffCollection(base.claims, head.claims),
+    questions: diffCollection(base.questions, head.questions),
+    actions: diffCollection(base.actions, head.actions),
+  };
+  const changeCount = Object.values(sections).reduce(
+    (total, section) =>
+      total +
+      section.added.length +
+      section.removed.length +
+      section.changed.length,
+    0,
+  );
+  const result = {
+    schemaVersion: INVESTIGATION_SCHEMA_VERSION,
+    target: { base: base.target, head: head.target, sameTarget },
+    identical: sameTarget && changeCount === 0,
+    changeCount,
+    ...sections,
+    claimStatusChanges,
+    questionsResolved,
+    questionsReopened,
+  };
+  if (!sameTarget)
+    result.target.note =
+      "Targets differ; evidence is not transferable between target digests.";
+  return result;
+}
+
 /** Build a portable directed graph from target, evidence, claims, and questions. */
 export function buildEvidenceGraph(input) {
   const investigation = validateInvestigation(input);

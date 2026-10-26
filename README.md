@@ -1,13 +1,104 @@
 # PTAH — Program Understanding & Analysis Toolkit
 
-PTAH combines a dependency-free investigation engine, CLI, MCP interface and early local workbench with the inherited REA analysis runtime. PTAH investigations can be exported as checksummed portable case bundles and restored after schema, integrity, and optional target-digest verification. This is a migration preview; existing REA package identifiers remain compatibility interfaces. See `docs/PTAH-BRAND-AUDIT.md` for current status and remaining release gates.
-
-For PTAH-native commands and current limitations, read `docs/PTAH-GETTING-STARTED.md`. The inherited runtime documentation below retains upstream package, release and provenance links; those refer to REA.
-
 <div align="center">
 
-**English** · [简体中文](docs/readme/README_zh.md) · [繁體中文](docs/readme/README_zh-TW.md) · [日本語](docs/readme/README_ja.md) · [한국어](docs/readme/README_ko.md) · [Türkçe](docs/readme/README_tr.md) · [Русский](docs/readme/README_ru.md) · [Tiếng Việt](docs/readme/README_vi.md) · [ไทย](docs/readme/README_th.md) · [Deutsch](docs/readme/README_de.md) · [Español](docs/readme/README_es.md) · [Français](docs/readme/README_fr.md) · [Українська](docs/readme/README_uk.md) · [Polski](docs/readme/README_pl.md) · [Português (Brasil)](docs/readme/README_pt-BR.md) · [العربية](docs/readme/README_ar.md) · [فارسی](docs/readme/README_fa.md) · [Bahasa Indonesia](docs/readme/README_id.md) · [Italiano](docs/readme/README_it.md)
-· [Ελληνικά](docs/readme/README_el.md) · [മലയാളം](docs/readme/README_ml.md) · [Roman Urdu](docs/readme/README_ur-Latn.md) · [Română](docs/readme/README_ro.md)
+**بتاح · PTAH** — evidence-first reverse engineering for binaries, applications, and runtime behavior.
+
+**Every claim cites its evidence. Targets are never executed. Results are portable, checksummed, and diffable.**
+
+`ptah` CLI · `ptah-mcp` MCP server · `ptah ui` local workbench · inherited REA analyzers underneath
+
+</div>
+
+PTAH is the primary product in this repository. It owns the investigation model, the CLI and MCP contracts, the local workbench, and the documentation. The REA runtime it inherited is retained as an internal compatibility layer: PTAH calls REA's analyzers through bounded adapters and keeps the `rea` / `rea-agents` entry points working for existing automation while PTAH-native capabilities grow.
+
+## Why PTAH
+
+Most reverse-engineering assistants return answers. PTAH returns **investigations**: versioned, provenance-checked records that can be verified, exported, imported, compared, and reported without trusting the tool or the model that produced them.
+
+| PTAH guarantee                  | What it means in practice                                                                                                                                                                                                                          |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Evidence first**              | Every claim must cite recorded evidence with a confidence level (`observed`, `derived`, `inferred`). Reports label claims `evidence-backed`, `derived-support`, or `inference-only`; `verified` appears only when a workflow actually verified it. |
+| **Bound to target bytes**       | Investigations and every evidence item carry the target's SHA-256. Stale or cross-target evidence is rejected; `ptah verify --target` detects drift when the file changes.                                                                         |
+| **No target execution**         | Fingerprinting, metadata analysis, and WebAssembly validation launch the analyzer against the file with fixed argv, no shell, a wall-clock timeout, and output caps. The target itself is never run.                                               |
+| **Portable, checksummed cases** | `export-case` wraps an investigation in a `ptah-investigation-case` envelope with a canonical-JSON SHA-256. `import-case` refuses corruption, schema violations, and target mismatch.                                                              |
+| **Deterministic**               | Reports, graphs, plans, and diffs are byte-stable for the same input, so they can be reviewed, committed, and compared across time.                                                                                                                |
+| **Honest planning**             | The bounded planner returns `planned`, `blocked`, `budget-exhausted`, or `no-action-needed` — never fabricated progress.                                                                                                                           |
+| **Local by default**            | The workbench binds to loopback only, validates Host headers, stores uploads in a private temp workspace with restrictive permissions, and deletes them on shutdown.                                                                               |
+
+## Quick start with PTAH
+
+PTAH-native commands run from a source checkout without installing project dependencies. Use a supported Node.js (`^22.23.4 || ^24.22.1 || >=26.12.1`).
+
+```sh
+node scripts/ptah.mjs help
+node scripts/ptah.mjs self-check --json
+node scripts/ptah.mjs fingerprint --target ./sample.bin
+node scripts/ptah.mjs init --target ./sample.bin --output ./sample.investigation.json
+node scripts/ptah.mjs add-evidence --input ./sample.investigation.json --output ./sample.investigation.json \
+  --id ev-1 --kind static-analysis --summary "Exports a login handler" --source "objdump -h" --confidence observed
+node scripts/ptah.mjs report --input ./sample.investigation.json --format markdown
+node scripts/ptah.mjs export-case --input ./sample.investigation.json --output ./sample.ptah-case.json
+node scripts/ptah.mjs diff --base ./yesterday.ptah-case.json --head ./sample.ptah-case.json
+node scripts/ptah.mjs ui
+```
+
+Run the dependency-free test suite with `npm run test:ptah`. Full instructions, including the MCP registration for `ptah-mcp`, are in `docs/PTAH-GETTING-STARTED.md` and `docs/PTAH-MCP.md`.
+
+## What PTAH does today
+
+- **Investigation engine** (`scripts/ptah-engine.mjs`): fingerprinting with magic-signature detection, schema and provenance validation, evidence reports (JSON and Markdown), directed evidence graphs, deterministic investigation diff, target-drift verification, bounded planning, and checksummed case bundles.
+- **CLI** (`ptah`): `info`, `self-check`, `providers [--probe]`, `fingerprint`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `verify`, `export-case`, `verify-case`, `import-case`, `report [--format markdown]`, `diff`, `graph`, `plan`, `analyze`, and `ui`. Any other command is routed to the inherited REA CLI.
+- **MCP server** (`ptah-mcp`): `ptah_fingerprint`, `ptah_verify`, `ptah_report`, `ptah_diff`, `ptah_graph`, `ptah_plan`, `ptah_providers`, `ptah_static_analyze`, `ptah_case_export`, `ptah_case_verify`, and `ptah_case_import` over stdio JSON-RPC.
+- **Workbench** (`ptah ui`): upload a target, build the investigation, run bounded metadata analysis, inspect reports/graphs/plans, download a Markdown report, export a verified case, and resume one after confirming the target matches.
+- **Inherited analyzers** (REA layer): native binaries via Hopper, Ghidra, or IDA; JavaScript and Electron applications; .NET assemblies; Android; WebAssembly; firmware; and web captures. These run beneath PTAH and are documented in the collapsed section below.
+
+## Architecture
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  PTAH surfaces      ptah CLI · ptah-mcp (MCP) · ptah ui      │
+├──────────────────────────────────────────────────────────────┤
+│  PTAH engine        investigations · evidence · claims       │
+│                     verify · report · graph · plan · diff    │
+│                     checksummed portable cases               │
+├──────────────────────────────────────────────────────────────┤
+│  Bounded adapters   objdump · llvm-objdump · wasm-tools      │
+│                     fixed argv · no shell · timeout · caps   │
+├──────────────────────────────────────────────────────────────┤
+│  Inherited REA runtime (compatibility layer)                 │
+│  Hopper/Ghidra/IDA bridges · JS/Electron · .NET · Android …  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+PTAH never forks REA state: it adapts REA evidence into its own provenance model (`src/application/investigation/PtahEvidenceAdapter.ts`) and replaces inherited analyzers only when parity tests pass.
+
+## PTAH documentation
+
+| Topic                                          | Location                                            |
+| ---------------------------------------------- | --------------------------------------------------- |
+| Getting started, commands, limits              | `docs/PTAH-GETTING-STARTED.md`                      |
+| Engine schema and case bundles                 | `docs/PTAH-ENGINE-V1.md`                            |
+| MCP server and tools                           | `docs/PTAH-MCP.md`                                  |
+| Local workbench                                | `docs/PTAH-UI.md`                                   |
+| Architecture and roadmap                       | `docs/PTAH-ARCHITECTURE.md`, `docs/PTAH-ROADMAP.md` |
+| Development prompt for agents and contributors | `docs/PTAH-DEVELOPMENT-PROMPT.md`                   |
+| Brand migration status and release gates       | `docs/PTAH-BRAND-AUDIT.md`                          |
+| Upstream REA sync policy                       | `docs/PTAH-UPSTREAM-SYNC.md`                        |
+
+## Status and honesty notes
+
+- This repository is a **migration preview**. PTAH is the product identity and the primary interface; the npm package is still published as `rea-agents`, and `mcpName`, repository URLs, and legacy executables remain unchanged until an owner-controlled namespace and coordinated release migration exist (see `docs/PTAH-BRAND-AUDIT.md`).
+- Case checksums detect corruption; they are not signatures and do not authenticate authors.
+- Analyzer adapters are bounded but not OS-sandboxed yet. Treat every analyzed target as hostile.
+- Capability claims above are backed by `npm run test:ptah`, CI checks, and Git history. Nothing is described as implemented without tests.
+
+## Licensing
+
+PTAH-authored and REA-authored code are licensed under MIT; see the inherited section below for third-party notices and commercial-tool terms.
+
+<details>
+<summary><strong>Inherited REA runtime documentation</strong> — analyzers, setup, showcases, and FAQ for the compatibility layer beneath PTAH (click to expand)</summary>
 
 ## REA compatibility runtime — upstream documentation
 
@@ -473,3 +564,5 @@ demos remain subject to vendor terms, including user, feature, automation, and
 output sharing restrictions. Cracked copies, stolen keys, unauthorized key
 sharing, and bypassing license restrictions are not authorized. This guidance
 does not amend MIT or third-party licenses.
+
+</details>

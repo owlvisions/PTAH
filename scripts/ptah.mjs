@@ -29,6 +29,8 @@ import {
   importInvestigationCase,
   verifyInvestigationCase,
   saveInvestigationCase,
+  renderEvidenceReportMarkdown,
+  diffInvestigations,
 } from "./ptah-engine.mjs";
 import { isSupportedPtahNodeVersion } from "./ptah-runtime.mjs";
 
@@ -46,11 +48,12 @@ const packageJson = JSON.parse(
 
 function printHelp() {
   process.stdout.write(
-    `PTAH — program analysis and reverse-engineering platform\n\n`,
+    `PTAH (بتاح) — Program Understanding & Analysis Toolkit\n` +
+      `Evidence-first reverse engineering: every claim cites provenance, targets are never executed.\n\n`,
   );
   process.stdout.write(`Usage:\n`);
   process.stdout.write(
-    `  ptah info                 Show PTAH migration and engine information\n`,
+    `  ptah info                 Show PTAH product and engine information\n`,
   );
   process.stdout.write(
     `  ptah self-check [--json]  Check local runtime/build readiness\n`,
@@ -98,7 +101,10 @@ function printHelp() {
     `  ptah ui [--port 4177]  Start the loopback-only local GUI\n`,
   );
   process.stdout.write(
-    `  ptah report --input FILE  Validate an investigation and print an evidence report\n`,
+    `  ptah report --input FILE [--format json|markdown]  Validate an investigation and print an evidence report\n`,
+  );
+  process.stdout.write(
+    `  ptah diff --base FILE --head FILE  Compare two investigations or verified case bundles\n`,
   );
   process.stdout.write(
     `  ptah graph --input FILE   Export a directed evidence graph as JSON\n`,
@@ -107,37 +113,54 @@ function printHelp() {
     `  ptah plan --input FILE    Plan one bounded investigation step\n`,
   );
   process.stdout.write(`  ptah help                 Show this help\n`);
-  process.stdout.write(`  ptah <existing-rea-command>\n`);
+  process.stdout.write(`  ptah <rea-command>\n`);
   process.stdout.write(
-    `                            Run an existing REA command through the compatibility layer\n\n`,
+    `                            Run an inherited REA analyzer command through PTAH's compatibility layer\n\n`,
   );
   process.stdout.write(
-    "The original REA CLI remains available as `rea` and `rea-agents`.\n",
+    "REA remains available as `rea` and `rea-agents` for existing automation.\n",
   );
 }
 
 function printInfo(json = false) {
   const info = {
     product: "PTAH",
+    productName: "PTAH (بتاح) — Program Understanding & Analysis Toolkit",
     status: "migration-preview",
+    packageIdentityStatus:
+      "npm package remains rea-agents until a coordinated rename is approved",
     compatibilityEngine: packageJson.name,
     compatibilityEngineVersion: packageJson.version,
     packageManagerNameUnchanged: true,
     entrypoints: {
       ptah: "scripts/ptah.mjs",
+      ptahMcp: "scripts/ptah-mcp.mjs",
+      ptahUi: "scripts/ptah-ui.mjs",
       legacy: "scripts/rea.mjs",
     },
-    nativeCapabilities: "delegated to the existing REA runtime in this phase",
+    nativeCapabilities: [
+      "target fingerprinting without execution",
+      "provenance-validated investigations",
+      "evidence reports (JSON and Markdown) and graphs",
+      "deterministic investigation diff",
+      "bounded planner",
+      "checksummed portable case bundles",
+      "bounded static analyzer adapters",
+      "loopback-only workbench",
+    ],
+    inheritedCapabilities:
+      "REA analyzers run beneath PTAH through the compatibility layer",
     nextMilestone:
-      "baseline evaluation and unified investigation/evidence contracts",
+      "evaluation harness, provider conformance suite, and OS-level analyzer isolation",
   };
   process.stdout.write(
     json
       ? `${JSON.stringify(info, null, 2)}\n`
-      : `PTAH migration preview\n` +
+      : `${info.productName}\n` +
+          `Status: ${info.status} (${info.packageIdentityStatus})\n` +
           `Compatibility engine: ${info.compatibilityEngine} ${info.compatibilityEngineVersion}\n` +
-          `Status: ${info.status}\n` +
-          `Existing REA commands remain available.\n` +
+          `PTAH-native: ${info.nativeCapabilities.join("; ")}\n` +
+          `Inherited: ${info.inheritedCapabilities}\n` +
           `Next milestone: ${info.nextMilestone}\n`,
   );
 }
@@ -425,11 +448,31 @@ async function runImportCase() {
   );
 }
 
+async function runDiff() {
+  const basePath = optionValue("--base");
+  const headPath = optionValue("--head");
+  if (!basePath) throw new Error("Missing required --base FILE argument.");
+  if (!headPath) throw new Error("Missing required --head FILE argument.");
+  const result = diffInvestigations(
+    await readJsonFile(basePath),
+    await readJsonFile(headPath),
+  );
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (!result.identical) process.exitCode = 3;
+}
+
 async function runEngineCommand(command) {
   try {
     const input = await readInvestigationInput();
     let output;
     if (command === "report") {
+      const format = optionValue("--format") ?? "json";
+      if (format === "markdown" || format === "md") {
+        process.stdout.write(renderEvidenceReportMarkdown(input));
+        return;
+      }
+      if (format !== "json")
+        throw new Error("--format must be json or markdown");
       output = buildEvidenceReport(input);
     } else if (command === "graph") {
       output = buildEvidenceGraph(input);
@@ -619,6 +662,15 @@ if (
   } catch (error) {
     process.stderr.write(
       `PTAH ${args[0]} failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  }
+} else if (args[0] === "diff") {
+  try {
+    await runDiff();
+  } catch (error) {
+    process.stderr.write(
+      `PTAH diff failed: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 1;
   }

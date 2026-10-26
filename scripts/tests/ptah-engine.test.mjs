@@ -19,6 +19,8 @@ import {
   verifyInvestigationCase,
   importInvestigationCase,
   saveInvestigationCase,
+  renderEvidenceReportMarkdown,
+  diffInvestigations,
 } from "../ptah-engine.mjs";
 
 const targetDigest = "a".repeat(64);
@@ -247,6 +249,98 @@ void test("case bundles are deterministic, integrity-checked, and target-bound o
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+void test("markdown report preserves provenance, escapes table cells, and never infers verification", () => {
+  const investigation = fixture({
+    evidence: [
+      { ...fixture().evidence[0], summary: "Found | pipe\nand newline" },
+      {
+        id: "ev-guess",
+        kind: "other",
+        summary: "Probably a login flow",
+        source: "analyst note",
+        confidence: "inferred",
+        targetSha256: targetDigest,
+      },
+    ],
+    claims: [
+      ...fixture().claims,
+      {
+        id: "claim-guess",
+        text: "The app authenticates users",
+        evidenceIds: ["ev-guess"],
+      },
+    ],
+  });
+  const markdown = renderEvidenceReportMarkdown(investigation);
+  assert.equal(markdown, renderEvidenceReportMarkdown(investigation));
+  assert.match(markdown, /^# PTAH evidence report — sample-app/m);
+  assert.match(markdown, new RegExp(`\`${targetDigest}\``));
+  assert.match(markdown, /### claim-1 — evidence-backed \(supported\)/);
+  assert.match(markdown, /### claim-guess — inference-only \(hypothesis\)/);
+  assert.match(markdown, /Found \\\| pipe and newline/);
+  assert.doesNotMatch(markdown, /— verified/);
+  assert.match(
+    markdown,
+    /\*\*q-runtime\*\* \(priority 90\).*needs runtime-observation/,
+  );
+  assert.match(markdown, /PTAH does not infer verification/);
+});
+
+void test("investigation diff is deterministic and reports target drift, changes, and status transitions", () => {
+  const base = fixture();
+  const head = fixture({
+    evidence: [
+      { ...base.evidence[0], summary: "Found a handler reference (updated)" },
+      {
+        id: "ev-runtime",
+        kind: "runtime-observation",
+        summary: "Handler executed under trace",
+        source: "trace.log:42",
+        confidence: "observed",
+        targetSha256: targetDigest,
+      },
+    ],
+    claims: [{ ...base.claims[0], status: "verified" }],
+    questions: [{ ...base.questions[0], resolved: true }],
+    actions: [base.actions[1]],
+  });
+  const diff = diffInvestigations(base, head);
+  assert.equal(diff.identical, false);
+  assert.equal(diff.target.sameTarget, true);
+  assert.deepEqual(diff.evidence, {
+    added: ["ev-runtime"],
+    removed: [],
+    changed: [{ id: "ev-static", fields: ["summary"] }],
+  });
+  assert.deepEqual(diff.claimStatusChanges, [
+    { id: "claim-1", from: "supported", to: "verified" },
+  ]);
+  assert.deepEqual(diff.questionsResolved, ["q-runtime"]);
+  assert.deepEqual(diff.actions.removed, ["a-runtime"]);
+  assert.equal(diff.changeCount, 5);
+  assert.equal(
+    JSON.stringify(diffInvestigations(base, head)),
+    JSON.stringify(diff),
+  );
+  assert.equal(diffInvestigations(base, base).identical, true);
+
+  const otherTarget = fixture({
+    target: { id: "other", sha256: "b".repeat(64) },
+    evidence: [],
+    claims: [],
+  });
+  const drift = diffInvestigations(base, otherTarget);
+  assert.equal(drift.target.sameTarget, false);
+  assert.match(drift.target.note, /not transferable/);
+  assert.equal(drift.identical, false);
+
+  const bundle = createInvestigationCase(head);
+  assert.equal(diffInvestigations(base, bundle).changeCount, 5);
+  const tampered = structuredClone(bundle);
+  tampered.investigation.claims[0].text = "edited";
+  assert.throws(() => diffInvestigations(base, tampered), /checksum mismatch/);
 });
 
 void test("planner chooses an action that covers highest-priority missing evidence", () => {
@@ -800,6 +894,24 @@ void test("PTAH MCP exports, verifies, and imports portable case bundles", async
           },
         },
       },
+      {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+          name: "ptah_report",
+          arguments: { input: inputPath, format: "markdown" },
+        },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: {
+          name: "ptah_diff",
+          arguments: { base: inputPath, head: bundlePath },
+        },
+      },
     ];
     const run = spawnSync(process.execPath, [server], {
       input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
@@ -825,6 +937,19 @@ void test("PTAH MCP exports, verifies, and imports portable case bundles", async
     assert.equal(JSON.parse(verified.result.content[0].text).valid, true);
     const imported = messages.find((message) => message.id === 4);
     assert.equal(imported.result.isError, false);
+    const markdown = messages.find((message) => message.id === 5);
+    assert.equal(markdown.result.isError, false);
+    assert.match(
+      markdown.result.content[0].text,
+      /^# PTAH evidence report — mcp-target/,
+    );
+    const diffed = messages.find((message) => message.id === 6);
+    assert.equal(diffed.result.isError, false);
+    assert.equal(JSON.parse(diffed.result.content[0].text).identical, true);
+    assert.ok(
+      listed.result.tools.some((tool) => tool.name === "ptah_diff"),
+      "ptah_diff must be listed",
+    );
     assert.deepEqual(
       JSON.parse(
         await (await import("node:fs/promises")).readFile(restoredPath, "utf8"),
@@ -1033,6 +1158,11 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     assert.equal(evidence.status, 201);
     const report = await fetch(`${base}/api/report`);
     assert.equal((await report.json()).summary.evidenceCount, 1);
+    const markdownReport = await fetch(`${base}/api/report.md`);
+    assert.equal(markdownReport.status, 200);
+    assert.match(markdownReport.headers.get("content-type"), /text\/markdown/);
+    assert.match(await markdownReport.text(), /\| ev-ui \| static-analysis \|/);
+    assert.match(pageHtml, /Markdown report/);
     const download = await fetch(`${base}/api/download`);
     assert.equal(download.status, 200);
     assert.match(

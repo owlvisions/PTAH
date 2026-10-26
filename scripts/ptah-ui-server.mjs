@@ -13,6 +13,7 @@ import {
   attachAnalysisEvidence,
   createInvestigationCase,
   importInvestigationCase,
+  renderEvidenceReportMarkdown,
 } from "./ptah-engine.mjs";
 
 const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
@@ -267,6 +268,22 @@ export async function createPtahUiServer(options = {}) {
         if (!investigation)
           return sendJson(response, 409, { error: "upload a target first" });
         return sendJson(response, 200, buildEvidenceReport(investigation));
+      }
+      if (request.method === "GET" && request.url === "/api/report.md") {
+        if (!investigation)
+          return sendJson(response, 409, { error: "upload a target first" });
+        const markdown = Buffer.from(
+          renderEvidenceReportMarkdown(investigation),
+        );
+        response.writeHead(200, {
+          "content-type": "text/markdown; charset=utf-8",
+          "content-length": markdown.length,
+          "content-disposition": 'attachment; filename="ptah-report.md"',
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        });
+        response.end(markdown);
+        return;
       }
       if (request.method === "GET" && request.url === "/api/graph") {
         if (!investigation)

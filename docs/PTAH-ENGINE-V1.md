@@ -17,6 +17,12 @@ npm run test:ptah
 
 `plan` chooses one deterministic action that can address the highest-priority unresolved question's missing evidence kinds. It respects `--max-calls` and `--max-cost`; it does not itself invoke tools. `blocked`, `budget-exhausted`, and `no-action-needed` are explicit outcomes rather than fabricated progress.
 
+## Markdown reports and investigation diff
+
+`report --format markdown` renders the JSON report for human review. Support labels (`evidence-backed`, `derived-support`, `inference-only`, `verified`) are computed from cited evidence confidence exactly as in the JSON output; table cells are escaped and the rendering is byte-stable for the same input.
+
+`diff --base FILE --head FILE` accepts investigations or verified case bundles on either side (a bundle with a checksum mismatch is refused). The result lists added, removed, and changed items by ID for evidence, claims, questions, and actions, claim status transitions, resolved and reopened questions, and a `target.sameTarget` flag; evidence is never treated as transferable between different target digests. The MCP equivalents are `ptah_report` with `format` and `ptah_diff`.
+
 ## Portable case bundles
 
 Export an investigation as a portable JSON case, verify it, then restore the ordinary investigation document:

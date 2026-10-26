@@ -16,6 +16,8 @@ import {
   verifyInvestigationCase,
   saveInvestigationCase,
   saveInvestigation,
+  renderEvidenceReportMarkdown,
+  diffInvestigations,
 } from "./ptah-engine.mjs";
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -111,7 +113,7 @@ const tools = [
   {
     name: "ptah_report",
     description:
-      "Create a provenance-aware report from a validated PTAH investigation.",
+      "Create a provenance-aware report from a validated PTAH investigation as JSON or Markdown.",
     inputSchema: {
       type: "object",
       properties: {
@@ -119,8 +121,33 @@ const tools = [
           type: "string",
           description: "Path to a PTAH investigation JSON file",
         },
+        format: {
+          type: "string",
+          enum: ["json", "markdown"],
+          description: "Output format; defaults to json",
+        },
       },
       required: ["input"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_diff",
+    description:
+      "Deterministically compare two investigations or verified case bundles: target drift, evidence/claim/question/action changes, claim status transitions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        base: {
+          type: "string",
+          description: "Base investigation or case path",
+        },
+        head: {
+          type: "string",
+          description: "Head investigation or case path",
+        },
+      },
+      required: ["base", "head"],
       additionalProperties: false,
     },
   },
@@ -247,7 +274,18 @@ async function callTool(name, args) {
       };
     }
     case "ptah_report":
+      if (args.format === "markdown")
+        return renderEvidenceReportMarkdown(
+          await loadInvestigation(args.input),
+        );
+      if (args.format !== undefined && args.format !== "json")
+        throw new TypeError("format must be json or markdown");
       return buildEvidenceReport(await loadInvestigation(args.input));
+    case "ptah_diff":
+      return diffInvestigations(
+        await loadInvestigation(args.base),
+        await loadInvestigation(args.head),
+      );
     case "ptah_graph":
       return buildEvidenceGraph(await loadInvestigation(args.input));
     case "ptah_plan":
@@ -329,7 +367,15 @@ for await (const line of rl) {
           jsonrpc: "2.0",
           id,
           result: {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            content: [
+              {
+                type: "text",
+                text:
+                  typeof result === "string"
+                    ? result
+                    : JSON.stringify(result, null, 2),
+              },
+            ],
             isError: false,
           },
         });
