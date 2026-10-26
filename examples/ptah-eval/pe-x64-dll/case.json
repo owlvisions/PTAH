@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "pe-x64-dll",
+  "description": "Synthetic PE32+ DLL for x86-64; MZ alone must not be reported as PE until e_lfanew is confirmed.",
+  "target": "target.dll",
+  "expect": {
+    "sha256": "ffae8d8fc6becc4793bba0f33cf07d927f2595f87cf38b70b2060f46c79c23a7",
+    "detectedFormat": "DOS MZ header (PE format not confirmed)",
+    "inspect": {
+      "formatDetails.format": "PE",
+      "formatDetails.machine": "x86-64",
+      "formatDetails.isDll": true,
+      "formatDetails.optionalHeader": "PE32+",
+      "formatDetails.sectionCount": 3
+    },
+    "strings": {
+      "options": { "minLength": 8 },
+      "includes": ["PtahSyntheticExport"]
+    }
+  }
+}

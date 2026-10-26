@@ -27,6 +27,7 @@ import {
   STATIC_ANALYZER_IDS,
   detectIsolationSupport,
 } from "./ptah-engine.mjs";
+import { runEvaluationSuite, compareEvaluationReports } from "./ptah-eval.mjs";
 import {
   extractStrings,
   findEmbeddedSignatures,
@@ -233,6 +234,24 @@ const tools = [
       type: "object",
       properties: { target: { type: "string" } },
       required: ["target"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_eval",
+    description:
+      "Run a pinned PTAH evaluation suite directory and report accuracy, unsupported-claim rate, and latency; optionally compare with a baseline report file.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        suite: {
+          type: "string",
+          description: "Directory containing case subdirectories",
+        },
+        baseline: { type: "string", description: "Previous report JSON path" },
+        only: { type: "array", items: { type: "string" } },
+      },
+      required: ["suite"],
       additionalProperties: false,
     },
   },
@@ -478,6 +497,17 @@ async function callTool(name, args) {
             }
           : {}),
       });
+    case "ptah_eval": {
+      if (typeof args.suite !== "string" || !args.suite.trim())
+        throw new TypeError("suite must be a non-empty directory path");
+      const report = await runEvaluationSuite(args.suite, { only: args.only });
+      if (args.baseline)
+        report.comparison = compareEvaluationReports(
+          await loadInvestigation(args.baseline),
+          report,
+        );
+      return report;
+    }
     case "ptah_isolation":
       return await detectIsolationSupport();
     case "ptah_carve":

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "wasm-module",
+  "description": "Minimal WebAssembly module with one import, one export, and a producers custom section.",
+  "target": "target.wasm",
+  "expect": {
+    "sha256": "e3077641a70b03b5536e1cbb66df2224d7a5c7aa46b495d50093006ec4a38568",
+    "detectedFormat": "WebAssembly",
+    "wasm": {
+      "version": 1,
+      "sectionCount": 6,
+      "imports.0.module": "env",
+      "exports.0.name": "run",
+      "customSections": ["producers"],
+      "hasStart": false
+    }
+  }
+}

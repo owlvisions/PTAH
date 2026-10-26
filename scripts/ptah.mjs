@@ -56,6 +56,11 @@ import {
   parseWasmSections,
 } from "./ptah-analysis.mjs";
 import {
+  runEvaluationSuite,
+  compareEvaluationReports,
+  evaluationSuiteDefaultDir,
+} from "./ptah-eval.mjs";
+import {
   generateCaseKeyPair,
   signCase,
   verifyCaseSignature,
@@ -108,6 +113,9 @@ function printHelp() {
   process.stdout.write(`       providers: ${STATIC_ANALYZER_IDS.join(", ")}\n`);
   process.stdout.write(
     `  ptah isolation            Report bubblewrap/prlimit availability for analyzer sandboxing\n`,
+  );
+  process.stdout.write(
+    `  ptah eval [--suite DIR] [--only ID,ID] [--baseline REPORT.json] [--json]  Run the pinned evaluation suite and compare with a baseline\n`,
   );
   process.stdout.write(
     `  ptah carve --target FILE [--max-results N] [--min-signature 4]  Find embedded file signatures at any offset\n`,
@@ -888,6 +896,57 @@ async function runHistory() {
   });
 }
 
+function formatEvalText(report) {
+  const lines = [
+    `PTAH evaluation — ${report.cases} case(s), ${report.passed} passed, ${report.failed} failed`,
+    `check pass rate: ${report.metrics.checkPassRate ?? "n/a"} · claim label precision: ${report.metrics.claimLabelPrecision ?? "n/a"} · unsupported claim rate: ${report.metrics.unsupportedClaimRate ?? "n/a"}`,
+    `median ${report.metrics.medianDurationMs ?? "n/a"} ms · p95 ${report.metrics.p95DurationMs ?? "n/a"} ms · total ${report.metrics.totalDurationMs} ms`,
+    "",
+  ];
+  for (const result of report.results) {
+    lines.push(
+      `${result.passed ? "[pass]" : "[FAIL]"} ${result.id} (${result.checkCounts.passed}/${result.checkCounts.total} checks, ${result.durationMs} ms)`,
+    );
+    for (const check of result.checks.filter((c) => !c.pass))
+      lines.push(
+        `       ✖ ${check.name}: expected ${JSON.stringify(check.expected)}, got ${JSON.stringify(check.actual)}`,
+      );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+async function runEval() {
+  const suite = optionValue("--suite") ?? evaluationSuiteDefaultDir(root);
+  const only = optionValue("--only");
+  const report = await runEvaluationSuite(suite, {
+    only: only
+      ? only
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : undefined,
+  });
+  const baselinePath = optionValue("--baseline");
+  let comparison = null;
+  if (baselinePath) {
+    comparison = compareEvaluationReports(
+      await readJsonFile(baselinePath),
+      report,
+    );
+    report.comparison = comparison;
+  }
+  if (args.includes("--json")) emit(report);
+  else {
+    emit(formatEvalText(report));
+    if (comparison)
+      emit(
+        `baseline: ${comparison.verdict}${comparison.regressions.length ? ` — ${comparison.regressions.map((r) => `${r.id}: ${r.change}`).join("; ")}` : ""}\n`,
+      );
+  }
+  if (report.failed > 0 || comparison?.verdict === "regression")
+    process.exitCode = 2;
+}
+
 async function runTargetTool(fn, extra = {}) {
   const target = optionValue("--target");
   if (!target) throw new Error("Missing required --target FILE argument.");
@@ -895,6 +954,7 @@ async function runTargetTool(fn, extra = {}) {
 }
 
 const COMMAND_HANDLERS = {
+  eval: runEval,
   isolation: async () => emit(await detectIsolationSupport()),
   carve: () =>
     runTargetTool(findEmbeddedSignatures, {
