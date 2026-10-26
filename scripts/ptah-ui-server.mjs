@@ -11,6 +11,8 @@ import {
   planNextAction,
   analyzeTarget,
   attachAnalysisEvidence,
+  createInvestigationCase,
+  importInvestigationCase,
 } from "./ptah-engine.mjs";
 
 const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
@@ -49,8 +51,8 @@ async function readBody(request, limit) {
   return Buffer.concat(chunks);
 }
 
-async function readJson(request) {
-  const bytes = await readBody(request, MAX_JSON_BYTES);
+async function readJson(request, limit = MAX_JSON_BYTES) {
+  const bytes = await readBody(request, limit);
   try {
     return JSON.parse(bytes.toString("utf8"));
   } catch {
@@ -144,7 +146,28 @@ export async function createPtahUiServer(options = {}) {
         });
       }
       if (request.method === "POST" && request.url?.startsWith("/api/")) {
-        const body = await readJson(request);
+        const body = await readJson(
+          request,
+          request.url === "/api/import-case"
+            ? (options.maxCaseBytes ?? MAX_UPLOAD_BYTES)
+            : MAX_JSON_BYTES,
+        );
+        if (request.url === "/api/import-case") {
+          if (!investigation || !targetPath)
+            return sendJson(response, 409, {
+              error: "upload the matching target before importing a case",
+            });
+          const imported = await importInvestigationCase(body, targetPath);
+          await persist(imported);
+          return sendJson(response, 200, {
+            status: "imported",
+            investigation,
+            target: {
+              name: investigation.target.id,
+              sha256: investigation.target.sha256,
+            },
+          });
+        }
         if (!investigation)
           return sendJson(response, 409, { error: "upload a target first" });
         if (request.url === "/api/evidence") {
@@ -258,12 +281,13 @@ export async function createPtahUiServer(options = {}) {
       if (request.method === "GET" && request.url === "/api/download") {
         if (!investigation)
           return sendJson(response, 409, { error: "upload a target first" });
-        const data = Buffer.from(`${JSON.stringify(investigation, null, 2)}\n`);
+        const data = Buffer.from(
+          `${JSON.stringify(createInvestigationCase(investigation), null, 2)}\n`,
+        );
         response.writeHead(200, {
           "content-type": "application/json; charset=utf-8",
           "content-length": data.length,
-          "content-disposition":
-            'attachment; filename="ptah-investigation.json"',
+          "content-disposition": 'attachment; filename="ptah-case.json"',
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
         });

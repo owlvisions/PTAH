@@ -274,6 +274,24 @@
           </div>
         </section>
         <section class="panel">
+          <h2>Resume an investigation</h2>
+          <p class="muted">
+            Import a checksummed case only after uploading the exact target
+            bytes it records. A mismatch or invalid case is rejected.
+          </p>
+          <form id="importForm" class="fields">
+            <label
+              >Case bundle<input
+                id="caseFile"
+                type="file"
+                accept=".json,application/json"
+                required /></label
+            ><button id="importButton" type="submit" disabled>
+              Verify & import case
+            </button>
+          </form>
+        </section>
+        <section class="panel">
           <h2>2. Add evidence</h2>
           <form id="evidenceForm" class="fields">
             <label
@@ -354,7 +372,7 @@
                 id="download"
                 class="button secondary hidden"
                 href="/api/download"
-                >Export JSON</a
+                >Export verified case</a
               ><button id="refresh" class="secondary" type="button">
                 Refresh
               </button>
@@ -510,6 +528,7 @@
       function render(investigation, target) {
         state.initialized = !!investigation;
         $("download").classList.toggle("hidden", !state.initialized);
+        $("importButton").disabled = !state.initialized;
         $("evidenceCount").textContent = investigation?.evidence?.length || 0;
         $("claimCount").textContent = investigation?.claims?.length || 0;
         $("questionCount").textContent = investigation?.questions?.length || 0;
@@ -564,6 +583,24 @@
             },
             body: file,
           });
+          render(data.investigation, data.target);
+        } catch (err) {
+          showError(err);
+        }
+      });
+      $("importForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+          const file = $("caseFile").files[0];
+          if (!file) throw new Error("Choose a case bundle first.");
+          showStatus("Verifying case checksum and uploaded target…");
+          const bundle = JSON.parse(await file.text());
+          const data = await api("/api/import-case", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(bundle),
+          });
+          e.currentTarget.reset();
           render(data.investigation, data.target);
         } catch (err) {
           showError(err);

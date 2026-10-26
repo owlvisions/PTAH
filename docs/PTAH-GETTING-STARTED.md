@@ -6,9 +6,9 @@ PTAH is the emerging product identity for this codebase: a program-understanding
 
 ## Current PTAH-native features
 
-- **Investigation engine:** target SHA-256 fingerprinting, file-signature hints, schema/provenance validation, evidence reports and graphs, deterministic bounded planning, and target-drift verification.
-- **CLI:** `ptah` commands for `info`, `self-check`, `providers`, `fingerprint`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `verify`, `report`, `graph`, `plan`, and bounded `analyze` operations.
-- **MCP:** `ptah-mcp` exposes PTAH investigation operations over stdio using JSON-RPC/MCP.
+- **Investigation engine:** target SHA-256 fingerprinting, file-signature hints, schema/provenance validation, evidence reports and graphs, deterministic bounded planning, target-drift verification, and corruption-checked portable case bundles.
+- **CLI:** `ptah` commands for `info`, `self-check`, `providers`, `fingerprint`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `verify`, `export-case`, `verify-case`, `import-case`, `report`, `graph`, `plan`, and bounded `analyze` operations.
+- **MCP:** `ptah-mcp` exposes PTAH investigation and portable case operations over stdio using JSON-RPC/MCP.
 - **Local workbench:** `ptah ui` launches an early loopback-only interface for investigations, evidence, reports, graphs, planning, and export.
 - **Compatibility:** `rea` and `rea-agents` remain as legacy entry points while feature parity is evaluated.
 
@@ -32,7 +32,12 @@ node scripts/ptah.mjs fingerprint --target ./sample.bin
 node scripts/ptah.mjs init --target ./sample.bin --output ./sample.investigation.json
 node scripts/ptah.mjs report --input ./sample.investigation.json
 node scripts/ptah.mjs verify --input ./sample.investigation.json --target ./sample.bin
+node scripts/ptah.mjs export-case --input ./sample.investigation.json --output ./sample.ptah-case.json
+node scripts/ptah.mjs verify-case --input ./sample.ptah-case.json --target ./sample.bin
+node scripts/ptah.mjs import-case --input ./sample.ptah-case.json --output ./restored.investigation.json --target ./sample.bin
 ```
+
+Case bundles contain the investigation and a SHA-256 corruption checksum, not the target file. The checksum is not a signature and does not authenticate the bundle author. Supply `--target` during verification/import to confirm the local target bytes still match the recorded digest.
 
 Start the local workbench with `node scripts/ptah.mjs ui`. It binds to loopback by default; do not expose it to an untrusted network.
 

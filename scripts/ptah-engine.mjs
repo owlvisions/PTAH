@@ -3,15 +3,21 @@
  * This is an additive migration slice, not a replacement for REA's existing
  * Evidence Ledger. Inputs are treated as untrusted JSON and validated here.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { basename, delimiter, extname, join, resolve } from "node:path";
+import {
+  basename,
+  delimiter,
+  dirname,
+  extname,
+  join,
+  resolve,
+} from "node:path";
 import {
   constants,
   access,
   stat,
   open,
-  writeFile,
   mkdir,
   rename,
   unlink,
@@ -19,6 +25,8 @@ import {
 import { spawn } from "node:child_process";
 
 export const INVESTIGATION_SCHEMA_VERSION = 1;
+export const INVESTIGATION_CASE_FORMAT = "ptah-investigation-case";
+export const INVESTIGATION_CASE_VERSION = 1;
 
 const MAGIC_SIGNATURES = [
   { format: "ELF", bytes: [0x7f, 0x45, 0x4c, 0x46] },
@@ -128,24 +136,56 @@ export async function createInvestigationForTarget(filePath, id = undefined) {
   };
 }
 
-/** Validate and atomically persist an investigation JSON file. */
-export async function saveInvestigation(filePath, document) {
-  const validated = validateInvestigation(document);
+async function saveJsonAtomically(filePath, document) {
   const absolutePath = resolve(filePath);
-  const { dirname } = await import("node:path");
   await mkdir(dirname(absolutePath), { recursive: true });
-  const temporaryPath = `${absolutePath}.tmp-${process.pid}`;
-  await writeFile(temporaryPath, `${JSON.stringify(validated, null, 2)}\n`, {
-    flag: "wx",
-    mode: 0o600,
-  });
+  const temporaryPath = `${absolutePath}.tmp-${process.pid}-${randomUUID()}`;
+  let temporaryFileCreated = false;
   try {
+    const temporaryFile = await open(
+      temporaryPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+      0o600,
+    );
+    temporaryFileCreated = true;
+    let writeError;
+    try {
+      await temporaryFile.writeFile(`${JSON.stringify(document, null, 2)}\n`);
+    } catch (error) {
+      writeError = error;
+    }
+    try {
+      await temporaryFile.close();
+    } catch (error) {
+      if (writeError)
+        throw new AggregateError(
+          [writeError, error],
+          "Could not write and close the temporary JSON output",
+        );
+      throw error;
+    }
+    if (writeError) throw writeError;
     await rename(temporaryPath, absolutePath);
   } catch (error) {
-    await unlink(temporaryPath).catch(() => {});
+    if (temporaryFileCreated) {
+      try {
+        await unlink(temporaryPath);
+      } catch (cleanupError) {
+        if (cleanupError.code !== "ENOENT")
+          throw new AggregateError(
+            [error, cleanupError],
+            "Could not replace JSON output or clean up its temporary file",
+          );
+      }
+    }
     throw error;
   }
   return absolutePath;
+}
+
+/** Validate and atomically persist an investigation JSON file. */
+export async function saveInvestigation(filePath, document) {
+  return saveJsonAtomically(filePath, validateInvestigation(document));
 }
 
 const CONFIDENCE = new Set(["observed", "derived", "inferred"]);
@@ -163,6 +203,113 @@ const EVIDENCE_KINDS = new Set([
 
 export function sha256Text(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value))
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    if (
+      Object.getPrototypeOf(value) !== Object.prototype &&
+      Object.getPrototypeOf(value) !== null
+    )
+      throw new TypeError("case payload must contain only JSON objects");
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined)
+    throw new TypeError("case payload must contain only JSON values");
+  return serialized;
+}
+
+/** Wrap a validated investigation in a portable bundle with a corruption checksum. */
+export function createInvestigationCase(input) {
+  const investigation = validateInvestigation(input);
+  return {
+    format: INVESTIGATION_CASE_FORMAT,
+    formatVersion: INVESTIGATION_CASE_VERSION,
+    integrity: {
+      algorithm: "sha256",
+      payloadSha256: sha256Text(canonicalJson(investigation)),
+    },
+    investigation,
+  };
+}
+
+function validateInvestigationCase(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new TypeError("case bundle must be an object");
+  if (input.format !== INVESTIGATION_CASE_FORMAT)
+    throw new TypeError(`case format must be ${INVESTIGATION_CASE_FORMAT}`);
+  if (input.formatVersion !== INVESTIGATION_CASE_VERSION)
+    throw new TypeError(
+      `case formatVersion must be ${INVESTIGATION_CASE_VERSION}`,
+    );
+  if (!input.integrity || typeof input.integrity !== "object")
+    throw new TypeError("case integrity metadata is required");
+  if (input.integrity.algorithm !== "sha256")
+    throw new TypeError("case integrity algorithm must be sha256");
+  if (
+    typeof input.integrity.payloadSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(input.integrity.payloadSha256)
+  )
+    throw new TypeError(
+      "case payloadSha256 must be a lowercase SHA-256 digest",
+    );
+  const investigation = validateInvestigation(input.investigation);
+  const actualSha256 = sha256Text(canonicalJson(investigation));
+  return {
+    investigation,
+    expectedSha256: input.integrity.payloadSha256,
+    actualSha256,
+    matches: actualSha256 === input.integrity.payloadSha256,
+  };
+}
+
+/** Check bundle format, investigation validity, and its corruption checksum. */
+export function verifyInvestigationCase(input) {
+  const checked = validateInvestigationCase(input);
+  return {
+    format: INVESTIGATION_CASE_FORMAT,
+    formatVersion: INVESTIGATION_CASE_VERSION,
+    valid: checked.matches,
+    integrity: {
+      algorithm: "sha256",
+      expectedSha256: checked.expectedSha256,
+      actualSha256: checked.actualSha256,
+      matches: checked.matches,
+      note: "Checksum detects accidental corruption; it does not authenticate the author.",
+    },
+    target: checked.investigation.target,
+    evidenceCount: checked.investigation.evidence.length,
+    claimCount: checked.investigation.claims.length,
+  };
+}
+
+/** Import a case only when its checksum, schema, and optional target digest match. */
+export async function importInvestigationCase(input, targetPath = undefined) {
+  const checked = validateInvestigationCase(input);
+  if (!checked.matches)
+    throw new Error("case payload checksum mismatch; import was refused");
+  if (targetPath !== undefined) {
+    const target = await fingerprintTarget(targetPath);
+    if (
+      target.sha256.toLowerCase() !==
+      checked.investigation.target.sha256.toLowerCase()
+    )
+      throw new Error(
+        "case target digest mismatch; investigation was not imported",
+      );
+  }
+  return checked.investigation;
+}
+
+/** Atomically save a portable investigation case bundle. */
+export async function saveInvestigationCase(filePath, input) {
+  return saveJsonAtomically(filePath, createInvestigationCase(input));
 }
 
 function requireString(value, path) {

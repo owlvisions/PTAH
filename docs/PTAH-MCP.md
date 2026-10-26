@@ -14,13 +14,16 @@ When installed as an npm package, the executable is `ptah-mcp`. Configure your M
 
 - `ptah_fingerprint`: hash and identify a regular file without executing it.
 - `ptah_verify`: validate an investigation and optionally re-hash its target.
+- `ptah_case_export`: write a portable investigation case bundle with a SHA-256 corruption checksum.
+- `ptah_case_verify`: validate a case bundle and optionally re-hash its target.
+- `ptah_case_import`: verify a case bundle and atomically restore its investigation JSON.
 - `ptah_report`: return a provenance-aware report.
 - `ptah_graph`: return the directed evidence graph.
 - `ptah_plan`: select one deterministic next action under call/cost budgets.
 - `ptah_providers`: discover provider commands on `PATH` without executing them.
 - `ptah_static_analyze`: run allow-listed `objdump`, `llvm-objdump`, or `wasm-tools` file/object metadata inspection or WebAssembly validation (which requires a confirmed WebAssembly signature) with a bounded timeout and output cap; this does not execute the target program.
 
-Tools accepting file paths operate with the permissions of the local MCP server process. Only connect clients and files you trust. The server does not accept arbitrary shell commands and does not run analyzed targets. Provider version probes remain an explicit CLI opt-in (`ptah providers --probe`) rather than an MCP tool. Static metadata analysis does launch the selected analyzer against the file; the adapter does not yet provide OS-level CPU/memory/filesystem sandboxing.
+Tools accepting file paths operate with the permissions of the local MCP server process. Only connect clients and files you trust. The server does not accept arbitrary shell commands and does not run analyzed targets. Case checksums detect accidental corruption but do not authenticate bundle authors. Provider version probes remain an explicit CLI opt-in (`ptah providers --probe`) rather than an MCP tool. Static metadata analysis does launch the selected analyzer against the file; the adapter does not yet provide OS-level CPU/memory/filesystem sandboxing.
 
 ## Protocol and tests
 

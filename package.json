@@ -105,6 +105,7 @@
     "third_party/pwndbg/LICENSE.md",
     "licenses",
     "scripts/ptah.mjs",
+    "scripts/ptah-runtime.mjs",
     "scripts/ptah-engine.mjs",
     "scripts/ptah-mcp.mjs",
     "scripts/ptah-ui.mjs",
