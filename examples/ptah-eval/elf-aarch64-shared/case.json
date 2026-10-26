@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "elf-aarch64-shared",
+  "description": "Synthetic ELF64 little-endian shared object for AArch64 with an embedded interpreter string.",
+  "target": "target.so",
+  "investigation": "investigation.json",
+  "expect": {
+    "sha256": "5e4b8a5b1eae6be1bcb1bf4dabdc804c04afada803e21972bffc48df2819d9c7",
+    "detectedFormat": "ELF",
+    "inspect": {
+      "formatDetails.class": "ELF64",
+      "formatDetails.machine": "AArch64",
+      "formatDetails.type": "shared-object",
+      "entropy.bitsPerByte": { "$lte": 3 }
+    },
+    "strings": {
+      "options": { "minLength": 8 },
+      "includes": ["PTAH_SYNTHETIC_LIBRARY", "/lib/ld-linux-aarch64.so.1"],
+      "excludes": ["NOT_PRESENT"]
+    },
+    "lintOk": true
+  },
+  "reference": {
+    "claimLabels": {
+      "c-format": "evidence-backed",
+      "c-interp": "verified",
+      "c-guess": "inference-only"
+    }
+  }
+}

@@ -18,8 +18,21 @@ import {
   lintInvestigation,
   investigationStats,
   inspectTarget,
+  diffInvestigations,
+  detectIsolationSupport,
+  STATIC_ANALYZER_IDS,
+  renderEvidenceGraph,
 } from "./ptah-engine.mjs";
-import { extractStrings } from "./ptah-analysis.mjs";
+import {
+  extractStrings,
+  findEmbeddedSignatures,
+  parseAsarHeader,
+  parseWasmSections,
+} from "./ptah-analysis.mjs";
+import { randomUUID } from "node:crypto";
+
+const MAX_JOBS = 50;
+const JOB_RETENTION_MS = 30 * 60 * 1000;
 
 const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -93,6 +106,95 @@ export async function createPtahUiServer(options = {}) {
     investigation = validated;
     return investigation;
   };
+  const jobs = new Map();
+  const pruneJobs = () => {
+    const now = Date.now();
+    for (const [id, job] of jobs)
+      if (job.status !== "running" && now - job.finishedAt > JOB_RETENTION_MS)
+        jobs.delete(id);
+    while (jobs.size > MAX_JOBS) {
+      const oldest = [...jobs.values()]
+        .filter((job) => job.status !== "running")
+        .sort((a, b) => a.createdAt - b.createdAt)[0];
+      if (!oldest) break;
+      jobs.delete(oldest.id);
+    }
+  };
+  const publicJob = (job) => ({
+    id: job.id,
+    kind: job.kind,
+    provider: job.provider,
+    status: job.status,
+    createdAt: new Date(job.createdAt).toISOString(),
+    finishedAt: job.finishedAt ? new Date(job.finishedAt).toISOString() : null,
+    progress: job.progress,
+    result: job.result ?? null,
+    error: job.error ?? null,
+  });
+  const startAnalyzeJob = (body) => {
+    pruneJobs();
+    if (
+      [...jobs.values()].filter((job) => job.status === "running").length >= 4
+    )
+      throw Object.assign(new Error("too many running jobs; cancel or wait"), {
+        statusCode: 429,
+      });
+    if (!STATIC_ANALYZER_IDS.includes(body.provider))
+      throw Object.assign(
+        new Error(`provider must be one of ${STATIC_ANALYZER_IDS.join(", ")}`),
+        { statusCode: 400 },
+      );
+    const controller = new AbortController();
+    const job = {
+      id: randomUUID(),
+      kind: "analyze",
+      provider: body.provider,
+      status: "running",
+      createdAt: Date.now(),
+      finishedAt: null,
+      progress: { phase: "starting" },
+      controller,
+    };
+    jobs.set(job.id, job);
+    void (async () => {
+      try {
+        job.progress = { phase: "analyzing" };
+        const analysis = await analyzeTarget(targetPath, body.provider, {
+          timeoutMs: body.timeoutMs ?? 5000,
+          maxOutputBytes: body.maxOutputBytes ?? 16384,
+          env: options.env ?? process.env,
+          isolation: body.isolation ?? "auto",
+          signal: controller.signal,
+        });
+        if (analysis.status === "ok" && !analysis.targetChanged) {
+          job.progress = { phase: "recording-evidence" };
+          const evidenceId =
+            body.evidenceId ??
+            `ev-${body.provider}-${analysis.outputSha256.slice(0, 10)}`;
+          await persist(
+            attachAnalysisEvidence(investigation, analysis, evidenceId),
+            "evidence-added",
+            { evidenceId, kind: "static-analysis", provider: body.provider },
+          );
+          analysis.evidence = { id: evidenceId, recorded: true };
+        }
+        job.result = analysis;
+        job.status =
+          analysis.status === "cancelled"
+            ? "cancelled"
+            : analysis.status === "ok" && !analysis.targetChanged
+              ? "succeeded"
+              : "failed";
+      } catch (error) {
+        job.status = controller.signal.aborted ? "cancelled" : "failed";
+        job.error = error instanceof Error ? error.message : String(error);
+      } finally {
+        job.finishedAt = Date.now();
+        job.progress = { phase: "done" };
+      }
+    })();
+    return job;
+  };
   const server = createServer(async (request, response) => {
     try {
       const hostHeader = request.headers.host ?? "";
@@ -156,7 +258,7 @@ export async function createPtahUiServer(options = {}) {
       if (request.method === "POST" && request.url?.startsWith("/api/")) {
         const body = await readJson(
           request,
-          request.url === "/api/import-case"
+          request.url === "/api/import-case" || request.url === "/api/diff"
             ? (options.maxCaseBytes ?? MAX_UPLOAD_BYTES)
             : MAX_JSON_BYTES,
         );
@@ -250,11 +352,29 @@ export async function createPtahUiServer(options = {}) {
           await persist(candidate, "actions-added", { id: body.id });
           return sendJson(response, 201, { investigation });
         }
+        if (request.url === "/api/jobs") {
+          const job = startAnalyzeJob(body);
+          return sendJson(response, 202, publicJob(job));
+        }
+        if (/^\/api\/jobs\/[0-9a-f-]+\/cancel$/u.test(request.url)) {
+          const job = jobs.get(request.url.split("/")[3]);
+          if (!job) return sendJson(response, 404, { error: "unknown job" });
+          if (job.status === "running") job.controller.abort();
+          return sendJson(response, 200, publicJob(job));
+        }
+        if (request.url === "/api/diff") {
+          return sendJson(
+            response,
+            200,
+            diffInvestigations(investigation, body),
+          );
+        }
         if (request.url === "/api/analyze") {
           const analysis = await analyzeTarget(targetPath, body.provider, {
             timeoutMs: body.timeoutMs ?? 5000,
             maxOutputBytes: body.maxOutputBytes ?? 16384,
             env: options.env ?? process.env,
+            isolation: body.isolation ?? "auto",
           });
           if (analysis.status === "ok" && !analysis.targetChanged) {
             const evidenceId =
@@ -290,6 +410,48 @@ export async function createPtahUiServer(options = {}) {
           return sendJson(response, 409, { error: "upload a target first" });
         return sendJson(response, 200, investigationStats(investigation));
       }
+      if (request.method === "GET" && request.url === "/api/jobs") {
+        pruneJobs();
+        return sendJson(response, 200, {
+          jobs: [...jobs.values()]
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .map(publicJob),
+        });
+      }
+      if (
+        request.method === "GET" &&
+        /^\/api\/jobs\/[0-9a-f-]+$/u.test(request.url)
+      ) {
+        const job = jobs.get(request.url.split("/")[3]);
+        if (!job) return sendJson(response, 404, { error: "unknown job" });
+        return sendJson(response, 200, publicJob(job));
+      }
+      if (request.method === "GET" && request.url === "/api/isolation") {
+        return sendJson(
+          response,
+          200,
+          await detectIsolationSupport(options.env ?? process.env),
+        );
+      }
+      if (request.method === "GET" && request.url === "/api/carve") {
+        if (!targetPath)
+          return sendJson(response, 409, { error: "upload a target first" });
+        return sendJson(
+          response,
+          200,
+          await findEmbeddedSignatures(targetPath),
+        );
+      }
+      if (request.method === "GET" && request.url === "/api/asar") {
+        if (!targetPath)
+          return sendJson(response, 409, { error: "upload a target first" });
+        return sendJson(response, 200, await parseAsarHeader(targetPath));
+      }
+      if (request.method === "GET" && request.url === "/api/wasm") {
+        if (!targetPath)
+          return sendJson(response, 409, { error: "upload a target first" });
+        return sendJson(response, 200, await parseWasmSections(targetPath));
+      }
       if (request.method === "GET" && request.url === "/api/inspect") {
         if (!targetPath)
           return sendJson(response, 409, { error: "upload a target first" });
@@ -318,6 +480,24 @@ export async function createPtahUiServer(options = {}) {
             maxBytes: bounded("maxBytes", 16 * 1024 * 1024, 128 * 1024 * 1024),
           }),
         );
+      }
+      if (
+        request.method === "GET" &&
+        (request.url === "/api/graph.dot" || request.url === "/api/graph.mmd")
+      ) {
+        if (!investigation)
+          return sendJson(response, 409, { error: "upload a target first" });
+        const format = request.url.endsWith(".dot") ? "dot" : "mermaid";
+        const text = Buffer.from(renderEvidenceGraph(investigation, format));
+        response.writeHead(200, {
+          "content-type": `text/${format === "dot" ? "vnd.graphviz" : "plain"}; charset=utf-8`,
+          "content-length": text.length,
+          "content-disposition": `attachment; filename="ptah-graph.${format === "dot" ? "dot" : "mmd"}"`,
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        });
+        response.end(text);
+        return;
       }
       if (request.method === "GET" && request.url === "/api/report.md") {
         if (!investigation)

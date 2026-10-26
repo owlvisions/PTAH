@@ -10,7 +10,7 @@
  */
 import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import {
@@ -40,8 +40,35 @@ import {
   planSteps,
   renderEvidenceGraph,
   investigationJsonSchema,
+  freezeInvestigation,
+  unfreezeInvestigation,
+  linkRelatedCase,
+  mergeInvestigations,
+  migrateInvestigation,
+  listMigrations,
+  STATIC_ANALYZER_IDS,
+  detectIsolationSupport,
 } from "./ptah-engine.mjs";
-import { extractStrings } from "./ptah-analysis.mjs";
+import {
+  extractStrings,
+  findEmbeddedSignatures,
+  parseAsarHeader,
+  parseWasmSections,
+} from "./ptah-analysis.mjs";
+import {
+  runEvaluationSuite,
+  compareEvaluationReports,
+  evaluationSuiteDefaultDir,
+} from "./ptah-eval.mjs";
+import {
+  generateCaseKeyPair,
+  signCase,
+  verifyCaseSignature,
+  encryptCase,
+  compressCase,
+  parseCaseBytes,
+} from "./ptah-case-tools.mjs";
+import { mkdir, writeFile as writeFileAtomicUnsafe } from "node:fs/promises";
 import { isSupportedPtahNodeVersion } from "./ptah-runtime.mjs";
 
 process.stdout.on("error", (error) => {
@@ -51,7 +78,16 @@ process.stdout.on("error", (error) => {
 });
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const QUIET = rawArgs.includes("--quiet");
+const args = rawArgs.filter((arg) => arg !== "--quiet");
+/** Print a command result unless --quiet was supplied; errors always reach stderr. */
+function emit(value) {
+  if (QUIET) return;
+  process.stdout.write(
+    typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`,
+  );
+}
 const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
 );
@@ -72,7 +108,29 @@ function printHelp() {
     `  ptah providers [--json] [--probe]  Detect tools; --probe runs bounded version/help checks\n`,
   );
   process.stdout.write(
-    `  ptah analyze --target FILE --provider objdump|llvm-objdump|wasm-tools  Run bounded static metadata analysis\n`,
+    `  ptah analyze --target FILE --provider ID [--isolation auto|required|none] [--cpu-seconds N] [--memory-mb N]  Run a bounded allow-listed analyzer\n`,
+  );
+  process.stdout.write(`       providers: ${STATIC_ANALYZER_IDS.join(", ")}\n`);
+  process.stdout.write(
+    `  ptah isolation            Report bubblewrap/prlimit availability for analyzer sandboxing\n`,
+  );
+  process.stdout.write(
+    `  ptah watch --input FILE --target FILE [--max-events N] [--debounce-ms 300] [--once]  Re-verify when the target changes\n`,
+  );
+  process.stdout.write(
+    `  ptah completion bash|zsh|fish  Print shell completion script\n`,
+  );
+  process.stdout.write(
+    `  ptah eval [--suite DIR] [--only ID,ID] [--baseline REPORT.json] [--json]  Run the pinned evaluation suite and compare with a baseline\n`,
+  );
+  process.stdout.write(
+    `  ptah carve --target FILE [--max-results N] [--min-signature 4]  Find embedded file signatures at any offset\n`,
+  );
+  process.stdout.write(
+    `  ptah asar --target FILE   List Electron ASAR entries from the header without extracting\n`,
+  );
+  process.stdout.write(
+    `  ptah wasm --target FILE   Parse WebAssembly sections, imports, and exports natively\n`,
   );
   process.stdout.write(
     `       [--investigation FILE --save-investigation FILE --evidence-id ID]  Record successful analysis as evidence\n`,
@@ -117,16 +175,40 @@ function printHelp() {
     `  ptah schema               Print the investigation JSON Schema\n`,
   );
   process.stdout.write(
+    `  ptah freeze|unfreeze --input FILE --output FILE  Lock or unlock evidence/claims/questions/actions (history keeps growing)\n`,
+  );
+  process.stdout.write(
+    `  ptah link-case --input FILE --output FILE --case FILE [--note TEXT]  Cross-reference a verified case bundle\n`,
+  );
+  process.stdout.write(
+    `  ptah merge --base FILE --other FILE --output FILE [--prefer base|other]  Merge two investigations of the same target\n`,
+  );
+  process.stdout.write(
+    `  ptah migrate --input FILE --output FILE | --list  Upgrade legacy documents to the current schema\n`,
+  );
+  process.stdout.write(
+    `  ptah keygen --output-dir DIR  Generate an Ed25519 case-signing key pair\n`,
+  );
+  process.stdout.write(
+    `  ptah sign-case --input FILE --key FILE [--output FILE] [--gzip]  Sign a case bundle\n`,
+  );
+  process.stdout.write(
+    `  ptah encrypt-case --input FILE --output FILE  AES-256-GCM using PTAH_CASE_PASSPHRASE from the environment\n`,
+  );
+  process.stdout.write(
+    `  ptah decrypt-case --input FILE --output FILE  Decrypt an encrypted case envelope\n`,
+  );
+  process.stdout.write(
     `  ptah verify --input FILE [--target FILE]  Validate evidence and optionally re-hash target bytes\n`,
   );
   process.stdout.write(
-    `  ptah export-case --input FILE --output FILE  Create a portable checksummed case bundle\n`,
+    `  ptah export-case --input FILE --output FILE [--gzip]  Create a portable checksummed case bundle\n`,
   );
   process.stdout.write(
-    `  ptah verify-case --input FILE [--target FILE]  Verify a case bundle and optionally its target\n`,
+    `  ptah verify-case --input FILE [--target FILE] [--public-key FILE] [--require-signature]  Verify a case bundle (gzip/encrypted accepted)\n`,
   );
   process.stdout.write(
-    `  ptah import-case --input FILE --output FILE [--target FILE]  Verify and restore a case bundle\n`,
+    `  ptah import-case --input FILE --output FILE [--target FILE] [--public-key FILE]  Verify and restore a case bundle\n`,
   );
   process.stdout.write(
     `  ptah ui [--port 4177]  Start the loopback-only local GUI\n`,
@@ -144,6 +226,9 @@ function printHelp() {
     `  ptah plan --input FILE [--steps N] [--max-calls N] [--max-cost N]  Plan one bounded step, or N greedy steps\n`,
   );
   process.stdout.write(`  ptah help                 Show this help\n`);
+  process.stdout.write(
+    `  --quiet                   Suppress stdout for any command; errors still go to stderr\n`,
+  );
   process.stdout.write(`  ptah <rea-command>\n`);
   process.stdout.write(
     `                            Run an inherited REA analyzer command through PTAH's compatibility layer\n\n`,
@@ -246,7 +331,7 @@ async function selfCheck(json = false) {
       "Legacy dispatcher is missing; compatibility commands cannot run.",
     );
   if (json) {
-    process.stdout.write(`${JSON.stringify({ ...result, issues }, null, 2)}\n`);
+    emit({ ...result, issues });
   } else {
     process.stdout.write(`PTAH self-check\n`);
     process.stdout.write(
@@ -282,7 +367,7 @@ async function runFingerprint() {
   const result = args.includes("--inspect")
     ? await inspectTarget(target)
     : await fingerprintTarget(target);
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
 }
 
 function integerOption(name, fallback) {
@@ -301,7 +386,7 @@ async function runStrings() {
     maxResults: integerOption("--max-results", 500),
     maxBytes: integerOption("--max-bytes", 16 * 1024 * 1024),
   });
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
 }
 
 async function artifactDigest(filePath) {
@@ -326,9 +411,12 @@ async function runInit() {
       targetId: investigation.target.id,
     }),
   );
-  process.stdout.write(
-    `${JSON.stringify({ status: "created", path: savedTo, target: investigation.target, schemaVersion: investigation.schemaVersion }, null, 2)}\n`,
-  );
+  emit({
+    status: "created",
+    path: savedTo,
+    target: investigation.target,
+    schemaVersion: investigation.schemaVersion,
+  });
 }
 
 async function runAddEvidence() {
@@ -352,6 +440,7 @@ async function runAddEvidence() {
   if (input.evidence.some((item) => item.id === id))
     throw new Error(`Evidence id already exists: ${id}`);
   const artifactPath = optionValue("--artifact");
+  const tags = splitList("--tags");
   input.evidence.push({
     id,
     kind,
@@ -360,14 +449,18 @@ async function runAddEvidence() {
     confidence,
     targetSha256: input.target.sha256,
     ...(artifactPath ? { artifact: await artifactDigest(artifactPath) } : {}),
+    ...(tags.length ? { tags } : {}),
   });
   const savedTo = await saveInvestigation(
     output,
     recordHistory(input, "evidence-added", { evidenceId: id, kind }),
   );
-  process.stdout.write(
-    `${JSON.stringify({ status: "evidence-added", evidenceId: id, targetSha256: input.target.sha256, path: savedTo }, null, 2)}\n`,
-  );
+  emit({
+    status: "evidence-added",
+    evidenceId: id,
+    targetSha256: input.target.sha256,
+    path: savedTo,
+  });
 }
 
 async function appendInvestigationRecord(
@@ -413,6 +506,7 @@ async function runAddClaim() {
       text: optionValue("--text"),
       evidenceIds,
       ...(optionValue("--status") ? { status: optionValue("--status") } : {}),
+      ...(splitList("--tags").length ? { tags: splitList("--tags") } : {}),
     },
     ["id", "text", "evidenceIds"],
   );
@@ -470,7 +564,7 @@ async function runVerify() {
   const input = await readInvestigationInput();
   const targetPath = optionValue("--target");
   const result = await verifyInvestigation(input, targetPath);
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
   if (!result.valid) process.exitCode = 2;
 }
 
@@ -478,21 +572,71 @@ async function readJsonFile(filePath) {
   return JSON.parse(await readFile(resolve(process.cwd(), filePath), "utf8"));
 }
 
+async function readCaseFile(filePath) {
+  const bytes = await readFile(resolve(process.cwd(), filePath));
+  return parseCaseBytes(bytes, {
+    passphrase: process.env.PTAH_CASE_PASSPHRASE,
+  });
+}
+
+async function writeCaseBytes(filePath, bytes) {
+  const absolutePath = resolve(process.cwd(), filePath);
+  await mkdir(dirname(absolutePath), { recursive: true });
+  const temporaryPath = `${absolutePath}.tmp-${process.pid}`;
+  await writeFileAtomicUnsafe(temporaryPath, bytes, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  const { rename } = await import("node:fs/promises");
+  await rename(temporaryPath, absolutePath);
+  return absolutePath;
+}
+
 async function runExportCase() {
   const output = optionValue("--output");
   if (!output) throw new Error("Missing required --output FILE argument.");
   const bundle = createInvestigationCase(await readInvestigationInput());
-  const savedTo = await saveInvestigationCase(output, bundle.investigation);
-  process.stdout.write(
-    `${JSON.stringify({ status: "exported", path: savedTo, ...bundle.integrity }, null, 2)}\n`,
-  );
+  const gzip = args.includes("--gzip");
+  const savedTo = gzip
+    ? await writeCaseBytes(output, compressCase(bundle))
+    : await saveInvestigationCase(output, bundle.investigation);
+  emit({
+    status: "exported",
+    path: savedTo,
+    compressed: gzip,
+    ...bundle.integrity,
+  });
 }
 
 async function runVerifyCase() {
   const inputPath = optionValue("--input");
   if (!inputPath) throw new Error("Missing required --input FILE argument.");
-  const bundle = await readJsonFile(inputPath);
+  const {
+    document: bundle,
+    compressed,
+    encrypted,
+  } = await readCaseFile(inputPath);
   const result = verifyInvestigationCase(bundle);
+  result.compressed = compressed;
+  result.encrypted = encrypted;
+  const publicKeyPath = optionValue("--public-key");
+  result.signature = verifyCaseSignature(
+    bundle,
+    publicKeyPath
+      ? await readFile(resolve(process.cwd(), publicKeyPath), "utf8")
+      : undefined,
+  );
+  if (result.signature.verified === false) {
+    result.valid = false;
+    result.error = `signature check failed: ${result.signature.reason}`;
+  }
+  if (
+    args.includes("--require-signature") &&
+    result.signature.verified !== true
+  ) {
+    result.valid = false;
+    result.error ??= "a verified signature is required";
+  }
   const targetPath = optionValue("--target");
   if (result.valid && targetPath !== undefined) {
     const target = await verifyInvestigation(bundle.investigation, targetPath);
@@ -503,7 +647,7 @@ async function runVerifyCase() {
       result.error = target.error;
     }
   }
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
   if (!result.valid) process.exitCode = 2;
 }
 
@@ -512,15 +656,198 @@ async function runImportCase() {
   const output = optionValue("--output");
   if (!inputPath) throw new Error("Missing required --input FILE argument.");
   if (!output) throw new Error("Missing required --output FILE argument.");
-  const bundle = await readJsonFile(inputPath);
+  const { document: bundle } = await readCaseFile(inputPath);
+  const publicKeyPath = optionValue("--public-key");
+  if (publicKeyPath || args.includes("--require-signature")) {
+    const signature = verifyCaseSignature(
+      bundle,
+      publicKeyPath
+        ? await readFile(resolve(process.cwd(), publicKeyPath), "utf8")
+        : undefined,
+    );
+    if (signature.verified !== true)
+      throw new Error(`signature check failed: ${signature.reason}`);
+  }
   const investigation = await importInvestigationCase(
     bundle,
     optionValue("--target"),
   );
   const savedTo = await saveInvestigation(output, investigation);
-  process.stdout.write(
-    `${JSON.stringify({ status: "imported", path: savedTo, target: investigation.target, evidenceCount: investigation.evidence.length, claimCount: investigation.claims.length }, null, 2)}\n`,
+  emit({
+    status: "imported",
+    path: savedTo,
+    target: investigation.target,
+    evidenceCount: investigation.evidence.length,
+    claimCount: investigation.claims.length,
+  });
+}
+
+async function runKeygen() {
+  const outputDir = optionValue("--output-dir");
+  if (!outputDir)
+    throw new Error("Missing required --output-dir DIR argument.");
+  const keys = generateCaseKeyPair();
+  const absolute = resolve(process.cwd(), outputDir);
+  await mkdir(absolute, { recursive: true, mode: 0o700 });
+  const privatePath = join(absolute, "ptah-case-signing.key");
+  const publicPath = join(absolute, "ptah-case-signing.pub");
+  await writeFileAtomicUnsafe(privatePath, keys.privateKeyPem, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  await writeFileAtomicUnsafe(publicPath, keys.publicKeyPem, {
+    flag: "wx",
+    mode: 0o644,
+  });
+  emit({
+    status: "keys-generated",
+    algorithm: keys.algorithm,
+    privateKeyPath: privatePath,
+    publicKeyPath: publicPath,
+    publicKeySha256: keys.publicKeySha256,
+    note: "Keep the private key secret; share only the .pub file with reviewers.",
+  });
+}
+
+async function runSignCase() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output") ?? inputPath;
+  const keyPath = optionValue("--key");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!keyPath) throw new Error("Missing required --key FILE argument.");
+  const { document: bundle } = await readCaseFile(inputPath);
+  const signed = signCase(
+    bundle,
+    await readFile(resolve(process.cwd(), keyPath), "utf8"),
   );
+  const savedTo = await writeCaseBytes(
+    output,
+    args.includes("--gzip")
+      ? compressCase(signed)
+      : Buffer.from(`${JSON.stringify(signed, null, 2)}\n`),
+  );
+  emit({ status: "signed", path: savedTo, ...signed.signature });
+}
+
+function requirePassphraseEnv() {
+  const passphrase = process.env.PTAH_CASE_PASSPHRASE;
+  if (!passphrase)
+    throw new Error(
+      "Set PTAH_CASE_PASSPHRASE in the environment (never pass it as an argument).",
+    );
+  return passphrase;
+}
+
+async function runEncryptCase() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const { document: bundle } = await readCaseFile(inputPath);
+  const envelope = encryptCase(bundle, requirePassphraseEnv());
+  const savedTo = await writeCaseBytes(
+    output,
+    args.includes("--gzip")
+      ? compressCase(envelope)
+      : Buffer.from(`${JSON.stringify(envelope, null, 2)}\n`),
+  );
+  emit({
+    status: "encrypted",
+    path: savedTo,
+    cipher: envelope.cipher,
+    kdf: envelope.kdf.name,
+  });
+}
+
+async function runDecryptCase() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const passphrase = requirePassphraseEnv();
+  const bytes = await readFile(resolve(process.cwd(), inputPath));
+  const { document: bundle, encrypted } = parseCaseBytes(bytes, { passphrase });
+  if (!encrypted) throw new Error("input is not an encrypted case envelope");
+  const savedTo = await writeCaseBytes(
+    output,
+    Buffer.from(`${JSON.stringify(bundle, null, 2)}\n`),
+  );
+  emit({ status: "decrypted", path: savedTo, ...bundle.integrity });
+}
+
+async function runFreeze(freeze) {
+  const input = await readInvestigationInput();
+  const output = optionValue("--output");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const updated = freeze
+    ? freezeInvestigation(input)
+    : unfreezeInvestigation(input);
+  const savedTo = await saveInvestigation(output, updated);
+  emit({
+    status: freeze ? "frozen" : "unfrozen",
+    path: savedTo,
+    frozen: updated.frozen ?? null,
+  });
+}
+
+async function runLinkCase() {
+  const input = await readInvestigationInput();
+  const output = optionValue("--output");
+  const casePath = optionValue("--case");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  if (!casePath) throw new Error("Missing required --case FILE argument.");
+  const { document: bundle } = await readCaseFile(casePath);
+  const updated = linkRelatedCase(input, bundle, {
+    note: optionValue("--note"),
+  });
+  const savedTo = await saveInvestigation(output, updated);
+  emit({
+    status: "case-linked",
+    path: savedTo,
+    related: updated.relatedCases.at(-1),
+  });
+}
+
+async function runMerge() {
+  const basePath = optionValue("--base");
+  const otherPath = optionValue("--other");
+  const output = optionValue("--output");
+  if (!basePath) throw new Error("Missing required --base FILE argument.");
+  if (!otherPath) throw new Error("Missing required --other FILE argument.");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const result = mergeInvestigations(
+    await readJsonFile(basePath),
+    await readJsonFile(otherPath),
+    { prefer: optionValue("--prefer") },
+  );
+  const savedTo = await saveInvestigation(output, result.investigation);
+  emit({
+    status: "merged",
+    path: savedTo,
+    added: result.added,
+    conflicts: result.conflicts,
+    note: result.note,
+  });
+}
+
+async function runMigrate() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (args.includes("--list")) {
+    emit({ currentSchemaVersion: 1, migrations: listMigrations() });
+    return;
+  }
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const result = migrateInvestigation(await readJsonFile(inputPath));
+  const savedTo = await saveInvestigation(output, result.investigation);
+  emit({
+    status: "migrated",
+    path: savedTo,
+    fromVersion: result.fromVersion,
+    toVersion: result.toVersion,
+    applied: result.applied,
+  });
 }
 
 function splitList(name) {
@@ -544,9 +871,12 @@ async function runSetClaimStatus() {
     reason: optionValue("--reason"),
   });
   const savedTo = await saveInvestigation(output, updated);
-  process.stdout.write(
-    `${JSON.stringify({ status: "claim-status-set", claimId: id, claimStatus: status, path: savedTo }, null, 2)}\n`,
-  );
+  emit({
+    status: "claim-status-set",
+    claimId: id,
+    claimStatus: status,
+    path: savedTo,
+  });
 }
 
 async function runResolveQuestion() {
@@ -565,21 +895,21 @@ async function runResolveQuestion() {
     reopen ? null : { reason, evidenceIds: splitList("--evidence-ids") },
   );
   const savedTo = await saveInvestigation(output, updated);
-  process.stdout.write(
-    `${JSON.stringify({ status: reopen ? "question-reopened" : "question-resolved", questionId: id, path: savedTo }, null, 2)}\n`,
-  );
+  emit({
+    status: reopen ? "question-reopened" : "question-resolved",
+    questionId: id,
+    path: savedTo,
+  });
 }
 
 async function runLint() {
   const result = lintInvestigation(await readInvestigationInput());
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
   if (!result.ok) process.exitCode = 2;
 }
 
 async function runStats() {
-  process.stdout.write(
-    `${JSON.stringify(investigationStats(await readInvestigationInput()), null, 2)}\n`,
-  );
+  emit(investigationStats(await readInvestigationInput()));
 }
 
 async function runHistory() {
@@ -587,10 +917,220 @@ async function runHistory() {
   const { validateInvestigation } = await import("./ptah-engine.mjs");
   const validated = validateInvestigation(investigation);
   const history = validated.history ?? [];
-  process.stdout.write(
-    `${JSON.stringify({ target: validated.target, entries: history.length, chainValid: true, headSha256: history.at(-1)?.entrySha256 ?? null, history }, null, 2)}\n`,
-  );
+  emit({
+    target: validated.target,
+    entries: history.length,
+    chainValid: true,
+    headSha256: history.at(-1)?.entrySha256 ?? null,
+    history,
+  });
 }
+
+function formatEvalText(report) {
+  const lines = [
+    `PTAH evaluation — ${report.cases} case(s), ${report.passed} passed, ${report.failed} failed`,
+    `check pass rate: ${report.metrics.checkPassRate ?? "n/a"} · claim label precision: ${report.metrics.claimLabelPrecision ?? "n/a"} · unsupported claim rate: ${report.metrics.unsupportedClaimRate ?? "n/a"}`,
+    `median ${report.metrics.medianDurationMs ?? "n/a"} ms · p95 ${report.metrics.p95DurationMs ?? "n/a"} ms · total ${report.metrics.totalDurationMs} ms`,
+    "",
+  ];
+  for (const result of report.results) {
+    lines.push(
+      `${result.passed ? "[pass]" : "[FAIL]"} ${result.id} (${result.checkCounts.passed}/${result.checkCounts.total} checks, ${result.durationMs} ms)`,
+    );
+    for (const check of result.checks.filter((c) => !c.pass))
+      lines.push(
+        `       ✖ ${check.name}: expected ${JSON.stringify(check.expected)}, got ${JSON.stringify(check.actual)}`,
+      );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+async function runEval() {
+  const suite = optionValue("--suite") ?? evaluationSuiteDefaultDir(root);
+  const only = optionValue("--only");
+  const report = await runEvaluationSuite(suite, {
+    only: only
+      ? only
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : undefined,
+  });
+  const baselinePath = optionValue("--baseline");
+  let comparison = null;
+  if (baselinePath) {
+    comparison = compareEvaluationReports(
+      await readJsonFile(baselinePath),
+      report,
+    );
+    report.comparison = comparison;
+  }
+  if (args.includes("--json")) emit(report);
+  else {
+    emit(formatEvalText(report));
+    if (comparison)
+      emit(
+        `baseline: ${comparison.verdict}${comparison.regressions.length ? ` — ${comparison.regressions.map((r) => `${r.id}: ${r.change}`).join("; ")}` : ""}\n`,
+      );
+  }
+  if (report.failed > 0 || comparison?.verdict === "regression")
+    process.exitCode = 2;
+}
+
+async function runTargetTool(fn, extra = {}) {
+  const target = optionValue("--target");
+  if (!target) throw new Error("Missing required --target FILE argument.");
+  emit(await fn(target, extra));
+}
+
+const SHELL_COMMANDS = [
+  "info",
+  "self-check",
+  "providers",
+  "fingerprint",
+  "strings",
+  "carve",
+  "asar",
+  "wasm",
+  "isolation",
+  "init",
+  "add-evidence",
+  "add-claim",
+  "add-question",
+  "add-action",
+  "set-claim-status",
+  "resolve-question",
+  "freeze",
+  "unfreeze",
+  "verify",
+  "lint",
+  "stats",
+  "history",
+  "schema",
+  "export-case",
+  "verify-case",
+  "import-case",
+  "sign-case",
+  "encrypt-case",
+  "decrypt-case",
+  "keygen",
+  "link-case",
+  "merge",
+  "migrate",
+  "report",
+  "diff",
+  "graph",
+  "plan",
+  "analyze",
+  "eval",
+  "watch",
+  "completion",
+  "ui",
+  "help",
+  "legacy",
+];
+
+function renderCompletion(shell) {
+  const words = SHELL_COMMANDS.join(" ");
+  if (shell === "bash")
+    return `# bash completion for ptah — eval "$(ptah completion bash)"\n_ptah() {\n  local cur="\${COMP_WORDS[COMP_CWORD]}"\n  if [ "$COMP_CWORD" -eq 1 ]; then\n    COMPREPLY=( $(compgen -W "${words}" -- "$cur") )\n  else\n    COMPREPLY=( $(compgen -W "--input --output --target --provider --format --base --head --other --prefer --steps --isolation --key --public-key --case --suite --baseline --json --quiet --gzip --inspect --tags --artifact" -- "$cur") $(compgen -f -- "$cur") )\n  fi\n}\ncomplete -F _ptah ptah\n`;
+  if (shell === "zsh")
+    return `#compdef ptah\n# zsh completion for ptah — eval "$(ptah completion zsh)"\n_ptah() {\n  local -a commands\n  commands=(${SHELL_COMMANDS.map((c) => `'${c}'`).join(" ")})\n  if (( CURRENT == 2 )); then\n    _describe 'command' commands\n  else\n    _arguments '*:file:_files'\n  fi\n}\ncompdef _ptah ptah\n`;
+  if (shell === "fish")
+    return `# fish completion for ptah — ptah completion fish | source\n${SHELL_COMMANDS.map((c) => `complete -c ptah -n '__fish_use_subcommand' -a ${c}`).join("\n")}\n`;
+  throw new Error("completion shell must be bash, zsh, or fish");
+}
+
+async function runWatch() {
+  const inputPath = optionValue("--input");
+  const target = optionValue("--target");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!target) throw new Error("Missing required --target FILE argument.");
+  const maxEvents = integerOption("--max-events", 0);
+  const debounceMs = integerOption("--debounce-ms", 300);
+  const { watch } = await import("node:fs");
+  const investigation = await readJsonFile(inputPath);
+  const absoluteTarget = resolve(process.cwd(), target);
+  const check = async (reason) => {
+    const result = await verifyInvestigation(investigation, absoluteTarget);
+    emit({
+      event: reason,
+      at: new Date().toISOString(),
+      valid: result.valid,
+      targetMatches: result.targetMatches,
+      actualSha256: result.target.actualSha256,
+    });
+    return result;
+  };
+  await check("initial");
+  if (maxEvents === 0 && args.includes("--once")) return;
+  let events = 0;
+  let timer = null;
+  await new Promise((finish, fail) => {
+    let watcher;
+    try {
+      watcher = watch(
+        dirname(absoluteTarget),
+        { persistent: true },
+        (_type, filename) => {
+          if (filename && filename !== basename(absoluteTarget)) return;
+          clearTimeout(timer);
+          timer = setTimeout(async () => {
+            try {
+              const result = await check("target-changed");
+              events += 1;
+              if (!result.valid) process.exitCode = 2;
+              if (maxEvents > 0 && events >= maxEvents) {
+                watcher.close();
+                finish();
+              }
+            } catch (error) {
+              watcher.close();
+              fail(error);
+            }
+          }, debounceMs);
+        },
+      );
+      watcher.once("error", (error) => fail(error));
+      process.once("SIGINT", () => {
+        watcher.close();
+        finish();
+      });
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
+const COMMAND_HANDLERS = {
+  eval: runEval,
+  watch: runWatch,
+  completion: async () => emit(renderCompletion(args[1] ?? "")),
+  isolation: async () => emit(await detectIsolationSupport()),
+  carve: () =>
+    runTargetTool(findEmbeddedSignatures, {
+      maxResults: integerOption("--max-results", 200),
+      minimumSignatureLength: integerOption("--min-signature", 4),
+      maxBytes: integerOption("--max-bytes", 64 * 1024 * 1024),
+    }),
+  asar: () => runTargetTool(parseAsarHeader),
+  wasm: () => runTargetTool(parseWasmSections),
+  strings: runStrings,
+  "set-claim-status": runSetClaimStatus,
+  "resolve-question": runResolveQuestion,
+  lint: runLint,
+  stats: runStats,
+  history: runHistory,
+  freeze: () => runFreeze(true),
+  unfreeze: () => runFreeze(false),
+  "link-case": runLinkCase,
+  merge: runMerge,
+  migrate: runMigrate,
+  keygen: runKeygen,
+  "sign-case": runSignCase,
+  "encrypt-case": runEncryptCase,
+  "decrypt-case": runDecryptCase,
+};
 
 async function runDiff() {
   const basePath = optionValue("--base");
@@ -601,7 +1141,7 @@ async function runDiff() {
     await readJsonFile(basePath),
     await readJsonFile(headPath),
   );
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
   if (!result.identical) process.exitCode = 3;
 }
 
@@ -637,7 +1177,7 @@ async function runEngineCommand(command) {
           ? planNextAction(input, budget)
           : planSteps(input, { ...budget, steps: Number(steps) });
     }
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    emit(output);
     if (command === "plan" && output.status === "blocked") process.exitCode = 2;
   } catch (error) {
     process.stderr.write(
@@ -697,7 +1237,7 @@ if (
         })
       : await discoverProviders();
     if (args.includes("--json")) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      emit(result);
     } else if (args.includes("--probe")) {
       process.stdout.write(
         result.providers
@@ -755,13 +1295,21 @@ if (
     if (!target) throw new Error("Missing required --target FILE argument.");
     if (!provider)
       throw new Error(
-        "Missing required --provider objdump|llvm-objdump|wasm-tools argument.",
+        `Missing required --provider argument; allowed: ${STATIC_ANALYZER_IDS.join("|")}.`,
       );
     const timeoutValue = optionValue("--timeout-ms");
     const outputLimit = optionValue("--max-output-bytes");
+    const limits = {};
+    const cpuSeconds = optionValue("--cpu-seconds");
+    const memoryMb = optionValue("--memory-mb");
+    if (cpuSeconds !== undefined) limits.cpuSeconds = Number(cpuSeconds);
+    if (memoryMb !== undefined)
+      limits.memoryBytes = Number(memoryMb) * 1024 * 1024;
     const result = await analyzeTarget(target, provider, {
       timeoutMs: timeoutValue === undefined ? 5000 : Number(timeoutValue),
       maxOutputBytes: outputLimit === undefined ? 16384 : Number(outputLimit),
+      isolation: optionValue("--isolation") ?? "auto",
+      ...(Object.keys(limits).length ? { limits } : {}),
     });
     const investigationPath = optionValue("--investigation");
     const savePath = optionValue("--save-investigation");
@@ -790,7 +1338,7 @@ if (
         recorded: true,
       };
     }
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    emit(result);
     if (result.status !== "ok" || result.targetChanged) process.exitCode = 2;
   } catch (error) {
     process.stderr.write(
@@ -828,28 +1376,10 @@ if (
     process.exitCode = 1;
   }
 } else if (args[0] === "schema") {
-  process.stdout.write(
-    `${JSON.stringify(investigationJsonSchema(), null, 2)}\n`,
-  );
-} else if (
-  [
-    "strings",
-    "set-claim-status",
-    "resolve-question",
-    "lint",
-    "stats",
-    "history",
-  ].includes(args[0])
-) {
+  emit(investigationJsonSchema());
+} else if (Object.hasOwn(COMMAND_HANDLERS, args[0])) {
   try {
-    const handlers = {
-      strings: runStrings,
-      "set-claim-status": runSetClaimStatus,
-      "resolve-question": runResolveQuestion,
-      lint: runLint,
-      stats: runStats,
-      history: runHistory,
-    };
+    const handlers = COMMAND_HANDLERS;
     await handlers[args[0]]();
   } catch (error) {
     process.stderr.write(

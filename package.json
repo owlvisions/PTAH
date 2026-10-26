@@ -107,6 +107,11 @@
     "scripts/ptah.mjs",
     "scripts/ptah-runtime.mjs",
     "scripts/ptah-analysis.mjs",
+    "scripts/ptah-case-tools.mjs",
+    "scripts/ptah-eval.mjs",
+    "examples/ptah-eval",
+    "examples/ptah-cases",
+    "docs/PTAH-GETTING-STARTED.ar.md",
     "scripts/ptah-engine.mjs",
     "scripts/ptah-mcp.mjs",
     "scripts/ptah-ui.mjs",
@@ -355,7 +360,7 @@
     "licenses:check": "node scripts/generate-third-party-inventory.mjs --check",
     "lint:typed": "node scripts/ci/static-check-report.mjs typed-lint",
     "knip:production": "node scripts/ci/production-reachability-report.mjs",
-    "test:ptah": "node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs",
+    "test:ptah": "node --test scripts/tests/ptah.test.mjs scripts/tests/ptah-engine.test.mjs scripts/tests/ptah-case-tools.test.mjs scripts/tests/ptah-analyzers.test.mjs scripts/tests/ptah-eval.test.mjs scripts/tests/ptah-integrations.test.mjs",
     "start:ptah-mcp": "node scripts/ptah-mcp.mjs"
   },
   "lint-staged": {

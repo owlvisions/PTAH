@@ -1452,6 +1452,24 @@ void test("PTAH MCP exports, verifies, and imports portable case bundles", async
           arguments: { input: inputPath, steps: 2 },
         },
       },
+      {
+        jsonrpc: "2.0",
+        id: 14,
+        method: "tools/call",
+        params: { name: "ptah_carve", arguments: { target: targetPath } },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 15,
+        method: "tools/call",
+        params: { name: "ptah_isolation", arguments: {} },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 16,
+        method: "tools/call",
+        params: { name: "ptah_wasm", arguments: { target: targetPath } },
+      },
     ];
     const run = spawnSync(process.execPath, [server], {
       input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
@@ -1517,8 +1535,30 @@ void test("PTAH MCP exports, verifies, and imports portable case bundles", async
       "ptah_lint",
       "ptah_stats",
       "ptah_schema",
+      "ptah_carve",
+      "ptah_asar",
+      "ptah_wasm",
+      "ptah_isolation",
     ])
       assert.ok(names.includes(name), name);
+    ok(14);
+    assert.equal(JSON.parse(text(14)).executed, false);
+    ok(15);
+    assert.equal(typeof JSON.parse(text(15)).bubblewrap.available, "boolean");
+    assert.equal(
+      messages.find((m) => m.id === 16).result.isError,
+      true,
+      "text target is not wasm",
+    );
+    const analyzeSchema = listed.result.tools.find(
+      (tool) => tool.name === "ptah_static_analyze",
+    ).inputSchema;
+    assert.ok(analyzeSchema.properties.provider.enum.includes("readelf"));
+    assert.deepEqual(analyzeSchema.properties.isolation.enum, [
+      "auto",
+      "required",
+      "none",
+    ]);
     assert.deepEqual(
       JSON.parse(
         await (await import("node:fs/promises")).readFile(restoredPath, "utf8"),

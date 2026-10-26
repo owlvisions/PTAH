@@ -388,6 +388,66 @@ function uniqueIds(items, path) {
   return seen;
 }
 
+function validateTags(tags, path) {
+  requireArray(tags, path);
+  if (tags.length > 32) throw new TypeError(`${path} may list at most 32 tags`);
+  const seen = new Set();
+  for (const tag of tags) {
+    requireString(tag, `${path}[]`);
+    if (tag.length > 64 || !/^[\p{L}\p{N}][\p{L}\p{N}._:/-]*$/u.test(tag))
+      throw new TypeError(`${path} contains an invalid tag: ${tag}`);
+    if (seen.has(tag))
+      throw new TypeError(`${path} contains duplicate tag: ${tag}`);
+    seen.add(tag);
+  }
+}
+
+function contentDigest(document) {
+  return sha256Text(
+    canonicalJson({
+      target: document.target,
+      evidence: document.evidence ?? [],
+      claims: document.claims ?? [],
+      questions: document.questions ?? [],
+      actions: document.actions ?? [],
+    }),
+  );
+}
+
+function validateFrozen(frozen, document) {
+  if (!frozen || typeof frozen !== "object" || Array.isArray(frozen))
+    throw new TypeError("frozen must be an object");
+  requireString(frozen.at, "frozen.at");
+  if (Number.isNaN(Date.parse(frozen.at)))
+    throw new TypeError("frozen.at must be an ISO timestamp");
+  requireString(frozen.contentSha256, "frozen.contentSha256");
+  if (frozen.contentSha256 !== contentDigest(document))
+    throw new TypeError(
+      "frozen content digest mismatch; unfreeze the investigation before modifying evidence, claims, questions, or actions",
+    );
+}
+
+function validateRelatedCases(related) {
+  requireArray(related, "relatedCases");
+  const seen = new Set();
+  related.forEach((item, index) => {
+    const path = `relatedCases[${index}]`;
+    if (!item || typeof item !== "object")
+      throw new TypeError(`${path} must be an object`);
+    requireString(item.payloadSha256, `${path}.payloadSha256`);
+    requireString(item.targetSha256, `${path}.targetSha256`);
+    for (const key of ["payloadSha256", "targetSha256"])
+      if (!/^[a-f0-9]{64}$/i.test(item[key]))
+        throw new TypeError(`${path}.${key} must be a SHA-256 digest`);
+    if (typeof item.sameTarget !== "boolean")
+      throw new TypeError(`${path}.sameTarget must be a boolean`);
+    if (item.note !== undefined) requireString(item.note, `${path}.note`);
+    if (seen.has(item.payloadSha256))
+      throw new TypeError(`${path} duplicates case ${item.payloadSha256}`);
+    seen.add(item.payloadSha256);
+  });
+}
+
 function validateArtifact(artifact, evidenceId) {
   if (!artifact || typeof artifact !== "object" || Array.isArray(artifact))
     throw new TypeError(`evidence.${evidenceId}.artifact must be an object`);
@@ -461,6 +521,9 @@ export function validateInvestigation(document) {
   uniqueIds(questions, "questions");
   uniqueIds(actions, "actions");
   if (document.history !== undefined) validateHistory(document.history);
+  if (document.frozen !== undefined) validateFrozen(document.frozen, document);
+  if (document.relatedCases !== undefined)
+    validateRelatedCases(document.relatedCases);
 
   for (const item of evidence) {
     requireString(item.summary, `evidence.${item.id}.summary`);
@@ -488,6 +551,8 @@ export function validateInvestigation(document) {
       );
     }
     if (item.artifact !== undefined) validateArtifact(item.artifact, item.id);
+    if (item.tags !== undefined)
+      validateTags(item.tags, `evidence.${item.id}.tags`);
   }
   for (const claim of claims) {
     requireString(claim.text, `claims.${claim.id}.text`);
@@ -512,6 +577,8 @@ export function validateInvestigation(document) {
     ) {
       throw new TypeError(`claims.${claim.id}.status is invalid`);
     }
+    if (claim.tags !== undefined)
+      validateTags(claim.tags, `claims.${claim.id}.tags`);
   }
   for (const question of questions) {
     requireString(question.text, `questions.${question.id}.text`);
@@ -707,6 +774,232 @@ export function resolveQuestion(input, questionId, resolution, options = {}) {
   );
 }
 
+/** Freeze content so any later change to evidence/claims/questions/actions fails validation. */
+export function freezeInvestigation(input, options = {}) {
+  const investigation = validateInvestigation(input);
+  if (investigation.frozen) throw new Error("investigation is already frozen");
+  const at = options.at ?? new Date().toISOString();
+  const frozen = { at, contentSha256: contentDigest(investigation) };
+  return recordHistory(
+    { ...investigation, frozen },
+    "frozen",
+    { contentSha256: frozen.contentSha256 },
+    at,
+  );
+}
+
+/** Remove the freeze marker; the unfreeze itself is recorded in history. */
+export function unfreezeInvestigation(input, options = {}) {
+  const investigation = validateInvestigation(input);
+  if (!investigation.frozen) throw new Error("investigation is not frozen");
+  const { frozen, ...rest } = investigation;
+  return recordHistory(
+    rest,
+    "unfrozen",
+    { previousContentSha256: frozen.contentSha256 },
+    options.at,
+  );
+}
+
+/** Record a cross-reference to another verified case bundle. */
+export function linkRelatedCase(input, bundle, options = {}) {
+  const investigation = validateInvestigation(input);
+  const verification = verifyInvestigationCase(bundle);
+  if (!verification.valid)
+    throw new Error("related case checksum mismatch; refusing to link");
+  const related = investigation.relatedCases ?? [];
+  const payloadSha256 = verification.integrity.expectedSha256;
+  if (related.some((item) => item.payloadSha256 === payloadSha256))
+    throw new Error("case is already linked");
+  const entry = {
+    payloadSha256,
+    targetSha256: verification.target.sha256,
+    sameTarget:
+      verification.target.sha256.toLowerCase() ===
+      investigation.target.sha256.toLowerCase(),
+    ...(options.note ? { note: options.note } : {}),
+  };
+  return recordHistory(
+    { ...investigation, relatedCases: [...related, entry] },
+    "case-linked",
+    { payloadSha256, sameTarget: entry.sameTarget },
+    options.at,
+  );
+}
+
+function mergeCollection(baseItems, otherItems, prefer, conflicts, name) {
+  const merged = indexById(baseItems);
+  for (const item of otherItems) {
+    const existing = merged.get(item.id);
+    if (!existing) {
+      merged.set(item.id, item);
+      continue;
+    }
+    if (canonicalJson(existing) === canonicalJson(item)) continue;
+    conflicts.push({ collection: name, id: item.id });
+    if (prefer === "other") merged.set(item.id, item);
+  }
+  return [...merged.values()];
+}
+
+/** Merge two investigations of the same target; conflicting IDs require an explicit preference. */
+export function mergeInvestigations(baseInput, otherInput, options = {}) {
+  const base = validateInvestigation(baseInput);
+  const other = validateInvestigation(otherInput);
+  if (base.target.sha256.toLowerCase() !== other.target.sha256.toLowerCase())
+    throw new Error(
+      "cannot merge investigations of different targets; evidence is not transferable",
+    );
+  if (base.frozen || other.frozen)
+    throw new Error("cannot merge a frozen investigation; unfreeze first");
+  const prefer = options.prefer;
+  if (prefer !== undefined && !["base", "other"].includes(prefer))
+    throw new TypeError("prefer must be base or other");
+  const conflicts = [];
+  const merged = {
+    ...base,
+    evidence: mergeCollection(
+      base.evidence,
+      other.evidence,
+      prefer,
+      conflicts,
+      "evidence",
+    ),
+    claims: mergeCollection(
+      base.claims,
+      other.claims,
+      prefer,
+      conflicts,
+      "claims",
+    ),
+    questions: mergeCollection(
+      base.questions,
+      other.questions,
+      prefer,
+      conflicts,
+      "questions",
+    ),
+    actions: mergeCollection(
+      base.actions,
+      other.actions,
+      prefer,
+      conflicts,
+      "actions",
+    ),
+  };
+  if (conflicts.length > 0 && prefer === undefined) {
+    const error = new Error(
+      `merge conflicts on ${conflicts.map((c) => `${c.collection}/${c.id}`).join(", ")}; pass prefer=base|other`,
+    );
+    error.conflicts = conflicts;
+    throw error;
+  }
+  const validated = validateInvestigation(merged);
+  return {
+    investigation: recordHistory(
+      validated,
+      "merged",
+      {
+        otherContentSha256: contentDigest(other),
+        otherHistoryEntries: other.history?.length ?? 0,
+        conflicts: conflicts.length,
+        prefer: prefer ?? null,
+      },
+      options.at,
+    ),
+    conflicts,
+    added: {
+      evidence: validated.evidence.length - base.evidence.length,
+      claims: validated.claims.length - base.claims.length,
+      questions: validated.questions.length - base.questions.length,
+      actions: validated.actions.length - base.actions.length,
+    },
+    note: "The other investigation's history is not chained into the result; its content digest is recorded instead.",
+  };
+}
+
+/**
+ * Migration registry. Each entry upgrades a document from `from` to `to`.
+ * Unversioned legacy documents (no schemaVersion, target.sha256 present) are
+ * treated as version 0.
+ */
+const MIGRATIONS = [
+  {
+    from: 0,
+    to: 1,
+    description:
+      "Normalize legacy documents: add schemaVersion, default collections, lowercase digests, map evidence.sha256 to targetSha256.",
+    apply(document) {
+      const lower = (value) =>
+        typeof value === "string" ? value.toLowerCase() : value;
+      return {
+        schemaVersion: 1,
+        target: { ...document.target, sha256: lower(document.target?.sha256) },
+        evidence: (document.evidence ?? []).map((item) => {
+          const { sha256, ...rest } = item;
+          return {
+            ...rest,
+            confidence: rest.confidence ?? "observed",
+            targetSha256: lower(
+              rest.targetSha256 ?? sha256 ?? document.target?.sha256,
+            ),
+          };
+        }),
+        claims: (document.claims ?? []).map((claim) => ({
+          ...claim,
+          evidenceIds: claim.evidenceIds ?? claim.evidence ?? [],
+        })),
+        questions: document.questions ?? [],
+        actions: document.actions ?? [],
+        ...(document.history ? { history: document.history } : {}),
+      };
+    },
+  },
+];
+
+export function listMigrations() {
+  return MIGRATIONS.map(({ from, to, description }) => ({
+    from,
+    to,
+    description,
+  }));
+}
+
+/** Upgrade a document to the current schema, reporting each applied step. */
+export function migrateInvestigation(document) {
+  if (!document || typeof document !== "object" || Array.isArray(document))
+    throw new TypeError("investigation must be an object");
+  let current = document;
+  let version =
+    document.schemaVersion === undefined && document.target?.sha256
+      ? 0
+      : document.schemaVersion;
+  if (!Number.isInteger(version))
+    throw new TypeError("schemaVersion is missing or not an integer");
+  if (version > INVESTIGATION_SCHEMA_VERSION)
+    throw new TypeError(
+      `schemaVersion ${version} is newer than this engine supports (${INVESTIGATION_SCHEMA_VERSION})`,
+    );
+  const applied = [];
+  while (version < INVESTIGATION_SCHEMA_VERSION) {
+    const step = MIGRATIONS.find((m) => m.from === version);
+    if (!step) throw new Error(`no migration from schemaVersion ${version}`);
+    current = step.apply(current);
+    applied.push({
+      from: step.from,
+      to: step.to,
+      description: step.description,
+    });
+    version = step.to;
+  }
+  return {
+    investigation: validateInvestigation(current),
+    fromVersion: applied.length ? applied[0].from : version,
+    toVersion: INVESTIGATION_SCHEMA_VERSION,
+    applied,
+  };
+}
+
 /** Quality checks that do not change the document; findings are advisory and deterministic. */
 export function lintInvestigation(input) {
   const investigation = validateInvestigation(input);
@@ -835,12 +1128,20 @@ export function investigationStats(input) {
   for (const claim of report.claims) byLabel[claim.supportLabel] += 1;
   const byConfidence = { observed: 0, derived: 0, inferred: 0 };
   const byKind = {};
+  const byTag = {};
   let withArtifact = 0;
   for (const item of investigation.evidence) {
     byConfidence[item.confidence] += 1;
     byKind[item.kind] = (byKind[item.kind] ?? 0) + 1;
+    for (const tag of item.tags ?? []) byTag[tag] = (byTag[tag] ?? 0) + 1;
     if (item.artifact) withArtifact += 1;
   }
+  for (const claim of investigation.claims)
+    for (const tag of claim.tags ?? []) byTag[tag] = (byTag[tag] ?? 0) + 1;
+  const sortedEntries = (object) =>
+    Object.fromEntries(
+      Object.entries(object).sort(([a], [b]) => a.localeCompare(b)),
+    );
   const cited = new Set(investigation.claims.flatMap((c) => c.evidenceIds));
   const resolved = investigation.questions.filter((q) => q.resolved).length;
   const present = new Set(investigation.evidence.map((item) => item.kind));
@@ -855,9 +1156,7 @@ export function investigationStats(input) {
     evidence: {
       total: investigation.evidence.length,
       byConfidence,
-      byKind: Object.fromEntries(
-        Object.entries(byKind).sort(([a], [b]) => a.localeCompare(b)),
-      ),
+      byKind: sortedEntries(byKind),
       citedRatio: ratio(cited.size, investigation.evidence.length),
       artifactRatio: ratio(withArtifact, investigation.evidence.length),
     },
@@ -881,6 +1180,9 @@ export function investigationStats(input) {
       resolvedRatio: ratio(resolved, investigation.questions.length),
     },
     actions: { total: investigation.actions.length },
+    tags: sortedEntries(byTag),
+    frozen: Boolean(investigation.frozen),
+    relatedCases: investigation.relatedCases?.length ?? 0,
     historyEntries: investigation.history?.length ?? 0,
   };
 }
@@ -1038,6 +1340,12 @@ export function investigationJsonSchema() {
             source: nonEmpty,
             confidence: { type: "string", enum: [...CONFIDENCE] },
             targetSha256: sha256,
+            tags: {
+              type: "array",
+              maxItems: 32,
+              uniqueItems: true,
+              items: { type: "string", minLength: 1, maxLength: 64 },
+            },
             artifact: {
               type: "object",
               required: ["sha256", "sizeBytes"],
@@ -1060,6 +1368,12 @@ export function investigationJsonSchema() {
             text: nonEmpty,
             evidenceIds: { ...idList, minItems: 1 },
             status: { type: "string", enum: CLAIM_STATUSES },
+            tags: {
+              type: "array",
+              maxItems: 32,
+              uniqueItems: true,
+              items: { type: "string", minLength: 1, maxLength: 64 },
+            },
           },
         },
       },
@@ -1092,6 +1406,27 @@ export function investigationJsonSchema() {
             name: nonEmpty,
             produces: { type: "array", items: kinds },
             cost: { type: "number", exclusiveMinimum: 0 },
+          },
+        },
+      },
+      frozen: {
+        type: "object",
+        required: ["at", "contentSha256"],
+        properties: {
+          at: { type: "string", format: "date-time" },
+          contentSha256: sha256,
+        },
+      },
+      relatedCases: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["payloadSha256", "targetSha256", "sameTarget"],
+          properties: {
+            payloadSha256: sha256,
+            targetSha256: sha256,
+            sameTarget: { type: "boolean" },
+            note: nonEmpty,
           },
         },
       },
@@ -1146,6 +1481,7 @@ export function buildEvidenceReport(input) {
       text: claim.text,
       status: claim.status ?? "hypothesis",
       supportLabel: label,
+      ...(claim.tags ? { tags: claim.tags } : {}),
       evidence: evidence.map(({ id, kind, source, confidence, summary }) => ({
         id,
         kind,
@@ -1198,6 +1534,11 @@ export function renderEvidenceReportMarkdown(input) {
     `- Evidence items: ${report.summary.evidenceCount}`,
     `- Claims: ${report.summary.claimCount}`,
     `- Open questions: ${report.summary.unresolvedQuestionCount} of ${report.summary.questionCount}`,
+    ...(investigation.frozen
+      ? [
+          `- Frozen: ${investigation.frozen.at} (content \`${investigation.frozen.contentSha256}\`)`,
+        ]
+      : []),
     "",
     "## Claims",
     "",
@@ -1205,7 +1546,11 @@ export function renderEvidenceReportMarkdown(input) {
   if (report.claims.length === 0) lines.push("_No claims recorded._", "");
   for (const claim of report.claims) {
     lines.push(
-      `### ${markdownCell(claim.id)} — ${claim.supportLabel} (${claim.status})`,
+      `### ${markdownCell(claim.id)} — ${claim.supportLabel} (${claim.status})${
+        claim.tags?.length
+          ? ` · tags: ${claim.tags.map(markdownCell).join(", ")}`
+          : ""
+      }`,
       "",
       claim.text.trim(),
       "",
@@ -1610,6 +1955,76 @@ const PROVIDER_CATALOG = [
     areas: ["wasm"],
   },
   {
+    id: "readelf",
+    label: "GNU readelf",
+    commands: ["readelf"],
+    probeArgs: ["--version"],
+    areas: ["native-binary", "elf"],
+  },
+  {
+    id: "nm",
+    label: "GNU nm",
+    commands: ["nm"],
+    probeArgs: ["--version"],
+    areas: ["native-binary", "symbols"],
+  },
+  {
+    id: "file",
+    label: "file (libmagic)",
+    commands: ["file"],
+    probeArgs: ["--version"],
+    areas: ["identification"],
+  },
+  {
+    id: "rabin2",
+    label: "radare2 rabin2",
+    commands: ["rabin2"],
+    probeArgs: ["-v"],
+    areas: ["native-binary", "metadata"],
+  },
+  {
+    id: "rz-bin",
+    label: "rizin rz-bin",
+    commands: ["rz-bin"],
+    probeArgs: ["-v"],
+    areas: ["native-binary", "metadata"],
+  },
+  {
+    id: "monodis",
+    label: "Mono disassembler (monodis)",
+    commands: ["monodis"],
+    probeArgs: ["--version"],
+    areas: ["dotnet", "managed-binaries"],
+  },
+  {
+    id: "aapt2",
+    label: "Android aapt2",
+    commands: ["aapt2"],
+    probeArgs: ["version"],
+    areas: ["android", "resources"],
+  },
+  {
+    id: "wasm-objdump",
+    label: "WABT wasm-objdump",
+    commands: ["wasm-objdump"],
+    probeArgs: ["--version"],
+    areas: ["wasm"],
+  },
+  {
+    id: "bubblewrap",
+    label: "bubblewrap sandbox",
+    commands: ["bwrap"],
+    probeArgs: ["--version"],
+    areas: ["isolation"],
+  },
+  {
+    id: "prlimit",
+    label: "prlimit (util-linux)",
+    commands: ["prlimit"],
+    probeArgs: ["--version"],
+    areas: ["resource-limits"],
+  },
+  {
     id: "docker",
     label: "Docker",
     commands: ["docker"],
@@ -1688,9 +2103,24 @@ export async function probeExecutable(executable, args = [], options = {}) {
     ),
   );
   const startedAt = Date.now();
+  const signal = options.signal;
+  if (signal?.aborted)
+    return {
+      executable,
+      args,
+      durationMs: 0,
+      status: "cancelled",
+      exitCode: null,
+      signal: null,
+      error: "cancelled before start",
+      stdout: "",
+      stderr: "",
+      outputTruncated: false,
+    };
   return await new Promise((resolveProbe) => {
     let settled = false;
     let timedOut = false;
+    let cancelled = false;
     let stdout = "";
     let stderr = "";
     let outputTruncated = false;
@@ -1708,10 +2138,26 @@ export async function probeExecutable(executable, args = [], options = {}) {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, CI: "1", NO_COLOR: "1", TERM: "dumb" },
     });
+    const onAbort = () => {
+      cancelled = true;
+      child.kill("SIGKILL");
+      setTimeout(
+        () =>
+          finish({
+            status: "cancelled",
+            exitCode: null,
+            signal: "SIGKILL",
+            error: "cancelled by caller",
+          }),
+        100,
+      ).unref?.();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       resolveProbe({
         executable,
         args,
@@ -1736,12 +2182,22 @@ export async function probeExecutable(executable, args = [], options = {}) {
         error: error.message,
       }),
     );
-    child.once("close", (code, signal) =>
+    child.once("close", (code, exitSignal) =>
       finish({
-        status: timedOut ? "timeout" : code === 0 ? "ok" : "nonzero",
+        status: cancelled
+          ? "cancelled"
+          : timedOut
+            ? "timeout"
+            : code === 0
+              ? "ok"
+              : "nonzero",
         exitCode: code,
-        signal,
-        ...(timedOut ? { error: `probe exceeded ${timeoutMs}ms timeout` } : {}),
+        signal: exitSignal,
+        ...(cancelled
+          ? { error: "cancelled by caller" }
+          : timedOut
+            ? { error: `probe exceeded ${timeoutMs}ms timeout` }
+            : {}),
       }),
     );
     const timer = setTimeout(() => {
@@ -1826,35 +2282,252 @@ export async function probeProviders(env = process.env, options = {}) {
 }
 
 /**
- * Run a fixed-argument static metadata inspection on a target file. Only
- * allow-listed objdump-family adapters are accepted; no shell is involved.
- * This executes the analyzer, never the target, and re-hashes the target after
- * the run to flag any unexpected byte changes.
+ * Allow-listed static analyzers. Every entry runs with fixed argv, no shell,
+ * a timeout, and an output cap; none of them executes the target.
+ */
+export const STATIC_ANALYZERS = Object.freeze({
+  objdump: {
+    providerId: "objdump",
+    args: (path) => ["-f", "-h", "--", path],
+    analysisKind: "static-file-metadata",
+    description: "object file format and section headers",
+  },
+  "llvm-objdump": {
+    providerId: "llvm-objdump",
+    args: (path) => ["-f", "-h", "--", path],
+    analysisKind: "static-file-metadata",
+    description: "object file format and section headers",
+  },
+  readelf: {
+    providerId: "readelf",
+    args: (path) => ["-h", "-S", "-W", "--", path],
+    analysisKind: "static-file-metadata",
+    requiresFormat: /^ELF/u,
+    description: "ELF header and section table",
+  },
+  nm: {
+    providerId: "nm",
+    args: (path) => ["-D", "--defined-only", "--", path],
+    analysisKind: "symbol-table",
+    requiresFormat: /^ELF/u,
+    description: "dynamic symbol table",
+  },
+  file: {
+    providerId: "file",
+    args: (path) => ["--brief", "--", path],
+    analysisKind: "file-type-identification",
+    description: "libmagic type identification",
+  },
+  rabin2: {
+    providerId: "rabin2",
+    args: (path) => ["-I", "--", path],
+    analysisKind: "static-file-metadata",
+    description: "radare2 binary information",
+  },
+  "rz-bin": {
+    providerId: "rz-bin",
+    args: (path) => ["-I", "--", path],
+    analysisKind: "static-file-metadata",
+    description: "rizin binary information",
+  },
+  monodis: {
+    providerId: "monodis",
+    args: (path) => ["--assembly", path],
+    analysisKind: "managed-assembly-metadata",
+    requiresFormat: /^DOS MZ header/u,
+    description: ".NET assembly manifest",
+  },
+  aapt2: {
+    providerId: "aapt2",
+    args: (path) => ["dump", "badging", path],
+    analysisKind: "android-package-metadata",
+    requiresFormat: /^ZIP container/u,
+    description: "Android package badging (manifest summary)",
+  },
+  "wasm-objdump": {
+    providerId: "wasm-objdump",
+    args: (path) => ["-h", path],
+    analysisKind: "wasm-section-headers",
+    requiresFormat: /^WebAssembly$/u,
+    description: "WebAssembly section headers",
+  },
+  "wasm-tools": {
+    providerId: "wasm-tools",
+    args: (path) => ["validate", path],
+    analysisKind: "wasm-validation",
+    requiresFormat: /^WebAssembly$/u,
+    description: "WebAssembly validation",
+  },
+});
+
+export const STATIC_ANALYZER_IDS = Object.freeze(Object.keys(STATIC_ANALYZERS));
+
+/**
+ * Detect optional OS-level isolation (bubblewrap) and resource-limit (prlimit)
+ * helpers on PATH. Detection is PATH presence only; nothing is executed.
+ */
+export async function detectIsolationSupport(env = process.env) {
+  const discovery = await discoverProviders(env);
+  const find = (id) => discovery.providers.find((item) => item.id === id);
+  const bwrap = find("bubblewrap");
+  const prlimit = find("prlimit");
+  return {
+    bubblewrap: {
+      available: Boolean(bwrap?.available),
+      path: bwrap?.foundCommands[0]?.path ?? null,
+    },
+    prlimit: {
+      available: Boolean(prlimit?.available),
+      path: prlimit?.foundCommands[0]?.path ?? null,
+    },
+    platform: process.platform,
+  };
+}
+
+function buildIsolatedCommand(command, args, targetPath, support, options) {
+  const requested = options.isolation ?? "auto";
+  if (!["auto", "required", "none"].includes(requested))
+    throw new TypeError("isolation must be auto, required, or none");
+  const limits = options.limits ?? {};
+  for (const [key, max] of [
+    ["cpuSeconds", 3600],
+    ["memoryBytes", 64 * 1024 ** 3],
+    ["fileSizeBytes", 64 * 1024 ** 3],
+  ])
+    if (
+      limits[key] !== undefined &&
+      (!Number.isInteger(limits[key]) || limits[key] < 1 || limits[key] > max)
+    )
+      throw new TypeError(
+        `limits.${key} must be an integer between 1 and ${max}`,
+      );
+  const wantLimits = Object.keys(limits).length > 0;
+  let executable = command.path;
+  let argv = [...args];
+  const report = {
+    requested,
+    applied: "none",
+    sandbox: null,
+    limitsRequested: limits,
+    limitsApplied: false,
+    reasons: [],
+  };
+  if (wantLimits) {
+    if (support.prlimit.available) {
+      const flags = [];
+      if (limits.cpuSeconds !== undefined)
+        flags.push(`--cpu=${limits.cpuSeconds}`);
+      if (limits.memoryBytes !== undefined)
+        flags.push(`--as=${limits.memoryBytes}`);
+      if (limits.fileSizeBytes !== undefined)
+        flags.push(`--fsize=${limits.fileSizeBytes}`);
+      argv = [...flags, "--", executable, ...argv];
+      executable = support.prlimit.path;
+      report.limitsApplied = true;
+    } else
+      report.reasons.push(
+        "prlimit not found on PATH; resource limits were not applied",
+      );
+  }
+  if (requested !== "none") {
+    if (support.bubblewrap.available && process.platform === "linux") {
+      argv = [
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+        "--tmpfs",
+        "/tmp",
+        "--ro-bind",
+        targetPath,
+        targetPath,
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--clearenv",
+        "--setenv",
+        "PATH",
+        "/usr/bin:/bin",
+        "--",
+        executable,
+        ...argv,
+      ];
+      executable = support.bubblewrap.path;
+      report.applied = "bubblewrap";
+      report.sandbox = {
+        filesystem: "read-only root, private /tmp, no writable target",
+        namespaces: "user, pid, net, uts, ipc, cgroup (unshare-all)",
+        network: "none",
+      };
+    } else {
+      report.reasons.push(
+        process.platform === "linux"
+          ? "bubblewrap (bwrap) not found on PATH; analyzer ran without OS-level isolation"
+          : `OS-level isolation via bubblewrap is Linux-only (platform: ${process.platform})`,
+      );
+      if (requested === "required")
+        throw new Error(
+          `isolation required but unavailable: ${report.reasons.join("; ")}`,
+        );
+    }
+  }
+  return { executable, argv, report };
+}
+
+/**
+ * Run a fixed-argument static analyzer on a target file. Only allow-listed
+ * adapters are accepted; no shell is involved. Optional bubblewrap isolation
+ * and prlimit resource limits are applied when available and reported honestly
+ * when they are not. The target is re-hashed afterwards to flag byte changes.
  */
 export async function analyzeTarget(targetPath, providerId, options = {}) {
-  if (!["objdump", "llvm-objdump", "wasm-tools"].includes(providerId)) {
+  const adapter = STATIC_ANALYZERS[providerId];
+  if (!adapter)
     throw new TypeError(
-      `unsupported static analyzer: ${providerId}; allowed: objdump, llvm-objdump, wasm-tools`,
+      `unsupported static analyzer: ${providerId}; allowed: ${STATIC_ANALYZER_IDS.join(", ")}`,
     );
-  }
   const before = await fingerprintTarget(targetPath);
-  if (providerId === "wasm-tools" && before.detectedFormat !== "WebAssembly") {
+  if (
+    adapter.requiresFormat &&
+    !adapter.requiresFormat.test(before.detectedFormat)
+  )
     throw new TypeError(
-      `wasm-tools validate requires a confirmed WebAssembly magic signature; detected: ${before.detectedFormat}`,
+      `${providerId} requires a confirmed ${adapter.requiresFormat.source.replaceAll(/[\\^$]/gu, "")} magic signature; detected: ${before.detectedFormat}`,
     );
-  }
-  const discovery = await discoverProviders(options.env ?? process.env);
-  const provider = discovery.providers.find((item) => item.id === providerId);
+  const env = options.env ?? process.env;
+  const discovery = await discoverProviders(env);
+  const provider = discovery.providers.find(
+    (item) => item.id === adapter.providerId,
+  );
   if (!provider?.available)
     throw new Error(`provider not found on PATH: ${providerId}`);
   const command = provider.foundCommands[0];
-  const args =
-    providerId === "wasm-tools"
-      ? ["validate", before.path]
-      : ["-f", "-h", "--", before.path];
-  const execution = await probeExecutable(command.path, args, options);
+  const support = await detectIsolationSupport(env);
+  const { executable, argv, report } = buildIsolatedCommand(
+    command,
+    adapter.args(before.path),
+    before.path,
+    support,
+    options,
+  );
+  const execution = await probeExecutable(executable, argv, options);
   const after = await fingerprintTarget(before.path);
   const targetChanged = before.sha256 !== after.sha256;
+  const limitations = [
+    "A nonzero analyzer exit is reported as a failure and must not be treated as successful analysis.",
+    `This adapter extracts ${adapter.description}; it is not full disassembly or semantic analysis.`,
+  ];
+  if (report.applied === "none")
+    limitations.unshift(
+      "The analyzer process is bounded by wall-clock timeout and captured-output limits, but OS-level CPU/memory/filesystem sandboxing was not applied in this run.",
+    );
+  else
+    limitations.unshift(
+      "bubblewrap isolation provides namespace and filesystem separation; it is not a substitute for analysing untrusted targets on a disposable machine.",
+    );
   return {
     schemaVersion: 1,
     provider: { id: providerId, command: command.command, path: command.path },
@@ -1867,17 +2540,13 @@ export async function analyzeTarget(targetPath, providerId, options = {}) {
       detectedFormat: before.detectedFormat,
     },
     execution: { ...execution, command: command.command, path: command.path },
+    isolation: report,
     status: targetChanged ? "target-changed-during-analysis" : execution.status,
     outputSha256: sha256Text(`${execution.stdout}\n${execution.stderr}`),
     targetChanged,
     targetExecuted: false,
-    analysisKind:
-      providerId === "wasm-tools" ? "wasm-validation" : "static-file-metadata",
-    limitations: [
-      "The analyzer process is bounded by wall-clock timeout and captured-output limits, but OS-level CPU/memory/filesystem sandboxing is not provided by this adapter.",
-      "A nonzero analyzer exit is reported as a failure and must not be treated as successful analysis.",
-      "This adapter extracts file/object metadata and section headers; it is not full disassembly or semantic analysis.",
-    ],
+    analysisKind: adapter.analysisKind,
+    limitations,
   };
 }
 
@@ -1906,11 +2575,19 @@ export function attachAnalysisEvidence(input, analysis, evidenceId) {
     throw new TypeError(`evidence id already exists: ${evidenceId}`);
   investigation.evidence.push({
     id: evidenceId,
-    kind: "static-analysis",
-    summary: `${analysis.provider.id} static file-metadata analysis succeeded; output SHA-256 ${analysis.outputSha256}`,
-    source: `provider:${analysis.provider.id}; target:${analysis.target.path}; output-sha256:${analysis.outputSha256}`,
+    kind:
+      analysis.analysisKind === "symbol-table" ? "symbol" : "static-analysis",
+    summary: `${analysis.provider.id} ${analysis.analysisKind ?? "static-analysis"} succeeded; output SHA-256 ${analysis.outputSha256}`,
+    source: `provider:${analysis.provider.id}; target:${analysis.target.path}; output-sha256:${analysis.outputSha256}; isolation:${analysis.isolation?.applied ?? "unknown"}`,
     confidence: "observed",
     targetSha256: investigation.target.sha256,
+    artifact: {
+      sha256: analysis.outputSha256,
+      sizeBytes: Buffer.byteLength(
+        `${analysis.execution?.stdout ?? ""}\n${analysis.execution?.stderr ?? ""}`,
+      ),
+      name: `${analysis.provider.id}-output.txt`,
+    },
   });
   return validateInvestigation(investigation);
 }

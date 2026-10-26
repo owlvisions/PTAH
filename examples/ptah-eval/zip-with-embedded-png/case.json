@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "zip-with-embedded-png",
+  "description": "ZIP local-header container with a readable string and an embedded PNG signature for carving.",
+  "target": "target.zip",
+  "expect": {
+    "sha256": "e54ac3f2a09c3cd6c03dd9f15817975479357d24221cb4d3a357eeb0b52e54da",
+    "detectedFormat": "ZIP container (format not uniquely identified)",
+    "strings": {
+      "options": { "minLength": 8 },
+      "includes": ["README-INSIDE-ARCHIVE"]
+    },
+    "inspect": { "formatDetails": null, "entropy.bitsPerByte": { "$lte": 4 } }
+  }
+}

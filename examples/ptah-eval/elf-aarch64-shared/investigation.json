@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "id": "target.so",
+    "sha256": "5e4b8a5b1eae6be1bcb1bf4dabdc804c04afada803e21972bffc48df2819d9c7"
+  },
+  "evidence": [
+    {
+      "id": "ev-header",
+      "kind": "static-analysis",
+      "summary": "ELF64 LE shared object, machine AArch64",
+      "source": "ptah fingerprint --inspect",
+      "confidence": "observed",
+      "targetSha256": "5e4b8a5b1eae6be1bcb1bf4dabdc804c04afada803e21972bffc48df2819d9c7",
+      "tags": ["headers"]
+    },
+    {
+      "id": "ev-interp",
+      "kind": "static-analysis",
+      "summary": "Interpreter string /lib/ld-linux-aarch64.so.1 at offset 160",
+      "source": "ptah strings --min-length 8",
+      "confidence": "observed",
+      "targetSha256": "5e4b8a5b1eae6be1bcb1bf4dabdc804c04afada803e21972bffc48df2819d9c7"
+    },
+    {
+      "id": "ev-guess",
+      "kind": "other",
+      "summary": "Name suggests a cryptography helper",
+      "source": "analyst note",
+      "confidence": "inferred",
+      "targetSha256": "5e4b8a5b1eae6be1bcb1bf4dabdc804c04afada803e21972bffc48df2819d9c7"
+    }
+  ],
+  "claims": [
+    {
+      "id": "c-format",
+      "text": "The target is a 64-bit AArch64 shared object",
+      "evidenceIds": ["ev-header"],
+      "status": "supported"
+    },
+    {
+      "id": "c-interp",
+      "text": "The target references the AArch64 glibc loader",
+      "evidenceIds": ["ev-interp"],
+      "status": "verified"
+    },
+    {
+      "id": "c-guess",
+      "text": "The library implements cryptography",
+      "evidenceIds": ["ev-guess"]
+    }
+  ],
+  "questions": [
+    {
+      "id": "q-exports",
+      "text": "Which symbols does it export?",
+      "priority": 70,
+      "requiredEvidenceKinds": ["symbol"]
+    }
+  ],
+  "actions": [
+    {
+      "id": "a-nm",
+      "name": "Run nm -D under isolation",
+      "produces": ["symbol"],
+      "cost": 1
+    }
+  ]
+}

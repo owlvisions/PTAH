@@ -1,5 +1,13 @@
 # Security Policy
 
+## PTAH responsible disclosure
+
+PTAH (بتاح) is the primary product in this repository; the REA runtime beneath it follows the same policy. Report PTAH issues privately through the repository's **Security** tab (GitHub private vulnerability reporting). Please include: the PTAH commit or package version, the command or MCP tool involved (`ptah …`, `ptah-mcp`, `ptah ui`), the operating system, whether bubblewrap/prlimit isolation was applied (`ptah isolation`), and a minimal reproduction that does **not** include proprietary targets. Remove case bundles, private keys (`ptah-case-signing.key`), and passphrases from reports.
+
+In-scope examples: a way to make an analyzer adapter execute the analysed target; escaping the allow-listed argv or shell-free execution; bypassing checksum, signature, or history-chain validation; the loopback workbench accepting non-loopback requests; path traversal in MCP `--root` resources; passphrase or key leakage. Out of scope: vulnerabilities in third-party analyzers themselves (report those upstream), and the absence of OS isolation when `ptah isolation` reports bubblewrap unavailable — that is a documented, honestly reported limitation rather than a bypass.
+
+Timeline: acknowledgement within 7 days, assessment within 14 days, and coordinated disclosure after a fix is published on `main`. Reporters are credited unless they ask otherwise.
+
 ## Supported versions
 
 Security fixes are provided for the latest published version of REA. Upgrade to the latest release before reporting a problem that may already have been resolved.
