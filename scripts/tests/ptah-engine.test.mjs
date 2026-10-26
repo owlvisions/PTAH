@@ -1000,6 +1000,13 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     const pageHtml = await page.text();
     assert.match(pageHtml, /PTAH.*Local Investigation Workbench/s);
     assert.match(pageHtml, /Export verified case/);
+    assert.match(pageHtml, /Verify & import case/);
+    const importWithoutTarget = await fetch(`${base}/api/import-case`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(importWithoutTarget.status, 409);
     const upload = await fetch(`${base}/api/init`, {
       method: "POST",
       headers: {
@@ -1035,6 +1042,45 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     const saved = JSON.parse(await download.text());
     assert.equal(verifyInvestigationCase(saved).valid, true);
     assert.equal(saved.investigation.evidence[0].id, "ev-ui");
+    const imported = await fetch(`${base}/api/import-case`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(saved),
+    });
+    assert.equal(imported.status, 200);
+    assert.equal((await imported.json()).investigation.evidence[0].id, "ev-ui");
+
+    const tampered = structuredClone(saved);
+    tampered.investigation.evidence[0].summary = "tampered case";
+    const rejected = await fetch(`${base}/api/import-case`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(tampered),
+    });
+    assert.equal(rejected.status, 400);
+    assert.match((await rejected.json()).error, /checksum mismatch/);
+    const unchanged = await fetch(`${base}/api/state`);
+    assert.equal(
+      (await unchanged.json()).investigation.evidence[0].summary,
+      "Fixture inspected",
+    );
+
+    const differentTarget = await fetch(`${base}/api/init`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-target-name": "other.wasm",
+      },
+      body: new Uint8Array([0, 97, 115, 109, 9, 0, 0, 0]),
+    });
+    assert.equal(differentTarget.status, 201);
+    const wrongTarget = await fetch(`${base}/api/import-case`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(saved),
+    });
+    assert.equal(wrongTarget.status, 400);
+    assert.match((await wrongTarget.json()).error, /target digest mismatch/);
   } finally {
     await app.close();
   }

@@ -29,7 +29,7 @@ ptah import-case --input ./sample.ptah-case.json --output ./restored.investigati
 
 The versioned `ptah-investigation-case` envelope includes the validated investigation and a SHA-256 checksum over its canonical JSON payload. Import refuses invalid schemas, checksum mismatches, and—when `--target` is supplied—a target whose current bytes do not match the recorded digest. The target file itself is never embedded or executed. The checksum detects accidental corruption; it is not a digital signature and does not authenticate who created or modified a bundle.
 
-The MCP server exposes matching `ptah_case_export`, `ptah_case_verify`, and `ptah_case_import` tools. The local workbench download now emits the same portable case format.
+The MCP server exposes matching `ptah_case_export`, `ptah_case_verify`, and `ptah_case_import` tools. The local workbench downloads this portable format and can import it after the matching target bytes have been uploaded; an invalid checksum or target mismatch leaves the current investigation unchanged.
 
 ## Schema v1
 
