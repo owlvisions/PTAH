@@ -96,6 +96,21 @@ const { evidence, provider, attempts } = await session.run("importsExports");
 | il2cpp-inspector      | builtin | il2cpp-metadata                | manifest (versions 24/27/29/31/39)                                | MIT                        | tested (synthetic)                               |
 | toolchain-inspector   | builtin | elf, pe, macho                 | manifest (Go, Rust, Flutter, PyInstaller)                         | MIT                        | tested live (Go: gh binary)                      |
 
+## Advanced analyzers (beyond REA)
+
+Cross-cutting analyzers that work on bytes, dependency manifests, or a pair of
+targets rather than one format's tasks. Each returns Evidence.
+
+| Analyzer                  | Kind    | Beyond REA | License / tool                 | Status                                   |
+| ------------------------- | ------- | ---------- | ------------------------------ | ---------------------------------------- |
+| secrets                   | builtin | no         | MIT                            | tested; values redacted, never stored    |
+| dependencies / CVE        | builtin | yes        | MIT                            | tested; offline advisory set, no network |
+| deep diff                 | builtin | yes        | MIT                            | tested; deterministic                    |
+| yara                      | tool    | yes        | BSD-3-Clause (yara)            | tested live                              |
+| capstone                  | tool    | yes        | BSD-3-Clause (python capstone) | tested live (x86-64)                     |
+| unicorn (emulation)       | tool    | yes        | GPL-2.0 (python unicorn)       | tested live; consent-gated, CPU-only     |
+| angr / frida / diffoscope | tool    | yes        | user-installed                 | detect-and-degrade; not installed here   |
+
 Commercial engines (IDA, Hopper, JEB, Binary Ninja) are never bundled; their
 adapters, when added, call the user's own licensed installation.
 

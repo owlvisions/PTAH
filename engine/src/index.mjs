@@ -106,3 +106,15 @@ export {
   detectToolchains,
   bytecodeProviders,
 } from "./adapters/inspectors/bytecode.mjs";
+export {
+  scanSecrets,
+  scanDependencies,
+  parseDependencies,
+  matchAdvisories,
+  deepDiff,
+  yaraScan,
+  capstoneDisassemble,
+  emulate,
+  probeOptionalEngine,
+  ADVANCED_ANALYZERS,
+} from "./analyzers.mjs";
