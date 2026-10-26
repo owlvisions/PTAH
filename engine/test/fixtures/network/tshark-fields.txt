@@ -1,0 +1,2 @@
+1	10.0.0.2	10.0.0.1	DNS		53				api.ptah.example	
+2	10.0.0.2	93.184.216.34	HTTP	80		api.ptah.example	GET	/v1/hello?x=1		

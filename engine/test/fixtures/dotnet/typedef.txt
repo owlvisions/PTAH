@@ -1,0 +1,5 @@
+Typedef Table
+1: (null) (flist=1, mlist=1, flags=0x0, extends=0x0)
+2: Ptah.Sample.IGreeter (flist=1, mlist=1, flags=0xa1, extends=0x0)
+3: Ptah.Sample.Greeter (flist=1, mlist=2, flags=0x100001, extends=0x9)
+

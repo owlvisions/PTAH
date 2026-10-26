@@ -66,11 +66,19 @@ const { evidence, provider, attempts } = await session.run("importsExports");
 
 ## Provider status
 
-| Provider | Kind | Formats | Tasks                                       | License          | Status                         |
-| -------- | ---- | ------- | ------------------------------------------- | ---------------- | ------------------------------ |
-| readelf  | tool | elf     | manifest, sections, symbols, importsExports | GPL-3.0-or-later | implemented, tested live       |
-| objdump  | tool | elf, pe | disassemble, sections                       | GPL-3.0-or-later | implemented, tested live (ELF) |
-| nm       | tool | elf, pe | symbols, importsExports                     | GPL-3.0-or-later | implemented, tested live (ELF) |
+| Provider     | Kind | Formats                        | Tasks                                          | License          | Status            |
+| ------------ | ---- | ------------------------------ | ---------------------------------------------- | ---------------- | ----------------- |
+| readelf      | tool | elf                            | manifest, sections, symbols, importsExports    | GPL-3.0-or-later | tested live       |
+| objdump      | tool | elf, pe                        | disassemble, sections                          | GPL-3.0-or-later | tested live (ELF) |
+| nm           | tool | elf, pe                        | symbols, importsExports                        | GPL-3.0-or-later | tested live (ELF) |
+| aapt2        | tool | apk                            | manifest                                       | Apache-2.0       | tested live       |
+| apktool      | tool | apk, aab                       | manifest, resources                            | Apache-2.0       | tested live       |
+| jadx         | tool | apk, aab, dex, jar, java-class | decompile, strings                             | Apache-2.0       | tested live       |
+| wasm-objdump | tool | wasm                           | sections, importsExports, disassemble          | Apache-2.0       | tested live       |
+| monodis      | tool | dotnet                         | manifest, symbols, importsExports, disassemble | MIT              | tested live       |
+| binwalk      | tool | unknown, bin                   | resources                                      | MIT              | tested live       |
+| unblob       | tool | unknown, bin                   | resources                                      | MIT              | tested live       |
+| tshark       | tool | pcap, pcapng                   | resources                                      | GPL-2.0-or-later | tested live       |
 
 Commercial engines (IDA, Hopper, JEB, Binary Ninja) are never bundled; their
 adapters, when added, call the user's own licensed installation.

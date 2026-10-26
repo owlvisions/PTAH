@@ -1,0 +1,9 @@
+Assembly Table
+Name:          lib
+Hash Algoritm: 0x00008004
+Version:       0.0.0.0
+Flags:         0x00000000
+PublicKey:     BlobPtr (0x00000000)
+	Zero sized public key
+Culture:       
+

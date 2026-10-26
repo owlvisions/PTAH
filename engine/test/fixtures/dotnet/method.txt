@@ -1,0 +1,7 @@
+Method Table (1..4)
+########## Ptah.Sample.IGreeter
+1: instance default string Greet (string name)  (param: 1 impl_flags: cil managed )
+########## Ptah.Sample.Greeter
+2: instance default void '.ctor' ()  (param: 2 impl_flags: cil managed )
+3: instance default string Greet (string name)  (param: 2 impl_flags: cil managed )
+4: default int32 Add (int32 a, int32 b)  (param: 3 impl_flags: cil managed )

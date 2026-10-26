@@ -3,7 +3,10 @@
  * PATH, version probing, bounded execution, and evidence construction. Raw
  * output never leaves the adapter; only the mapped data and its digest do.
  */
-import { sha256 } from "../canonical.mjs";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { canonicalJson, sha256 } from "../canonical.mjs";
 import { createEvidence } from "../evidence.mjs";
 import { findExecutable, runTool, toolEnvironment } from "../exec.mjs";
 import { AnalysisProvider } from "../provider.mjs";
@@ -48,9 +51,9 @@ export class ToolProvider extends AnalysisProvider {
   }
 
   /**
-   * Run the tool on a target. `args` contains the literal "{target}" where
-   * the target path goes; evidence records "<target>" there so it stays
-   * identical across machines.
+   * Run the tool on a target. `args` may contain "{target}" (the target path)
+   * and any tokens in `context.tokens`; evidence records the token's display
+   * spelling (default "<...>") so argv stays identical across machines.
    */
   async execute(target, args, context = {}) {
     if (!this.#resolved) {
@@ -58,7 +61,9 @@ export class ToolProvider extends AnalysisProvider {
       if (!state.available) throw new ToolFailure(this.id, state.reason);
     }
     const { path, version, env } = this.#resolved;
-    const argv = args.map((arg) => (arg === "{target}" ? target.path : arg));
+    const tokens = { "{target}": target.path, ...context.tokens };
+    const display = { "{target}": "<target>", ...context.display };
+    const argv = args.map((arg) => tokens[arg] ?? arg);
     const result = await runTool(path, argv, {
       timeoutMs: context.timeoutMs ?? 30_000,
       maxOutputBytes: context.maxOutputBytes ?? 8 * 1024 * 1024,
@@ -83,11 +88,34 @@ export class ToolProvider extends AnalysisProvider {
         version,
         argv: [
           this.executables[0],
-          ...args.map((arg) => (arg === "{target}" ? "<target>" : arg)),
+          ...args.map((arg) => display[arg] ?? (tokens[arg] ? "<arg>" : arg)),
         ],
       },
       rawSha256: sha256(result.stdout),
     };
+  }
+
+  /**
+   * Run a tool that writes into an output directory. Creates a scratch dir,
+   * substitutes it for "{outdir}", runs, then calls `read(dir)` and cleans up.
+   * Returns the run plus whatever `read` returned under `output`.
+   */
+  async executeToDir(target, args, read, context = {}) {
+    const base = await mkdtemp(join(tmpdir(), "ptah-engine-"));
+    const outdir = join(base, "out");
+    await mkdir(outdir, { recursive: true });
+    try {
+      const run = await this.execute(target, args, {
+        ...context,
+        tokens: { "{outdir}": outdir, ...context.tokens },
+        display: { "{outdir}": "<outdir>", ...context.display },
+      });
+      const output = await read(outdir);
+      // The data comes from written files, not stdout, so digest the mapped output.
+      return { ...run, output, rawSha256: sha256(canonicalJson(output)) };
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
   }
 
   /** Build observed evidence from an execution and mapped data. */

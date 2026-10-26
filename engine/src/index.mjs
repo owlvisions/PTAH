@@ -40,3 +40,36 @@ export {
   parseNm,
   importsExportsFromSymbols,
 } from "./adapters/binutils.mjs";
+export { defaultProviders } from "./registry-defaults.mjs";
+export {
+  Aapt2Provider,
+  ApktoolProvider,
+  JadxProvider,
+  jvmProviders,
+  parseBadging,
+} from "./adapters/jvm.mjs";
+export {
+  WasmObjdumpProvider,
+  wasmProviders,
+  parseWasmObjdumpDetails,
+  parseWasmDisassembly,
+} from "./adapters/wasm-tool.mjs";
+export {
+  MonodisProvider,
+  dotnetProviders,
+  parseAssembly,
+  parseTypedef,
+  parseMethods,
+  parseAssemblyRef,
+} from "./adapters/dotnet.mjs";
+export {
+  BinwalkProvider,
+  UnblobProvider,
+  firmwareProviders,
+  parseBinwalkCsv,
+} from "./adapters/firmware.mjs";
+export {
+  TsharkProvider,
+  networkProviders,
+  parseTsharkFields,
+} from "./adapters/network.mjs";

@@ -1,0 +1,6 @@
+
+DECIMAL       HEXADECIMAL     DESCRIPTION
+--------------------------------------------------------------------------------
+512           0x200           gzip compressed data, from Unix, last modified: 1970-01-01 00:00:00 (null date)
+875           0x36B           Squashfs filesystem, little endian, version 4.0, compression:gzip, size: 306 bytes, 4 inodes, blocksize: 131072 bytes, created: 2026-10-26 18:51:49
+

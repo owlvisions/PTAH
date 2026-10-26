@@ -1,0 +1,14 @@
+
+sample.wasm:	file format wasm 0x1
+
+Code Disassembly:
+
+00004c func[1] <add>:
+ 00004d: 20 00                      | local.get 0
+ 00004f: 20 01                      | local.get 1
+ 000051: 6a                         | i32.add
+ 000052: 0b                         | end
+000054 func[2] <ping>:
+ 000055: 41 07                      | i32.const 7
+ 000057: 10 00                      | call 0 <env.log>
+ 000059: 0b                         | end

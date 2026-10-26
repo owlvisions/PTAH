@@ -1,0 +1,23 @@
+
+sample.wasm:	file format wasm 0x1
+
+Section Details:
+
+Type[3]:
+ - type[0] (i32) -> nil
+ - type[1] (i32, i32) -> i32
+ - type[2] () -> nil
+Import[1]:
+ - func[0] sig=0 <env.log> <- env.log
+Function[2]:
+ - func[1] sig=1 <add>
+ - func[2] sig=2 <ping>
+Memory[1]:
+ - memory[0] pages: initial=1
+Export[3]:
+ - memory[0] -> "memory"
+ - func[1] <add> -> "add"
+ - func[2] <ping> -> "ping"
+Code[2]:
+ - func[1] size=7 <add>
+ - func[2] size=6 <ping>

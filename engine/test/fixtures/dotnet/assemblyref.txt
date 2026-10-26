@@ -1,0 +1,8 @@
+AssemblyRef Table
+1: Version=4.0.0.0
+	Name=mscorlib
+	Flags=0x00000000
+	Public Key:
+0x00000000: B7 7A 5C 56 19 34 E0 89 
+	Zero sized hash value
+
