@@ -15,6 +15,10 @@ When installed as an npm package, the executable is `ptah-mcp`. Configure your M
 - `ptah_fingerprint`: hash and identify a regular file without executing it.
 - `ptah_inspect`: fingerprint plus ELF/PE/Mach-O header details and entropy.
 - `ptah_strings`: bounded printable ASCII/UTF-16LE strings with offsets (`minLength`, `maxResults`, `maxBytes`).
+- `ptah_carve`: embedded file signatures at any offset (carving hints only).
+- `ptah_asar` / `ptah_wasm`: native Electron ASAR header listing and WebAssembly section parsing.
+- `ptah_isolation`: bubblewrap/prlimit availability.
+- `ptah_eval`: run a pinned evaluation suite and optionally compare with a baseline report.
 - `ptah_verify`: validate an investigation and optionally re-hash its target.
 - `ptah_case_export`: write a portable investigation case bundle with a SHA-256 corruption checksum.
 - `ptah_case_verify`: validate a case bundle and optionally re-hash its target.
@@ -27,9 +31,13 @@ When installed as an npm package, the executable is `ptah-mcp`. Configure your M
 - `ptah_graph`: return the directed evidence graph as JSON, DOT, or Mermaid (`format`).
 - `ptah_plan`: select one deterministic next action under call/cost budgets, or `steps` greedy actions under a shared cost budget.
 - `ptah_providers`: discover provider commands on `PATH` without executing them.
-- `ptah_static_analyze`: run allow-listed `objdump`, `llvm-objdump`, or `wasm-tools` file/object metadata inspection or WebAssembly validation (which requires a confirmed WebAssembly signature) with a bounded timeout and output cap; this does not execute the target program.
+- `ptah_static_analyze`: run an allow-listed analyzer (`objdump`, `llvm-objdump`, `readelf`, `nm`, `file`, `rabin2`, `rz-bin`, `monodis`, `aapt2`, `wasm-objdump`, `wasm-tools`) with fixed argv, bounded timeout and output cap, optional `isolation` (`auto|required|none`) via bubblewrap and `cpuSeconds`/`memoryBytes` via prlimit; format-specific adapters require a confirmed magic signature. This does not execute the target program.
 
 Tools accepting file paths operate with the permissions of the local MCP server process. Only connect clients and files you trust. The server does not accept arbitrary shell commands and does not run analyzed targets. Case checksums detect accidental corruption but do not authenticate bundle authors. Provider version probes remain an explicit CLI opt-in (`ptah providers --probe`) rather than an MCP tool. Static metadata analysis does launch the selected analyzer against the file; the adapter does not yet provide OS-level CPU/memory/filesystem sandboxing.
+
+## Prompts and resources
+
+The server advertises three prompts — `investigate-target`, `review-claims`, and `compare-cases` — that encode PTAH's evidence rules for agent workflows. When started with `--root DIR`, it also exposes `ptah://investigations/<relative-path>` resources for `.json` and `.json.gz` files under that directory (read-only, 8 MiB cap, traversal outside the root is refused). Without `--root`, the resources capability is not advertised.
 
 ## Protocol and tests
 

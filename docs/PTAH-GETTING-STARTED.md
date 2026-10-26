@@ -43,6 +43,22 @@ node scripts/ptah.mjs diff --base ./sample.ptah-case.json --head ./restored.inve
 
 Case bundles contain the investigation and a SHA-256 corruption checksum, not the target file. The checksum is not a signature and does not authenticate the bundle author. Supply `--target` during verification/import to confirm the local target bytes still match the recorded digest.
 
+### Protecting and sharing cases
+
+```sh
+node scripts/ptah.mjs export-case --input ./sample.investigation.json --output ./sample.ptah-case.json.gz --gzip
+node scripts/ptah.mjs keygen --output-dir ./keys
+node scripts/ptah.mjs sign-case --input ./sample.ptah-case.json.gz --key ./keys/ptah-case-signing.key --output ./sample.signed.json
+node scripts/ptah.mjs verify-case --input ./sample.signed.json --public-key ./keys/ptah-case-signing.pub --require-signature --target ./sample.bin
+PTAH_CASE_PASSPHRASE='a long passphrase' node scripts/ptah.mjs encrypt-case --input ./sample.signed.json --output ./sample.enc.json
+```
+
+Signatures (Ed25519) authenticate the holder of the signing key; encryption (AES-256-GCM, scrypt-derived key) protects confidentiality at rest. The passphrase is read only from `PTAH_CASE_PASSPHRASE`. `verify-case` and `import-case` accept gzip-compressed and encrypted inputs transparently.
+
+### Governance of an investigation
+
+`freeze` locks evidence, claims, questions, and actions behind a content digest (history can still grow); `unfreeze` releases it. `set-claim-status` refuses `verified` without observed evidence; `resolve-question` requires a reason. `link-case` records a cross-reference to another verified case; `merge` unions two investigations of the same target and demands `--prefer base|other` on conflicts. `migrate` upgrades legacy documents. `watch --target` re-verifies when the file changes. `eval` runs the pinned suite in `examples/ptah-eval`.
+
 Start the local workbench with `node scripts/ptah.mjs ui`. It binds to loopback by default; do not expose it to an untrusted network.
 
 ## Validation

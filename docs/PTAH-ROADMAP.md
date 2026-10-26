@@ -140,6 +140,27 @@ Added `ptah ui` / `ptah-ui`, a dependency-free loopback-only browser workbench a
 
 The root README and package description/keywords now identify PTAH while explicitly labeling the codebase a migration preview. The previous README snapshot is retained at `docs/legacy/REA-README-upstream-snapshot.md`, and `docs/PTAH-BRAND-AUDIT.md` records what changed, what remains upstream-bound, and the release gates. The npm package name, `mcpName`, repository URLs, legacy executable names, translated docs, and upstream license references have deliberately not been renamed without an owner-controlled namespace and a coordinated compatibility plan. This is an intentional safety boundary, not a claim that all visible REA references have been migrated.
 
+## Public roadmap metrics
+
+Every roadmap claim is tied to a measurement produced by `ptah eval --suite examples/ptah-eval --json` (and compared with `--baseline`). Targets are stated so progress is checkable, not aspirational:
+
+| Metric (eval report field)                   | Current (synthetic suite)                            | Target                  | Notes                                                                                   |
+| -------------------------------------------- | ---------------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------- |
+| `metrics.checkPassRate`                      | 1.0                                                  | 1.0 on every merge      | Any drop is a regression and fails `--baseline`.                                        |
+| `metrics.claimLabelPrecision`                | 1.0                                                  | ≥ 0.98                  | Support labels vs. analyst reference labels.                                            |
+| `metrics.unsupportedClaimRate`               | 0.33 (by design: one inference-only reference claim) | report, never hide      | PTAH must surface inference-only claims, not suppress them.                             |
+| `metrics.medianDurationMs` / `p95DurationMs` | < 20 ms                                              | report per host         | Wall-clock; compare only on the same machine.                                           |
+| `npm run test:ptah`                          | 84 tests                                             | 100% pass before merge  | Dependency-free; includes 11 provider conformance suites and a validator mutation test. |
+| Isolation coverage                           | bubblewrap + prlimit when present                    | honest report every run | `isolation.applied` is recorded in evidence sources.                                    |
+
+Real-world accuracy figures will be added only when authorized fixtures with reference answers exist; the synthetic suite proves the harness, not analyst-grade accuracy.
+
+## Delivery status update — backlog completion (2026-10-26)
+
+Completed with tests (see `docs/PTAH-DEVELOPMENT-PROMPT.md` backlog numbering): freeze/unfreeze, tags, related-case links, same-target merge with conflict policy, migration registry (legacy→v1), Ed25519 case signing with `keygen`, AES-256-GCM case encryption via `PTAH_CASE_PASSPHRASE`, gzip bundles, `--quiet`; provider table with readelf/nm/file/rabin2/rz-bin/monodis/aapt2/wasm-objdump adapters, bubblewrap isolation and prlimit limits with honest fallback, cancellable background analyzer jobs, native ASAR and WASM parsers, embedded-signature carving; evaluation harness with pinned fixtures, reference labels, baseline regression detection, validator mutation test; workbench diff panel, SVG graph view, DOT/Mermaid downloads; `watch`, shell completion, MCP prompts and `--root` resources; VS Code integration skeleton (`integrations/vscode-ptah`, unpublished); Arabic getting-started guide; synthetic example case; PTAH responsible-disclosure policy in `SECURITY.md`.
+
+Deliberately deferred: publishing an npm package under a PTAH name (owner decision: keep `rea-agents` identity until a coordinated rename), and native analyzers replacing REA adapters (requires parity benchmarks on authorized real targets).
+
 ## Delivery status update — PTAH-first increment (2026-10-26)
 
 Shipped and covered by `npm run test:ptah` (50 dependency-free tests): PTAH-first README/help/info; Markdown reports; deterministic diff; hash-chained history on every CLI and workbench mutation; guarded `set-claim-status` and `resolve-question`; `lint` and `stats`; evidence artifact digests; ELF/PE/Mach-O header decoding and entropy (`fingerprint --inspect`); bounded `strings`; 12 additional magic signatures incl. tar; DOT/Mermaid graph export; multi-step planning; published JSON Schema with drift test; matching MCP tools; workbench lint/metrics/inspect/strings panels. Still open from the backlog in `docs/PTAH-DEVELOPMENT-PROMPT.md`: evaluation harness with pinned fixtures, provider conformance suite, OS-level analyzer isolation, workbench job state and graph visualization, bundle signatures, and native analyzers replacing REA adapters only where parity is proven.

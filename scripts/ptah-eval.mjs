@@ -4,7 +4,7 @@
  * unsupported-claim rate, and latency. Nothing here executes a target.
  */
 import { readFile, readdir, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import {
   buildEvidenceReport,
@@ -326,4 +326,3 @@ export function compareEvaluationReports(baseline, current) {
 
 export const evaluationSuiteDefaultDir = (root) =>
   join(root, "examples", "ptah-eval");
-export const resolveFrom = (from, path) => resolve(dirname(from), path);

@@ -10,7 +10,7 @@
  */
 import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import {
@@ -115,6 +115,12 @@ function printHelp() {
     `  ptah isolation            Report bubblewrap/prlimit availability for analyzer sandboxing\n`,
   );
   process.stdout.write(
+    `  ptah watch --input FILE --target FILE [--max-events N] [--debounce-ms 300] [--once]  Re-verify when the target changes\n`,
+  );
+  process.stdout.write(
+    `  ptah completion bash|zsh|fish  Print shell completion script\n`,
+  );
+  process.stdout.write(
     `  ptah eval [--suite DIR] [--only ID,ID] [--baseline REPORT.json] [--json]  Run the pinned evaluation suite and compare with a baseline\n`,
   );
   process.stdout.write(
@@ -167,6 +173,30 @@ function printHelp() {
   );
   process.stdout.write(
     `  ptah schema               Print the investigation JSON Schema\n`,
+  );
+  process.stdout.write(
+    `  ptah freeze|unfreeze --input FILE --output FILE  Lock or unlock evidence/claims/questions/actions (history keeps growing)\n`,
+  );
+  process.stdout.write(
+    `  ptah link-case --input FILE --output FILE --case FILE [--note TEXT]  Cross-reference a verified case bundle\n`,
+  );
+  process.stdout.write(
+    `  ptah merge --base FILE --other FILE --output FILE [--prefer base|other]  Merge two investigations of the same target\n`,
+  );
+  process.stdout.write(
+    `  ptah migrate --input FILE --output FILE | --list  Upgrade legacy documents to the current schema\n`,
+  );
+  process.stdout.write(
+    `  ptah keygen --output-dir DIR  Generate an Ed25519 case-signing key pair\n`,
+  );
+  process.stdout.write(
+    `  ptah sign-case --input FILE --key FILE [--output FILE] [--gzip]  Sign a case bundle\n`,
+  );
+  process.stdout.write(
+    `  ptah encrypt-case --input FILE --output FILE  AES-256-GCM using PTAH_CASE_PASSPHRASE from the environment\n`,
+  );
+  process.stdout.write(
+    `  ptah decrypt-case --input FILE --output FILE  Decrypt an encrypted case envelope\n`,
   );
   process.stdout.write(
     `  ptah verify --input FILE [--target FILE]  Validate evidence and optionally re-hash target bytes\n`,
@@ -953,8 +983,129 @@ async function runTargetTool(fn, extra = {}) {
   emit(await fn(target, extra));
 }
 
+const SHELL_COMMANDS = [
+  "info",
+  "self-check",
+  "providers",
+  "fingerprint",
+  "strings",
+  "carve",
+  "asar",
+  "wasm",
+  "isolation",
+  "init",
+  "add-evidence",
+  "add-claim",
+  "add-question",
+  "add-action",
+  "set-claim-status",
+  "resolve-question",
+  "freeze",
+  "unfreeze",
+  "verify",
+  "lint",
+  "stats",
+  "history",
+  "schema",
+  "export-case",
+  "verify-case",
+  "import-case",
+  "sign-case",
+  "encrypt-case",
+  "decrypt-case",
+  "keygen",
+  "link-case",
+  "merge",
+  "migrate",
+  "report",
+  "diff",
+  "graph",
+  "plan",
+  "analyze",
+  "eval",
+  "watch",
+  "completion",
+  "ui",
+  "help",
+  "legacy",
+];
+
+function renderCompletion(shell) {
+  const words = SHELL_COMMANDS.join(" ");
+  if (shell === "bash")
+    return `# bash completion for ptah — eval "$(ptah completion bash)"\n_ptah() {\n  local cur="\${COMP_WORDS[COMP_CWORD]}"\n  if [ "$COMP_CWORD" -eq 1 ]; then\n    COMPREPLY=( $(compgen -W "${words}" -- "$cur") )\n  else\n    COMPREPLY=( $(compgen -W "--input --output --target --provider --format --base --head --other --prefer --steps --isolation --key --public-key --case --suite --baseline --json --quiet --gzip --inspect --tags --artifact" -- "$cur") $(compgen -f -- "$cur") )\n  fi\n}\ncomplete -F _ptah ptah\n`;
+  if (shell === "zsh")
+    return `#compdef ptah\n# zsh completion for ptah — eval "$(ptah completion zsh)"\n_ptah() {\n  local -a commands\n  commands=(${SHELL_COMMANDS.map((c) => `'${c}'`).join(" ")})\n  if (( CURRENT == 2 )); then\n    _describe 'command' commands\n  else\n    _arguments '*:file:_files'\n  fi\n}\ncompdef _ptah ptah\n`;
+  if (shell === "fish")
+    return `# fish completion for ptah — ptah completion fish | source\n${SHELL_COMMANDS.map((c) => `complete -c ptah -n '__fish_use_subcommand' -a ${c}`).join("\n")}\n`;
+  throw new Error("completion shell must be bash, zsh, or fish");
+}
+
+async function runWatch() {
+  const inputPath = optionValue("--input");
+  const target = optionValue("--target");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!target) throw new Error("Missing required --target FILE argument.");
+  const maxEvents = integerOption("--max-events", 0);
+  const debounceMs = integerOption("--debounce-ms", 300);
+  const { watch } = await import("node:fs");
+  const investigation = await readJsonFile(inputPath);
+  const absoluteTarget = resolve(process.cwd(), target);
+  const check = async (reason) => {
+    const result = await verifyInvestigation(investigation, absoluteTarget);
+    emit({
+      event: reason,
+      at: new Date().toISOString(),
+      valid: result.valid,
+      targetMatches: result.targetMatches,
+      actualSha256: result.target.actualSha256,
+    });
+    return result;
+  };
+  await check("initial");
+  if (maxEvents === 0 && args.includes("--once")) return;
+  let events = 0;
+  let timer = null;
+  await new Promise((finish, fail) => {
+    let watcher;
+    try {
+      watcher = watch(
+        dirname(absoluteTarget),
+        { persistent: true },
+        (_type, filename) => {
+          if (filename && filename !== basename(absoluteTarget)) return;
+          clearTimeout(timer);
+          timer = setTimeout(async () => {
+            try {
+              const result = await check("target-changed");
+              events += 1;
+              if (!result.valid) process.exitCode = 2;
+              if (maxEvents > 0 && events >= maxEvents) {
+                watcher.close();
+                finish();
+              }
+            } catch (error) {
+              watcher.close();
+              fail(error);
+            }
+          }, debounceMs);
+        },
+      );
+      watcher.once("error", (error) => fail(error));
+      process.once("SIGINT", () => {
+        watcher.close();
+        finish();
+      });
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
 const COMMAND_HANDLERS = {
   eval: runEval,
+  watch: runWatch,
+  completion: async () => emit(renderCompletion(args[1] ?? "")),
   isolation: async () => emit(await detectIsolationSupport()),
   carve: () =>
     runTargetTool(findEmbeddedSignatures, {

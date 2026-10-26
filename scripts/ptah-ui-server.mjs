@@ -21,6 +21,7 @@ import {
   diffInvestigations,
   detectIsolationSupport,
   STATIC_ANALYZER_IDS,
+  renderEvidenceGraph,
 } from "./ptah-engine.mjs";
 import {
   extractStrings,
@@ -155,7 +156,7 @@ export async function createPtahUiServer(options = {}) {
       controller,
     };
     jobs.set(job.id, job);
-    (async () => {
+    void (async () => {
       try {
         job.progress = { phase: "analyzing" };
         const analysis = await analyzeTarget(targetPath, body.provider, {
@@ -479,6 +480,24 @@ export async function createPtahUiServer(options = {}) {
             maxBytes: bounded("maxBytes", 16 * 1024 * 1024, 128 * 1024 * 1024),
           }),
         );
+      }
+      if (
+        request.method === "GET" &&
+        (request.url === "/api/graph.dot" || request.url === "/api/graph.mmd")
+      ) {
+        if (!investigation)
+          return sendJson(response, 409, { error: "upload a target first" });
+        const format = request.url.endsWith(".dot") ? "dot" : "mermaid";
+        const text = Buffer.from(renderEvidenceGraph(investigation, format));
+        response.writeHead(200, {
+          "content-type": `text/${format === "dot" ? "vnd.graphviz" : "plain"}; charset=utf-8`,
+          "content-length": text.length,
+          "content-disposition": `attachment; filename="ptah-graph.${format === "dot" ? "dot" : "mmd"}"`,
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        });
+        response.end(text);
+        return;
       }
       if (request.method === "GET" && request.url === "/api/report.md") {
         if (!investigation)

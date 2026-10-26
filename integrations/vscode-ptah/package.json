@@ -1,0 +1,52 @@
+{
+  "name": "ptah-workbench",
+  "displayName": "PTAH Workbench",
+  "description": "Open the PTAH local investigation workbench and run PTAH commands from VS Code. Unpublished integration skeleton.",
+  "version": "0.1.0",
+  "publisher": "owlvisions",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ptah.openWorkbench",
+        "title": "PTAH: Open Local Workbench"
+      },
+      {
+        "command": "ptah.fingerprintActiveFile",
+        "title": "PTAH: Fingerprint Active File"
+      },
+      {
+        "command": "ptah.lintInvestigation",
+        "title": "PTAH: Lint Investigation JSON"
+      }
+    ],
+    "configuration": {
+      "title": "PTAH",
+      "properties": {
+        "ptah.repositoryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a PTAH checkout containing scripts/ptah.mjs. Empty uses the `ptah` command on PATH."
+        },
+        "ptah.uiPort": {
+          "type": "number",
+          "default": 4177,
+          "description": "Loopback port for the workbench."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "node --check extension.js"
+  }
+}

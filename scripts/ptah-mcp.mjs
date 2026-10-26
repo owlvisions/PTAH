@@ -2,7 +2,7 @@
 /** Dependency-free Model Context Protocol stdio server for PTAH's safe native tools. */
 import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import {
   fingerprintTarget,
   verifyInvestigation,
@@ -36,6 +36,164 @@ import {
 } from "./ptah-analysis.mjs";
 
 const PROTOCOL_VERSION = "2024-11-05";
+const SERVER_VERSION = "0.9.0";
+const cliArgs = process.argv.slice(2);
+const rootIndex = cliArgs.indexOf("--root");
+const RESOURCE_ROOT =
+  rootIndex >= 0 && cliArgs[rootIndex + 1]
+    ? resolve(cliArgs[rootIndex + 1])
+    : null;
+const MAX_RESOURCE_BYTES = 8 * 1024 * 1024;
+
+const prompts = [
+  {
+    name: "investigate-target",
+    description:
+      "Start an evidence-first investigation of a local file: fingerprint, inspect, record observations, and plan the next bounded step.",
+    arguments: [
+      {
+        name: "target",
+        description: "Absolute path to the file",
+        required: true,
+      },
+      {
+        name: "output",
+        description: "Investigation JSON output path",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "review-claims",
+    description:
+      "Audit an investigation: run lint and stats, list inference-only claims, and propose evidence that would upgrade or reject each one.",
+    arguments: [
+      { name: "input", description: "Investigation JSON path", required: true },
+    ],
+  },
+  {
+    name: "compare-cases",
+    description:
+      "Explain what changed between two investigations or case bundles and whether the target drifted.",
+    arguments: [
+      {
+        name: "base",
+        description: "Older investigation/case path",
+        required: true,
+      },
+      {
+        name: "head",
+        description: "Newer investigation/case path",
+        required: true,
+      },
+    ],
+  },
+];
+
+function renderPrompt(name, promptArgs = {}) {
+  const need = (key) => {
+    if (typeof promptArgs[key] !== "string" || !promptArgs[key].trim())
+      throw new TypeError(`prompt argument ${key} is required`);
+    return promptArgs[key];
+  };
+  const rules =
+    "Rules: never execute the target; cite evidence IDs for every statement; use observed/derived/inferred confidence; do not call anything verified unless a verification step was performed; say 'unknown' when evidence is missing.";
+  switch (name) {
+    case "investigate-target": {
+      const target = need("target");
+      const output = need("output");
+      return [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Investigate ${target} with PTAH tools only. Steps: 1) ptah_inspect and ptah_fingerprint on the target; 2) create the investigation at ${output} via the ptah CLI (init) or import; 3) record each observation with ptah add-evidence semantics (kind, source, confidence); 4) run ptah_strings and ptah_carve for leads; 5) run ptah_lint and ptah_plan and report the next bounded step. ${rules}`,
+          },
+        },
+      ];
+    }
+    case "review-claims": {
+      const input = need("input");
+      return [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Review the investigation at ${input}. Run ptah_lint and ptah_stats, then ptah_report with format markdown. For every inference-only claim, list which evidence kind would upgrade it to evidence-backed and which observation would reject it. Do not change the file. ${rules}`,
+          },
+        },
+      ];
+    }
+    case "compare-cases": {
+      const base = need("base");
+      const head = need("head");
+      return [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Run ptah_diff with base=${base} and head=${head}. Summarise target drift, added/removed/changed evidence, claim status transitions, and resolved questions. Flag any claim whose status rose without new observed evidence. ${rules}`,
+          },
+        },
+      ];
+    }
+    default:
+      throw new Error(`unknown prompt: ${name}`);
+  }
+}
+
+async function listResources() {
+  if (!RESOURCE_ROOT) return [];
+  const { readdir } = await import("node:fs/promises");
+  const entries = await readdir(RESOURCE_ROOT, {
+    withFileTypes: true,
+    recursive: true,
+  });
+  return entries
+    .filter((entry) => entry.isFile() && /\.json(\.gz)?$/u.test(entry.name))
+    .map((entry) => {
+      const absolute = join(entry.parentPath ?? entry.path, entry.name);
+      const relative = absolute
+        .slice(RESOURCE_ROOT.length + 1)
+        .split(sep)
+        .join("/");
+      return {
+        uri: `ptah://investigations/${relative}`,
+        name: relative,
+        mimeType: entry.name.endsWith(".gz")
+          ? "application/gzip"
+          : "application/json",
+        description:
+          "PTAH investigation or case bundle under the configured --root",
+      };
+    })
+    .sort((a, b) => a.uri.localeCompare(b.uri));
+}
+
+async function readResource(uri) {
+  if (!RESOURCE_ROOT)
+    throw new Error("resources are disabled; start ptah-mcp with --root DIR");
+  const prefix = "ptah://investigations/";
+  if (typeof uri !== "string" || !uri.startsWith(prefix))
+    throw new Error(`unknown resource: ${uri}`);
+  const relative = decodeURIComponent(uri.slice(prefix.length));
+  const absolute = resolve(RESOURCE_ROOT, relative);
+  const within =
+    relative.length > 0 &&
+    !relative.startsWith("/") &&
+    absolute.startsWith(`${RESOURCE_ROOT}${sep}`);
+  if (!within || relative.split("/").includes(".."))
+    throw new Error("resource path escapes the configured root");
+  const { stat } = await import("node:fs/promises");
+  const info = await stat(absolute);
+  if (!info.isFile()) throw new Error("resource is not a file");
+  if (info.size > MAX_RESOURCE_BYTES)
+    throw new Error(`resource exceeds ${MAX_RESOURCE_BYTES} bytes`);
+  const bytes = await readFile(absolute);
+  return absolute.endsWith(".gz")
+    ? { uri, mimeType: "application/gzip", blob: bytes.toString("base64") }
+    : { uri, mimeType: "application/json", text: bytes.toString("utf8") };
+}
 const tools = [
   {
     name: "ptah_fingerprint",
@@ -564,8 +722,12 @@ for await (const line of rl) {
           id,
           result: {
             protocolVersion: PROTOCOL_VERSION,
-            capabilities: { tools: {} },
-            serverInfo: { name: "ptah-mcp", version: "0.7.0" },
+            capabilities: {
+              tools: {},
+              prompts: {},
+              ...(RESOURCE_ROOT ? { resources: {} } : {}),
+            },
+            serverInfo: { name: "ptah-mcp", version: SERVER_VERSION },
           },
         });
         break;
@@ -577,6 +739,37 @@ for await (const line of rl) {
         break;
       case "tools/list":
         send({ jsonrpc: "2.0", id, result: { tools } });
+        break;
+      case "prompts/list":
+        send({ jsonrpc: "2.0", id, result: { prompts } });
+        break;
+      case "prompts/get":
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            description: prompts.find((p) => p.name === request.params?.name)
+              ?.description,
+            messages: renderPrompt(
+              request.params?.name,
+              request.params?.arguments ?? {},
+            ),
+          },
+        });
+        break;
+      case "resources/list":
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: { resources: await listResources() },
+        });
+        break;
+      case "resources/read":
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: { contents: [await readResource(request.params?.uri)] },
+        });
         break;
       case "tools/call": {
         const result = await callTool(

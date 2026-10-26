@@ -6,4 +6,6 @@ The UI can upload a target, initialize an investigation, import a checksummed ca
 
 Uploaded files and investigation records are stored in a private temporary directory with restrictive file permissions and deleted when the server stops normally. This is a single-user, local workbench; do not expose it to a network or use it as a multi-user service. Abrupt termination may leave a temporary directory behind. The full GUI is an early utility layer, not a replacement for the legacy REA interface.
 
+Analyzers can run immediately or as background jobs (`POST /api/jobs`, `GET /api/jobs/:id`, `POST /api/jobs/:id/cancel`) with progress and cancellation; at most four jobs run concurrently and a cancelled job records no evidence. `POST /api/diff` compares an uploaded case or investigation with the current one. Additional read-only endpoints: `/api/lint`, `/api/stats`, `/api/inspect`, `/api/strings`, `/api/carve`, `/api/asar`, `/api/wasm`, `/api/isolation`, `/api/report.md`, `/api/graph.dot`, `/api/graph.mmd`. The "Graph view" button renders the evidence graph as inline SVG without external libraries.
+
 Run its integration tests with `npm run test:ptah`; tests start the server on an ephemeral loopback port and exercise upload, evidence creation, report, export, loopback binding, and upload-size limits.
