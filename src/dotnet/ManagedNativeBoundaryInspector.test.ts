@@ -1,3 +1,8 @@
+import {
+  metadataRowOffset,
+  readManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
+import { readManagedPeLayout } from "./ManagedPeReader.js";
 import { describe, expect, it } from "vitest";
 
 import { createHash } from "node:crypto";
@@ -411,3 +416,185 @@ describe("managed PE fixture layout", () => {
     );
   });
 });
+
+const inspectImplementationFixture = ({
+  implFlags,
+  methodFlags = 0x0016,
+  zeroRva = false,
+  implMap = false,
+}: {
+  implFlags: number;
+  methodFlags?: number;
+  zeroRva?: boolean;
+  implMap?: boolean;
+}) => {
+  const bytes = buildManagedPeFixture({
+    methodFlags,
+    ...(implMap ? { pinvoke: {} } : {}),
+  });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  const row = metadataRowOffset(layout, 6, 1);
+  bytes.writeUInt16LE(implFlags, row + 4);
+  if (zeroRva) bytes.writeUInt32LE(0, row);
+  const target = managedPeFixtureTarget(bytes);
+  return {
+    members: inspectManagedMembersBytes(bytes, target),
+    boundaries: inspectManagedNativeBoundariesBytes(bytes, target),
+  };
+};
+
+it.each([
+  { bits: 0, codeType: "il", managedKind: "managed", boundary: null },
+  {
+    bits: 1,
+    codeType: "native",
+    managedKind: "managed",
+    boundary: "native-body",
+  },
+  {
+    bits: 2,
+    codeType: "optil",
+    managedKind: "managed",
+    boundary: "mixed-or-unknown",
+  },
+  {
+    bits: 3,
+    codeType: "runtime",
+    managedKind: "managed",
+    boundary: "runtime-provided",
+  },
+  {
+    bits: 4,
+    codeType: "il",
+    managedKind: "unmanaged",
+    boundary: "unmanaged-method",
+  },
+  {
+    bits: 5,
+    codeType: "native",
+    managedKind: "unmanaged",
+    boundary: "native-body",
+  },
+  {
+    bits: 6,
+    codeType: "optil",
+    managedKind: "unmanaged",
+    boundary: "unmanaged-method",
+  },
+  {
+    bits: 7,
+    codeType: "runtime",
+    managedKind: "unmanaged",
+    boundary: "runtime-provided",
+  },
+])(
+  "publishes implementation facts consistently with body admission for low flags $bits",
+  ({ bits, codeType, managedKind, boundary }) => {
+    // NoInlining, Synchronized and PreserveSig do not change code type or managed kind.
+    for (const highBits of [0, 0x00a8]) {
+      const implFlags = bits | highBits;
+      const { members, boundaries } = inspectImplementationFixture({
+        implFlags,
+      });
+      expect(members.methods[0]?.body.status).toBe(
+        boundary === null ? "present" : "partial",
+      );
+      if (boundary === null) {
+        expect(boundaries.native_implementations).toEqual([]);
+        expect(members.methods[0]?.body.il_sha256).toEqual(expect.any(String));
+      } else {
+        expect(boundaries.native_implementations).toMatchObject([
+          {
+            token: members.methods[0]?.token,
+            impl_flags: implFlags,
+            code_type: codeType,
+            managed_kind: managedKind,
+            pinvoke_declared: false,
+            boundary_kind: boundary,
+            body_interpretation: "native-or-runtime",
+          },
+        ]);
+        expect(members.methods[0]?.body.il_sha256).toBeNull();
+        expect(members.methods[0]?.body.issue).toMatch(/CIL/u);
+      }
+    }
+  },
+);
+
+it.each([
+  {
+    name: "PInvoke flag on managed IL",
+    implFlags: 0,
+    methodFlags: 0x2016,
+    zeroRva: false,
+    implMap: false,
+    status: "partial",
+    codeType: "il",
+    managedKind: "managed",
+  },
+  {
+    name: "PInvoke flag on unmanaged OPTIL",
+    implFlags: 6,
+    methodFlags: 0x2016,
+    zeroRva: false,
+    implMap: false,
+    status: "partial",
+    codeType: "optil",
+    managedKind: "unmanaged",
+  },
+  {
+    name: "absent RVA before PInvoke/runtime classification",
+    implFlags: 7,
+    methodFlags: 0x2016,
+    zeroRva: true,
+    implMap: false,
+    status: "absent",
+    codeType: "runtime",
+    managedKind: "unmanaged",
+  },
+  {
+    name: "ImplMap without the PInvoke flag",
+    implFlags: 0,
+    methodFlags: 0x0016,
+    zeroRva: false,
+    implMap: true,
+    status: "present",
+    codeType: "il",
+    managedKind: "managed",
+  },
+])(
+  "retains distinct native declaration and body policies: $name",
+  (scenario) => {
+    const { members, boundaries } = inspectImplementationFixture(scenario);
+    expect(boundaries.native_implementations).toMatchObject([
+      {
+        token: members.methods[0]?.token,
+        flags: scenario.methodFlags,
+        code_type: scenario.codeType,
+        managed_kind: scenario.managedKind,
+        pinvoke_declared: true,
+        boundary_kind: "pinvoke",
+        body_interpretation: scenario.zeroRva
+          ? "not-file-backed"
+          : "native-or-runtime",
+      },
+    ]);
+    expect(boundaries.pinvoke_imports).toHaveLength(scenario.implMap ? 1 : 0);
+    expect(members.methods[0]?.body.status).toBe(scenario.status);
+    if (scenario.zeroRva)
+      expect(members.methods[0]?.body).toMatchObject({
+        rva: 0,
+        issue: null,
+        il_sha256: null,
+      });
+    if (scenario.status === "present")
+      expect(members.methods[0]?.body.il_sha256).toEqual(expect.any(String));
+  },
+);

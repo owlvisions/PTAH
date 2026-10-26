@@ -366,6 +366,7 @@ export const parseMethods = ({
         flags,
         nameIndex,
         signatureIndex,
+        implementation,
       } = readMethodDefinitionRow(bytes, layout, row);
       const name = readMetadataString(
         bytes,
@@ -408,7 +409,7 @@ export const parseMethods = ({
         ),
       });
       const read = methodBody(bytes, pe, rva, {
-        implementation: { implFlags, flags },
+        implementation,
         budget: managedDecodeBudget(layout),
         metadataLayout: layout,
         methodToken: token,
