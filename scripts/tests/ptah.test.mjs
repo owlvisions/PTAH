@@ -16,7 +16,7 @@ function run(args) {
   });
 }
 
-test("PTAH help is available without installing project dependencies", () => {
+void test("PTAH help is available without installing project dependencies", () => {
   const result = run(["help"]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /PTAH/);
@@ -24,7 +24,7 @@ test("PTAH help is available without installing project dependencies", () => {
   assert.match(result.stdout, /original REA CLI remains available/);
 });
 
-test("PTAH info reports compatibility honestly as a migration preview", () => {
+void test("PTAH info reports compatibility honestly as a migration preview", () => {
   const result = run(["info", "--json"]);
   assert.equal(result.status, 0, result.stderr);
   const info = JSON.parse(result.stdout);
@@ -34,7 +34,7 @@ test("PTAH info reports compatibility honestly as a migration preview", () => {
   assert.equal(info.packageManagerNameUnchanged, true);
 });
 
-test("PTAH self-check emits machine-readable readiness details", () => {
+void test("PTAH self-check emits machine-readable readiness details", () => {
   const result = run(["self-check", "--json"]);
   assert.ok(result.status === 0 || result.status === 1, result.stderr);
   const report = JSON.parse(result.stdout);
@@ -45,7 +45,7 @@ test("PTAH self-check emits machine-readable readiness details", () => {
   assert.ok(Array.isArray(report.issues));
 });
 
-test("root branding identifies PTAH and documents the remaining compatibility migration", async () => {
+void test("root branding identifies PTAH and documents the remaining compatibility migration", async () => {
   const { readFile } = await import("node:fs/promises");
   const readme = await readFile(join(root, "README.md"), "utf8");
   const audit = await readFile(join(root, "docs/PTAH-BRAND-AUDIT.md"), "utf8");
@@ -66,7 +66,7 @@ test("root branding identifies PTAH and documents the remaining compatibility mi
   );
 });
 
-test("PTAH validation workflow runs native tests and upstream CI on supported Node", async () => {
+void test("PTAH validation workflow runs native tests and upstream CI on supported Node", async () => {
   const workflow = await readFile(
     join(root, ".github/workflows/ptah-validation.yml"),
     "utf8",
@@ -78,7 +78,7 @@ test("PTAH validation workflow runs native tests and upstream CI on supported No
   assert.match(workflow, /permissions:\n  contents: read/);
 });
 
-test("upstream sync workflow proposes reviewed updates without auto-merging", async () => {
+void test("upstream sync workflow proposes reviewed updates without auto-merging", async () => {
   const { readFile } = await import("node:fs/promises");
   const workflow = await readFile(
     join(root, ".github/workflows/ptah-upstream-sync.yml"),

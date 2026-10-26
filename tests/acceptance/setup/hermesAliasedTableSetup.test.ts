@@ -100,11 +100,13 @@ for (const version of ["1.1", "1.2"] as const) {
         expect(parsed.observer).toEqual(before.observer);
         expect(parsed.mcp_servers.other).toEqual(before.mcp_servers.other);
         expect(parsed.mcp_servers.rea).toMatchObject({ enabled: true });
-        if (existing)
-          expect(parsed.mcp_servers.rea.env).toEqual({
+        if (existing) {
+          // Setup also preserves provider settings discovered on the host.
+          expect(parsed.mcp_servers.rea.env).toMatchObject({
             FLAG: "on",
             HOPPER_LAUNCHER_PATH: process.execPath,
           });
+        }
         expect(configured.startsWith(original.defaults)).toBe(true);
         expect(configured).toContain("# Selected table");
         expect(configured.match(/&servers\b/gu)).toHaveLength(1);

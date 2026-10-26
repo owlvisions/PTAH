@@ -25,7 +25,7 @@ The repository now includes `.github/workflows/ptah-upstream-sync.yml`, which po
 
 The following are release and compatibility identifiers, not merely visible branding. Renaming them without a confirmed owner and migration plan could break installs or send users to the wrong place:
 
-- npm package `rea-agents` and package version `6.7.0`;
+- npm package `rea-agents` and package version `6.8.0`;
 - `mcpName` value `io.github.morluto/rea`;
 - repository, homepage, bug tracker, website, and community URLs that point to the upstream REA project;
 - legacy executable `rea`, `rea-agents`, source/bridge identifiers, existing translations, generated metadata, and upstream license/copyright references.
@@ -45,7 +45,7 @@ node --check scripts/ptah-ui-server.mjs
 npm run test:ptah
 ```
 
-These checks cover PTAH-owned JavaScript and dependency-free tests only. They are not substitutes for the full monorepo build/test matrix. The package currently requires Node.js `^22.19.0 || ^24.11.0 || >=26.0.0`; run full validation with a supported runtime and the lockfile-compatible package manager.
+These checks cover PTAH-owned JavaScript and dependency-free tests only. They are not substitutes for the full monorepo build/test matrix. The package currently requires Node.js `^22.23.4 || ^24.22.1 || >=26.12.1`; run full validation with a supported runtime and the lockfile-compatible package manager (`npm@11.16.0`).
 
 ## Release gate checklist
 

@@ -66,7 +66,7 @@ function fixture(overrides = {}) {
   };
 }
 
-test("investigation validator requires provenance and valid target digest", () => {
+void test("investigation validator requires provenance and valid target digest", () => {
   assert.equal(validateInvestigation(fixture()).schemaVersion, 1);
   assert.throws(
     () =>
@@ -91,7 +91,7 @@ test("investigation validator requires provenance and valid target digest", () =
   );
 });
 
-test("evidence report preserves source references and avoids calling inferred evidence verified", () => {
+void test("evidence report preserves source references and avoids calling inferred evidence verified", () => {
   const report = buildEvidenceReport(
     fixture({
       evidence: [
@@ -118,7 +118,7 @@ test("evidence report preserves source references and avoids calling inferred ev
   assert.equal(report.claims[0].status, "hypothesis");
 });
 
-test("evidence graph links source observations to claims and open questions", () => {
+void test("evidence graph links source observations to claims and open questions", () => {
   const graph = buildEvidenceGraph(fixture());
   assert.equal(graph.nodes.filter((node) => node.type === "target").length, 1);
   assert.ok(
@@ -133,7 +133,7 @@ test("evidence graph links source observations to claims and open questions", ()
   assert.deepEqual(question.missingEvidenceKinds, ["runtime-observation"]);
 });
 
-test("stale evidence from a different target digest is rejected", () => {
+void test("stale evidence from a different target digest is rejected", () => {
   const stale = fixture({
     evidence: [
       {
@@ -152,7 +152,7 @@ test("stale evidence from a different target digest is rejected", () => {
   );
 });
 
-test("verification checks schema and detects target-byte drift", async () => {
+void test("verification checks schema and detects target-byte drift", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-verify-"));
   try {
     const targetPath = join(dir, "target.bin");
@@ -177,7 +177,7 @@ test("verification checks schema and detects target-byte drift", async () => {
   }
 });
 
-test("planner chooses an action that covers highest-priority missing evidence", () => {
+void test("planner chooses an action that covers highest-priority missing evidence", () => {
   const plan = planNextAction(fixture(), { maxCalls: 1, maxCost: 5 });
   assert.equal(plan.status, "planned");
   assert.equal(plan.questionId, "q-runtime");
@@ -185,7 +185,7 @@ test("planner chooses an action that covers highest-priority missing evidence", 
   assert.deepEqual(plan.selectedAction.produces, ["runtime-observation"]);
 });
 
-test("planner stops honestly when budget or provider capability blocks progress", () => {
+void test("planner stops honestly when budget or provider capability blocks progress", () => {
   assert.equal(
     planNextAction(fixture(), { maxCalls: 0 }).status,
     "budget-exhausted",
@@ -204,7 +204,7 @@ test("planner stops honestly when budget or provider capability blocks progress"
   assert.equal(planNextAction(resolved).status, "no-action-needed");
 });
 
-test("CLI report, graph, and planner commands accept a JSON investigation file", async () => {
+void test("CLI report, graph, and planner commands accept a JSON investigation file", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-engine-"));
   try {
     const inputPath = join(dir, "investigation.json");
@@ -252,7 +252,7 @@ test("CLI report, graph, and planner commands accept a JSON investigation file",
   }
 });
 
-test("fingerprint computes the real SHA-256 and identifies common binary signatures without executing the target", async () => {
+void test("fingerprint computes the real SHA-256 and identifies common binary signatures without executing the target", async () => {
   const { fingerprintTarget } = await import("../ptah-engine.mjs");
   const { createHash } = await import("node:crypto");
   const dir = await mkdtemp(join(tmpdir(), "ptah-fingerprint-"));
@@ -274,7 +274,7 @@ test("fingerprint computes the real SHA-256 and identifies common binary signatu
   }
 });
 
-test("init creates a versioned investigation tied to actual target bytes and persists it", async () => {
+void test("init creates a versioned investigation tied to actual target bytes and persists it", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-init-"));
   try {
     const targetPath = join(dir, "sample.js");
@@ -310,7 +310,7 @@ test("init creates a versioned investigation tied to actual target bytes and per
   }
 });
 
-test("fingerprint CLI fails clearly for a missing target", () => {
+void test("fingerprint CLI fails clearly for a missing target", () => {
   const entry = new URL("../ptah.mjs", import.meta.url).pathname;
   const result = spawnSync(process.execPath, [entry, "fingerprint"], {
     encoding: "utf8",
@@ -319,7 +319,7 @@ test("fingerprint CLI fails clearly for a missing target", () => {
   assert.match(result.stderr, /Missing required --target FILE/);
 });
 
-test("provider discovery reports PATH availability without executing external tools", async () => {
+void test("provider discovery reports PATH availability without executing external tools", async () => {
   const { discoverProviders } = await import("../ptah-engine.mjs");
   const result = await discoverProviders({ PATH: process.env.PATH });
   assert.equal(result.detection, "PATH presence only; tools were not executed");
@@ -334,7 +334,7 @@ test("provider discovery reports PATH availability without executing external to
   );
 });
 
-test("providers CLI returns structured provider capability data", () => {
+void test("providers CLI returns structured provider capability data", () => {
   const entry = new URL("../ptah.mjs", import.meta.url).pathname;
   const result = spawnSync(process.execPath, [entry, "providers", "--json"], {
     encoding: "utf8",
@@ -346,7 +346,7 @@ test("providers CLI returns structured provider capability data", () => {
   assert.match(report.detection, /not executed/);
 });
 
-test("init -> add-evidence -> report forms a real file-backed investigation workflow", async () => {
+void test("init -> add-evidence -> report forms a real file-backed investigation workflow", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-workflow-"));
   try {
     const targetPath = join(dir, "sample.js");
@@ -400,7 +400,7 @@ test("init -> add-evidence -> report forms a real file-backed investigation work
   }
 });
 
-test("add-evidence rejects invalid evidence kinds without corrupting the source file", async () => {
+void test("add-evidence rejects invalid evidence kinds without corrupting the source file", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-invalid-evidence-"));
   try {
     const targetPath = join(dir, "sample.bin");
@@ -449,7 +449,7 @@ test("add-evidence rejects invalid evidence kinds without corrupting the source 
   }
 });
 
-test("file-backed investigation supports adding claims, questions, and planner actions", async () => {
+void test("file-backed investigation supports adding claims, questions, and planner actions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-full-case-"));
   try {
     const targetPath = join(dir, "sample.js");
@@ -548,7 +548,7 @@ test("file-backed investigation supports adding claims, questions, and planner a
   }
 });
 
-test("bounded executable probe captures version output without a shell", async () => {
+void test("bounded executable probe captures version output without a shell", async () => {
   const result = await probeExecutable(process.execPath, ["--version"], {
     timeoutMs: 1000,
     maxOutputBytes: 1024,
@@ -560,7 +560,7 @@ test("bounded executable probe captures version output without a shell", async (
   assert.ok(result.durationMs < 1000);
 });
 
-test("bounded executable probe kills a hung process at its deadline", async () => {
+void test("bounded executable probe kills a hung process at its deadline", async () => {
   const result = await probeExecutable(
     process.execPath,
     ["-e", "setTimeout(() => {}, 5000)"],
@@ -570,7 +570,7 @@ test("bounded executable probe kills a hung process at its deadline", async () =
   assert.match(result.error, /timeout/);
 });
 
-test("provider probe is opt-in, uses PATH discovery, and reports bounded probe results", async () => {
+void test("provider probe is opt-in, uses PATH discovery, and reports bounded probe results", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-provider-probe-"));
   try {
     await symlink(process.execPath, join(dir, "node"));
@@ -594,7 +594,7 @@ test("provider probe is opt-in, uses PATH discovery, and reports bounded probe r
   }
 });
 
-test("PTAH MCP stdio server implements initialize, tools/list, and safe fingerprint calls", async () => {
+void test("PTAH MCP stdio server implements initialize, tools/list, and safe fingerprint calls", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-mcp-"));
   try {
     const target = join(dir, "target.bin");
@@ -648,7 +648,7 @@ test("PTAH MCP stdio server implements initialize, tools/list, and safe fingerpr
   }
 });
 
-test("PTAH MCP returns tool errors as MCP tool results rather than crashing the server", () => {
+void test("PTAH MCP returns tool errors as MCP tool results rather than crashing the server", () => {
   const server = new URL("../ptah-mcp.mjs", import.meta.url).pathname;
   const request = {
     jsonrpc: "2.0",
@@ -670,7 +670,7 @@ test("PTAH MCP returns tool errors as MCP tool results rather than crashing the 
   assert.match(message.result.content[0].text, /ENOENT/);
 });
 
-test("static analyzer adapter passes target paths as argv, bounds execution, and never launches the target", async () => {
+void test("static analyzer adapter passes target paths as argv, bounds execution, and never launches the target", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-static-analyzer-"));
   try {
     const target = join(dir, "target with spaces.bin");
@@ -699,7 +699,7 @@ test("static analyzer adapter passes target paths as argv, bounds execution, and
   }
 });
 
-test("static analyzer adapter refuses non-allow-listed providers and missing tools", async () => {
+void test("static analyzer adapter refuses non-allow-listed providers and missing tools", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-static-analyzer-deny-"));
   try {
     const target = join(dir, "target.bin");
@@ -717,7 +717,7 @@ test("static analyzer adapter refuses non-allow-listed providers and missing too
   }
 });
 
-test("successful static analysis can be recorded as provenance-bound investigation evidence", async () => {
+void test("successful static analysis can be recorded as provenance-bound investigation evidence", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-analysis-evidence-"));
   try {
     const target = join(dir, "target.bin");
@@ -767,7 +767,7 @@ test("successful static analysis can be recorded as provenance-bound investigati
   }
 });
 
-test("CLI static analysis records evidence only after a successful bounded provider run", async () => {
+void test("CLI static analysis records evidence only after a successful bounded provider run", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-analysis-cli-"));
   try {
     const target = join(dir, "target.bin");
@@ -816,7 +816,7 @@ test("CLI static analysis records evidence only after a successful bounded provi
   }
 });
 
-test("local UI serves the workbench and supports upload, evidence, report, and export APIs", async () => {
+void test("local UI serves the workbench and supports upload, evidence, report, and export APIs", async () => {
   const { createPtahUiServer } = await import("../ptah-ui-server.mjs");
   const app = await createPtahUiServer({ maxUploadBytes: 1024 });
   try {
@@ -864,7 +864,7 @@ test("local UI serves the workbench and supports upload, evidence, report, and e
   }
 });
 
-test("local UI rejects non-loopback binding and oversized target uploads", async () => {
+void test("local UI rejects non-loopback binding and oversized target uploads", async () => {
   const { createPtahUiServer } = await import("../ptah-ui-server.mjs");
   await assert.rejects(
     () => createPtahUiServer({ host: "0.0.0.0" }),
@@ -889,7 +889,7 @@ test("local UI rejects non-loopback binding and oversized target uploads", async
   }
 });
 
-test("WebAssembly validation adapter requires a confirmed wasm signature and invokes only wasm-tools validate", async () => {
+void test("WebAssembly validation adapter requires a confirmed wasm signature and invokes only wasm-tools validate", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-wasm-analyzer-"));
   try {
     const target = join(dir, "target.wasm");
