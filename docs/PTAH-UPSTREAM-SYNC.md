@@ -62,12 +62,26 @@ automation meanwhile:
 ```sh
 node scripts/ptah.mjs upstream-sync              # merge + validate, no push (dry run)
 node scripts/ptah.mjs upstream-sync --push       # merge + validate + push to main
-node scripts/ptah.mjs upstream-sync --install-timer [--interval hourly]
+node scripts/ptah.mjs upstream-sync --install-timer [--interval hourly|15s]
 systemctl --user daemon-reload && systemctl --user enable --now ptah-upstream-sync.timer
 ```
 
-The timer runs `upstream-sync --push` from this checkout with the systemd
-user manager; it needs Git push credentials for `origin` and network access.
+The timer runs `upstream-sync --push --update-local` from this checkout with
+the systemd user manager; it needs Git push credentials for `origin` and
+network access. `--interval` takes a calendar expression (`hourly`) or a
+monotonic interval such as `15s` or `5min`, which is scheduled with one-second
+accuracy. A run with no upstream change only fetches; a run with changes
+validates for several minutes, and runs never overlap: a lock in the Git
+directory makes a concurrent run report `busy`.
+
+`--update-local` fast-forwards this checkout to the synced branch after each
+run, so agents registered with `ptah agents` run current code. It never merges
+or touches local edits: a checkout with uncommitted changes reports
+`skipped-local-changes`, and one with unpushed commits reports
+`skipped-diverged`. User timers stop when you log out unless lingering is
+enabled (`loginctl enable-linger`). Inspect runs with
+`journalctl --user -u ptah-upstream-sync`.
+
 Exit status 2 means the run stopped (conflict, failed validation, rejected
 push, or missing shared history).
 

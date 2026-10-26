@@ -290,3 +290,75 @@ void test("merge policy assigns one rule per path and keeps the newer dependency
     decisions.some((item) => item.path === "name" && item.kept === "ptah"),
   );
 });
+
+void test("upstream sync timer supports second intervals with one-second accuracy", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ptah-sync-timer-"));
+  try {
+    const result = await installSyncTimer({
+      repo: "/repo",
+      home,
+      node: "/opt/node/bin/node",
+      interval: "15s",
+    });
+    const timer = await readFile(result.timer, "utf8");
+    assert.match(timer, /OnUnitActiveSec=15s/);
+    assert.match(timer, /AccuracySec=1s/);
+    assert.doesNotMatch(timer, /OnCalendar|RandomizedDelaySec/);
+    const service = await readFile(result.service, "utf8");
+    assert.match(service, /Environment=PATH=\/opt\/node\/bin:/);
+    assert.match(service, /upstream-sync --push --update-local/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+void test("upstream sync holds a lock and fast-forwards the local checkout after pushing", async () => {
+  const r = await repositories();
+  try {
+    await r.upstreamCommit("rea.txt", "rea 9\n");
+    const common = git(r.repo, "rev-parse", "--git-common-dir");
+    const lock = join(r.repo, common, "ptah-upstream-sync.lock");
+    await writeFile(lock, String(process.pid));
+    assert.equal(
+      (
+        await syncUpstream({
+          repo: r.repo,
+          upstream: r.upstream,
+          validation: [],
+          push: true,
+        })
+      ).status,
+      "busy",
+    );
+    await writeFile(lock, "999999999");
+    const result = await syncUpstream({
+      repo: r.repo,
+      upstream: r.upstream,
+      validation: [],
+      push: true,
+      updateLocal: true,
+    });
+    assert.equal(result.status, "pushed", JSON.stringify(result));
+    assert.equal(result.local, "fast-forwarded");
+    assert.equal(git(r.repo, "rev-parse", "HEAD"), r.originMain());
+    assert.equal(await readFile(join(r.repo, "rea.txt"), "utf8"), "rea 9\n");
+    await assert.rejects(readFile(lock), "lock released");
+    await writeFile(join(r.repo, "ptah.txt"), "local edit\n");
+    await r.upstreamCommit("rea.txt", "rea 10\n");
+    const dirty = await syncUpstream({
+      repo: r.repo,
+      upstream: r.upstream,
+      validation: [],
+      push: true,
+      updateLocal: true,
+    });
+    assert.equal(dirty.status, "pushed");
+    assert.equal(dirty.local, "skipped-local-changes");
+    assert.equal(
+      await readFile(join(r.repo, "ptah.txt"), "utf8"),
+      "local edit\n",
+    );
+  } finally {
+    await r.cleanup();
+  }
+});

@@ -11,6 +11,7 @@ import {
   access,
   mkdtemp,
   mkdir,
+  readFile,
   rm,
   symlink,
   writeFile,
@@ -21,7 +22,7 @@ import {
   conflictRule,
   mergePackageJson,
 } from "./ptah-merge-policy.mjs";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 export const DEFAULT_UPSTREAM = "https://github.com/morluto/rea.git";
 export const DEFAULT_VALIDATION = Object.freeze([
@@ -230,12 +231,83 @@ async function validateWorktree(
   return undefined;
 }
 
+/** One sync at a time per repository; a lock left by a dead process is reclaimed. */
+async function acquireLock(repo) {
+  const common = firstLine(
+    (await git(repo, ["rev-parse", "--git-common-dir"])).stdout,
+  );
+  const path = join(
+    isAbsolute(common) ? common : join(repo, common),
+    "ptah-upstream-sync.lock",
+  );
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await writeFile(path, String(process.pid), { flag: "wx" });
+      return path;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const owner = Number(await readFile(path, "utf8").catch(() => "0"));
+      let alive = false;
+      try {
+        alive = owner > 0 && process.kill(owner, 0);
+      } catch {
+        alive = false;
+      }
+      if (alive) return undefined;
+      await rm(path, { force: true });
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Fast-forward the local checkout to the synced branch so tools registered
+ * from it run current code. Never merges, rebases, or touches local edits.
+ */
+async function updateLocalCheckout(repo, remote, branch) {
+  await git(repo, ["fetch", "--no-tags", remote, branch], {
+    allowFailure: true,
+  });
+  const dirty = (
+    await git(repo, ["status", "--porcelain", "--untracked-files=no"])
+  ).stdout.trim();
+  if (dirty) return "skipped-local-changes";
+  const head = firstLine((await git(repo, ["rev-parse", "HEAD"])).stdout);
+  const tip = firstLine(
+    (await git(repo, ["rev-parse", `${remote}/${branch}`])).stdout,
+  );
+  if (head === tip) return "current";
+  if (!(await succeeded(repo, ["merge-base", "--is-ancestor", head, tip])))
+    return "skipped-diverged";
+  await git(repo, ["merge", "--ff-only", "-q", tip]);
+  return "fast-forwarded";
+}
+
 /**
  * Run one sync. Returns a structured result whose `status` is one of
  * up-to-date, not-bootstrapped, conflict, validation-failed, merged (dry run),
- * pushed, or push-rejected.
+ * pushed, push-rejected, or busy (another sync holds the lock). With
+ * `updateLocal`, `local` reports how the caller's checkout was updated.
  */
 export async function syncUpstream(options) {
+  const lock =
+    options.lock === false ? undefined : await acquireLock(options.repo);
+  if (options.lock !== false && lock === undefined) return { status: "busy" };
+  try {
+    const result = await runSync(options);
+    if (options.updateLocal)
+      result.local = await updateLocalCheckout(
+        options.repo,
+        options.remote ?? "origin",
+        options.branch ?? "main",
+      );
+    return result;
+  } finally {
+    if (lock) await rm(lock, { force: true });
+  }
+}
+
+async function runSync(options) {
   const { repo } = options;
   const branch = options.branch ?? "main";
   const remote = options.remote ?? "origin";
@@ -312,17 +384,23 @@ export async function installSyncTimer({
   node = process.execPath,
   home = homedir(),
 }) {
+  // Short intervals use a monotonic timer with 1 s accuracy (systemd's default
+  // accuracy is one minute); anything else is a calendar expression.
+  const monotonic = /^\d+(?:s|sec|m|min|h)$/u.test(interval);
+  const schedule = monotonic
+    ? `OnBootSec=${interval}\nOnUnitActiveSec=${interval}\nAccuracySec=1s`
+    : `OnCalendar=${interval}\nPersistent=true\nRandomizedDelaySec=300`;
   const directory = join(home, ".config", "systemd", "user");
   await mkdir(directory, { recursive: true });
   const service = join(directory, "ptah-upstream-sync.service");
   const timer = join(directory, "ptah-upstream-sync.timer");
   await writeFile(
     service,
-    `[Unit]\nDescription=Merge REA upstream into PTAH\n\n[Service]\nType=oneshot\nWorkingDirectory=${repo}\nExecStart=${node} ${join(repo, "scripts", "ptah.mjs")} upstream-sync --push\n`,
+    `[Unit]\nDescription=Merge REA upstream into PTAH\n\n[Service]\nType=oneshot\nNice=10\nTimeoutStartSec=2h\nWorkingDirectory=${repo}\nEnvironment=PATH=${dirname(node)}:/usr/local/bin:/usr/bin:/bin\nExecStart=${node} ${join(repo, "scripts", "ptah.mjs")} upstream-sync --push --update-local\n`,
   );
   await writeFile(
     timer,
-    `[Unit]\nDescription=Periodic PTAH upstream sync\n\n[Timer]\nOnCalendar=${interval}\nPersistent=true\nRandomizedDelaySec=300\n\n[Install]\nWantedBy=timers.target\n`,
+    `[Unit]\nDescription=Periodic PTAH upstream sync\n\n[Timer]\n${schedule}\n\n[Install]\nWantedBy=timers.target\n`,
   );
   return {
     service,

@@ -63,8 +63,6 @@ export const webBundleViewRequestSchema = z.discriminatedUnion("collection", [
   }),
 ]);
 
-export type WebBundleViewRequest = z.output<typeof webBundleViewRequestSchema>;
-
 export const webBundleSummarySchema = z.strictObject({
   target_url: z.string(),
   target_origin: recordedBrowserOriginSchema.nullable().optional(),

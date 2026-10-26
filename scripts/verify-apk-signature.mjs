@@ -26,10 +26,7 @@ import {
   locateApkSigningBlock,
   parseZipTail,
 } from "../dist/domain/apkSignature/apkSigningBlock.js";
-import {
-  mcpTextValue,
-  requireMcpOutput,
-} from "./lib/mcp-verifier-results.mjs";
+import { mcpTextValue, requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const execute = promisify(execFile);

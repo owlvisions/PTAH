@@ -225,7 +225,7 @@ function printHelp() {
     `  ptah doctor  Readiness of runtime, analyzers, isolation, agent registrations, and upstream sync\n`,
   );
   process.stdout.write(
-    `  ptah upstream-sync [--push] [--bundle FILE] [--no-validate] [--branch main] [--upstream URL] | --install-timer [--interval hourly]  Merge the latest REA upstream in a temporary worktree, validate, and push without force\n`,
+    `  ptah upstream-sync [--push] [--update-local] [--bundle FILE] [--no-validate] [--branch main] [--upstream URL] | --install-timer [--interval hourly|15s|5min]  Merge the latest REA upstream in a temporary worktree, validate, and push without force\n`,
   );
   process.stdout.write(
     `  ptah agents list|install|uninstall|print [--client ID[,ID]|--all] [--workspace DIR [--no-instructions]] [--yes] [--force] [--no-skill] [--launcher local|npx]  Register the PTAH MCP server and skill with AI coding agents (preview unless --yes)\n`,
@@ -1242,6 +1242,7 @@ async function runUpstreamSync() {
     branch: optionValue("--branch") ?? "main",
     upstream: optionValue("--upstream") ?? sync.DEFAULT_UPSTREAM,
     push: args.includes("--push"),
+    updateLocal: args.includes("--update-local"),
     bundle: optionValue("--bundle"),
     validation: args.includes("--no-validate") ? [] : sync.DEFAULT_VALIDATION,
     nodeModules: await access(nodeModules).then(
@@ -1253,7 +1254,7 @@ async function runUpstreamSync() {
     },
   });
   emit(result);
-  if (!["up-to-date", "merged", "pushed"].includes(result.status))
+  if (!["up-to-date", "merged", "pushed", "busy"].includes(result.status))
     process.exitCode = 2;
 }
 
