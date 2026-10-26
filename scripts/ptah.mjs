@@ -216,6 +216,9 @@ function printHelp() {
     `  ptah ui [--port 4177]  Start the loopback-only local GUI\n`,
   );
   process.stdout.write(
+    `  ptah upstream-sync [--push] [--bundle FILE] [--no-validate] [--branch main] [--upstream URL] | --install-timer [--interval hourly]  Merge the latest REA upstream in a temporary worktree, validate, and push without force\n`,
+  );
+  process.stdout.write(
     `  ptah agents list|install|uninstall|print [--client ID[,ID]|--all] [--yes] [--force] [--no-skill] [--launcher local|npx]  Register the PTAH MCP server and skill with AI coding agents (preview unless --yes)\n`,
   );
   process.stdout.write(
@@ -1021,6 +1024,7 @@ const SHELL_COMMANDS = [
   "watch",
   "completion",
   "agents",
+  "upstream-sync",
   "ui",
   "help",
   "legacy",
@@ -1153,8 +1157,41 @@ async function runAgents() {
     process.exitCode = 2;
 }
 
+async function runUpstreamSync() {
+  const sync = await import("./ptah-upstream-sync.mjs");
+  if (args.includes("--install-timer")) {
+    emit(
+      await sync.installSyncTimer({
+        repo: root,
+        interval: optionValue("--interval") ?? "hourly",
+      }),
+    );
+    return;
+  }
+  const nodeModules = join(root, "node_modules");
+  const result = await sync.syncUpstream({
+    repo: root,
+    branch: optionValue("--branch") ?? "main",
+    upstream: optionValue("--upstream") ?? sync.DEFAULT_UPSTREAM,
+    push: args.includes("--push"),
+    bundle: optionValue("--bundle"),
+    validation: args.includes("--no-validate") ? [] : sync.DEFAULT_VALIDATION,
+    nodeModules: await access(nodeModules).then(
+      () => nodeModules,
+      () => undefined,
+    ),
+    log: (message) => {
+      if (!QUIET) process.stderr.write(`ptah upstream-sync: ${message}\n`);
+    },
+  });
+  emit(result);
+  if (!["up-to-date", "merged", "pushed"].includes(result.status))
+    process.exitCode = 2;
+}
+
 const COMMAND_HANDLERS = {
   agents: runAgents,
+  "upstream-sync": runUpstreamSync,
   eval: runEval,
   watch: runWatch,
   completion: async () => emit(renderCompletion(args[1] ?? "")),

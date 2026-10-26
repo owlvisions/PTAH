@@ -63,7 +63,7 @@ node scripts/ptah.mjs ui
 | `export-case [--gzip]`, `verify-case`, `import-case`, `sign-case`, `keygen`, `encrypt-case`, `decrypt-case`, `link-case`, `merge` | الحزم المحمولة والتوقيع والتشفير والربط والدمج                                                                      |
 | `report [--format markdown]`, `diff`, `graph [--format dot\|mermaid]`, `plan [--steps N]`                                         | المخرجات القابلة للمراجعة                                                                                           |
 | `analyze --provider ID [--isolation auto\|required\|none] [--cpu-seconds N] [--memory-mb N]`                                      | محللات مسموح بها: objdump, llvm-objdump, readelf, nm, file, rabin2, rz-bin, monodis, aapt2, wasm-objdump, wasm-tools |
-| `agents list\|install\|uninstall\|print`, `eval`, `watch`, `completion`, `ui`                                                     | تسجيل بتاح لدى وكلاء البرمجة، التقييم، المراقبة، إكمال الصدفة، الواجهة المحلية                                       |
+| `agents list\|install\|uninstall\|print`, `upstream-sync`, `eval`, `watch`, `completion`, `ui`                                    | تسجيل بتاح لدى وكلاء البرمجة، الدمج التلقائي لتحديثات REA، التقييم، المراقبة، إكمال الصدفة، الواجهة المحلية          |
 
 يدعم كل أمر `--quiet` لكتم المخرجات؛ الأخطاء تظل على stderr. عبارة المرور للتشفير تُمرَّر عبر متغير البيئة `PTAH_CASE_PASSPHRASE` فقط.
 

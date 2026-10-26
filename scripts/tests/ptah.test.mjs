@@ -772,7 +772,7 @@ void test("PTAH validation workflow runs native tests and upstream CI on support
   assert.match(workflow, /permissions:\n  contents: read/);
 });
 
-void test("upstream sync workflow proposes reviewed updates without auto-merging", async () => {
+void test("upstream sync workflow validates without credentials and publishes only verified merges", async () => {
   const { readFile } = await import("node:fs/promises");
   const workflow = await readFile(
     join(root, ".github/workflows/ptah-upstream-sync.yml"),
@@ -783,21 +783,25 @@ void test("upstream sync workflow proposes reviewed updates without auto-merging
     "utf8",
   );
   assert.match(workflow, /cron: ['"]?\*\/15 \* \* \* \*['"]?/);
-  assert.match(workflow, /https:\/\/github\.com\/morluto\/rea\.git/);
-  assert.match(workflow, /git merge --no-edit upstream\/main/);
-  assert.match(workflow, /git merge --abort/);
-  assert.match(workflow, /git push --force-with-lease origin/);
-  assert.match(workflow, /git merge-base upstream\/main/);
-  assert.match(workflow, /do not share Git history/);
+  assert.match(workflow, /node scripts\/ptah\.mjs upstream-sync --branch/);
+  assert.match(workflow, /--bundle/);
+  assert.match(workflow, /persist-credentials: false/);
+  const validateJob = workflow.slice(
+    workflow.indexOf("merge-and-validate:"),
+    workflow.indexOf("\n  publish:"),
+  );
+  assert.doesNotMatch(validateJob, /contents: write|GITHUB_TOKEN/);
+  assert.match(workflow, /rev-list --parents -n1/);
   assert.match(
     workflow,
-    /will not attempt a destructive or conflict-prone rebase/,
+    /git push origin "\$\{MERGED_SHA\}:refs\/heads\/\$\{BASE_BRANCH\}"/,
   );
-  assert.match(workflow, /npm run test:ptah/);
-  assert.match(workflow, /gh pr create/);
-  assert.doesNotMatch(workflow, /gh pr merge/);
-  assert.match(guide, /never auto-merges/i);
-  assert.match(guide, /15 minutes/);
+  assert.doesNotMatch(workflow, /push --force(?!-with-lease)/);
+  assert.match(workflow, /PTAH_UPSTREAM_AUTOMERGE/);
+  assert.match(workflow, /gh issue create/);
+  assert.match(guide, /without force/i);
+  assert.match(guide, /15 minutes|every 15/i);
+  assert.match(guide, /Actions has been disabled for this user/);
 });
 
 void test("carve, asar, wasm, isolation, and extended analyze providers work from the CLI", async () => {
