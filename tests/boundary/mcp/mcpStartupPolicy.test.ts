@@ -204,7 +204,7 @@ describe("packaged MCP startup probe failures", () => {
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
         policy,
-        packageName: "rea-agents",
+        packageName: "@owlvisions/ptah",
       }),
       policy.doctor,
     );
@@ -222,7 +222,7 @@ describe("packaged MCP startup probe failures", () => {
           REA_MCP_PROBE_MODE: "initialize-then-hang",
         },
         policy,
-        packageName: "rea-agents",
+        packageName: "@owlvisions/ptah",
       }),
       policy.toolsList,
     );
@@ -235,7 +235,7 @@ describe("packaged MCP startup probe failures", () => {
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "fail" },
         policy: probePolicy(),
-        packageName: "rea-agents",
+        packageName: "@owlvisions/ptah",
       });
       throw new Error("expected the unrelated probe failure");
     } catch (cause) {

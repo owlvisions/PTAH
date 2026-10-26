@@ -42,7 +42,7 @@ export const exportEnvironmentBundleInputSchema = z.strictObject({
   package_tarball: absoluteLocalPathStringSchema
     .optional()
     .describe(
-      "Absolute path of a packed rea-agents tarball the bundle installs instead of the registry package of this version.",
+      "Absolute path of a packed @owlvisions/ptah tarball the bundle installs instead of the registry package of this version.",
     ),
   dry_run: z
     .boolean()

@@ -28,7 +28,7 @@ cliTest(
       mcp: {
         rea: {
           type: "local",
-          command: ["npx", "-y", "rea-agents@6.7.0", "mcp"],
+          command: ["npx", "-y", "@owlvisions/ptah@6.7.0", "mcp"],
         },
       },
       unrelated: "keep",

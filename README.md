@@ -102,7 +102,8 @@ PTAH never forks REA state: it adapts REA evidence into its own provenance model
 
 ## Status and honesty notes
 
-- This repository is a **migration preview**. PTAH is the product identity and the primary interface; the npm package is still published as `rea-agents`, and `mcpName`, repository URLs, and legacy executables remain unchanged until an owner-controlled namespace and coordinated release migration exist (see `docs/PTAH-BRAND-AUDIT.md`).
+- This repository is a **migration preview**. PTAH is the product identity and the primary interface; the npm package is `@owlvisions/ptah` (MCP registry name `io.github.owlvisions/ptah`, repository `owlvisions/PTAH`). The `rea` and `rea-agents` executables are kept as compatibility aliases, and the inherited runtime's source identifiers are unchanged (see `docs/PTAH-BRAND-AUDIT.md`).
+- **Publication:** `@owlvisions/ptah` is not yet published to npm, and release automation stays gated to the upstream repository until publication is approved. Until then the `npx @owlvisions/ptah …` and `npm install --global @owlvisions/ptah` commands below fail with a 404; run from a source checkout instead (`npm ci && npm run build:cached`, then `node scripts/ptah.mjs help` or `npm link`).
 - Case checksums detect corruption; they are not signatures and do not authenticate authors.
 - Analyzer adapters apply bubblewrap isolation and prlimit limits only when those tools are present; each run records whether isolation was applied. Treat every analyzed target as hostile regardless.
 - Case signatures authenticate a key holder, not a person; encryption protects confidentiality only. The history chain is tamper-evident, not tamper-proof.
@@ -110,7 +111,7 @@ PTAH never forks REA state: it adapts REA evidence into its own provenance model
 
 ## Licensing
 
-PTAH-authored and REA-authored code are licensed under MIT; see the inherited section below for third-party notices and commercial-tool terms.
+PTAH-authored and REA-authored code are licensed under MIT; see the inherited section below for third-party notices and commercial-tool terms. Install with `npm install --global @owlvisions/ptah` or run `npx @owlvisions/ptah help`.
 
 <details>
 <summary><strong>Inherited REA runtime documentation</strong> — analyzers, setup, showcases, and FAQ for the compatibility layer beneath PTAH (click to expand)</summary>
@@ -121,7 +122,7 @@ PTAH-authored and REA-authored code are licensed under MIT; see the inherited se
 
 **See a feature you like. Understand how it works, down to the binary level.**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
+[![npm version](https://img.shields.io/npm/v/@owlvisions/ptah?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@owlvisions/ptah)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#what-you-can-analyze)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -134,7 +135,7 @@ PTAH-authored and REA-authored code are licensed under MIT; see the inherited se
 
 [Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [Build RL environments](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
-<code>npx rea-agents setup</code>
+<code>npx @owlvisions/ptah setup</code>
 
 </div>
 
@@ -190,7 +191,7 @@ checks. Recovery steps are in `docs/installation.md` under
 With Node.js and npm installed, run:
 
 ```bash
-npx rea-agents setup
+npx @owlvisions/ptah setup
 ```
 
 Choose your agents, review the proposed changes, and approve them. Setup adds
@@ -222,7 +223,7 @@ Replace Notes with your target app and the feature you want to understand.
 Inspect an extracted JavaScript/Electron app directory or ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y @owlvisions/ptah@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
 The result includes modules, imports, Electron boundaries and their evidence.
@@ -231,7 +232,7 @@ Replace the path with your target, such as `"D:/apps/example"` on Windows.
 To install the `rea` command for regular use:
 
 ```bash
-npm install --global rea-agents
+npm install --global @owlvisions/ptah
 rea --help
 ```
 
@@ -267,12 +268,12 @@ by the update.
 If you use `npx`, update your agent setup with:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 Review the setup changes and restart your agent. For one-off CLI commands,
-use `npx rea-agents@latest` followed by the command. With Bun, use
-`bunx rea-agents@latest` in place of `npx rea-agents@latest`.
+use `npx @owlvisions/ptah@latest` followed by the command. With Bun, use
+`bunx @owlvisions/ptah@latest` in place of `npx @owlvisions/ptah@latest`.
 
 ## How REA works
 
@@ -469,7 +470,7 @@ Hopper manually if needed. See
 <details>
 <summary><strong>What does installing the skill from skills.sh do?</strong></summary>
 
-The skill supplies investigation instructions for your agent. Use `npx rea-agents setup`
+The skill supplies investigation instructions for your agent. Use `npx @owlvisions/ptah setup`
 to register REA's MCP server and install the matching instructions, then restart
 your agent. See [skill-only installation](docs/installation.md#skill-only-installation).
 
@@ -506,7 +507,7 @@ rea update
 For agent setup through `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 If you're using an agent, complete the [setup refresh](#update-rea) and restart

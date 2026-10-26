@@ -9,7 +9,7 @@
 
 **気に入った機能を見つけたら、その仕組みをバイナリのレベルまで理解する。**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
+[![npm version](https://img.shields.io/npm/v/@owlvisions/ptah?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@owlvisions/ptah)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -22,7 +22,7 @@
 
 [クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [RL 環境を構築する](#build-rl-environments) · [よくある質問](#よくある質問) · [GNU objdump・Rizin ツール](../reverse-engineering-tools.md) · [ドキュメント](#ドキュメント)
 
-<code>npx rea-agents setup</code>
+<code>npx @owlvisions/ptah setup</code>
 
 </div>
 
@@ -73,7 +73,7 @@ Linux での Ghidra、JADX、ファームウェアツールの起動と静的 Ja
 Node.js と npm がインストールされている環境で実行します。
 
 ```bash
-npx rea-agents setup
+npx @owlvisions/ptah setup
 ```
 
 使うエージェントを選び、予定されている変更を確認して承認してください。セットアップは REA の MCP サーバーと対応するワークフローの手順を追加し、既存の設定をバックアップします。完了後にエージェントを再起動してください。
@@ -95,7 +95,7 @@ Notes を対象のアプリに置き換え、理解したい機能を指定し�
 展開済みの JavaScript/Electron アプリのディレクトリ、または ASAR を調べます。
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y @owlvisions/ptah@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
 結果にはモジュール、インポート、Electron の境界と、それらの根拠が含まれます。パスは対象に合わせて変更してください。Windows では、たとえば `"D:/apps/example"` を指定します。
@@ -103,7 +103,7 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 日常的に使う場合は、`rea` コマンドをインストールできます。
 
 ```bash
-npm install --global rea-agents
+npm install --global @owlvisions/ptah
 rea --help
 ```
 
@@ -128,12 +128,12 @@ Bun のグローバル更新には Bun 1.2.17 以降が必要です。古い場�
 `npx` を使っている場合は、次のコマンドでエージェントの設定を更新します。
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
-設定の変更を確認し、エージェントを再起動してください。単発の CLI 操作では、`npx rea-agents@latest` に続けてコマンドを指定します。
+設定の変更を確認し、エージェントを再起動してください。単発の CLI 操作では、`npx @owlvisions/ptah@latest` に続けてコマンドを指定します。
 
-Bun では `npx rea-agents@latest` の代わりに `bunx rea-agents@latest` を使ってください。
+Bun では `npx @owlvisions/ptah@latest` の代わりに `bunx @owlvisions/ptah@latest` を使ってください。
 
 ## REA の仕組み
 
@@ -296,7 +296,7 @@ REA は必要な操作の際に Hopper を起動します。macOS では、初�
 <details>
 <summary><strong>skills.sh からスキルをインストールすると何ができますか？</strong></summary>
 
-スキルはエージェントに調査の手順を提供します。`npx rea-agents setup` で REA の MCP サーバーを登録し、対応する手順をインストールしてから、エージェントを再起動してください。[スキルのみのインストール](../installation.md#skill-only-installation)を参照してください。
+スキルはエージェントに調査の手順を提供します。`npx @owlvisions/ptah setup` で REA の MCP サーバーを登録し、対応する手順をインストールしてから、エージェントを再起動してください。[スキルのみのインストール](../installation.md#skill-only-installation)を参照してください。
 
 </details>
 
@@ -328,7 +328,7 @@ rea update
 `npx` でエージェントを設定している場合：
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 エージェントを使っている場合は、[設定の更新](#rea-を更新する)を完了し、再起動してください。同じタスクをもう一度試し、問題が続く場合は [issue を作成](https://github.com/morluto/rea/issues)して、REA のバージョン、対象の種類、再現手順、エラー出力を記載してください。

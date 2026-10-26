@@ -9,7 +9,7 @@
 
 **เห็นฟีเจอร์ที่ชอบแล้วอยากรู้ว่าทำงานอย่างไร? เข้าใจได้ลึกถึงระดับไบนารี**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
+[![npm version](https://img.shields.io/npm/v/@owlvisions/ptah?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@owlvisions/ptah)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -22,7 +22,7 @@
 
 [เริ่มต้นอย่างรวดเร็ว](#เริ่มต้นอย่างรวดเร็ว) · [REA ทำงานอย่างไร](#rea-ทำงานอย่างไร) · [สิ่งที่วิเคราะห์ได้](#สิ่งที่วิเคราะห์ได้) · [ตัวอย่างการใช้งาน](#ตัวอย่างการใช้งาน) · [สร้างสภาพแวดล้อม RL](#build-rl-environments) · [คำถามที่พบบ่อย](#คำถามที่พบบ่อย) · [เครื่องมือ GNU objdump และ Rizin](../reverse-engineering-tools.md) · [เอกสาร](#เอกสาร)
 
-<code>npx rea-agents setup</code>
+<code>npx @owlvisions/ptah setup</code>
 
 </div>
 
@@ -73,7 +73,7 @@ REA เชื่อมเอเจนต์ของคุณกับเคร�
 เมื่อติดตั้ง Node.js และ npm แล้ว ให้เรียกใช้:
 
 ```bash
-npx rea-agents setup
+npx @owlvisions/ptah setup
 ```
 
 เลือกเอเจนต์ ตรวจสอบการเปลี่ยนแปลงที่เสนอ แล้วอนุมัติ ขั้นตอนตั้งค่าจะเพิ่มเซิร์ฟเวอร์ MCP ของ REA และคำแนะนำการทำงานที่ตรงกัน พร้อมสำรองการตั้งค่าที่มีอยู่ จากนั้นเริ่มเอเจนต์ใหม่
@@ -95,7 +95,7 @@ MCP ใช้สคีมาอินพุตแบบกระชับโด�
 ตรวจสอบไดเรกทอรีแอป JavaScript/Electron ที่แตกไฟล์แล้ว หรือไฟล์ ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y @owlvisions/ptah@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
 ผลลัพธ์ประกอบด้วยโมดูล การนำเข้า ขอบเขตของ Electron และหลักฐาน แทนที่พาธด้วยเป้าหมายของคุณ เช่น `"D:/apps/example"` บน Windows
@@ -103,7 +103,7 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 หากต้องการติดตั้งคำสั่ง `rea` สำหรับใช้งานเป็นประจำ:
 
 ```bash
-npm install --global rea-agents
+npm install --global @owlvisions/ptah
 rea --help
 ```
 
@@ -128,12 +128,12 @@ rea update
 หากใช้ `npx` ให้อัปเดตการตั้งค่าเอเจนต์ด้วย:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
-ตรวจสอบการเปลี่ยนแปลงการตั้งค่าและเริ่มเอเจนต์ใหม่ สำหรับคำสั่ง CLI ที่ใช้ครั้งเดียว ให้ใช้ `npx rea-agents@latest` ตามด้วยคำสั่งที่ต้องการ
+ตรวจสอบการเปลี่ยนแปลงการตั้งค่าและเริ่มเอเจนต์ใหม่ สำหรับคำสั่ง CLI ที่ใช้ครั้งเดียว ให้ใช้ `npx @owlvisions/ptah@latest` ตามด้วยคำสั่งที่ต้องการ
 
-เมื่อใช้ Bun ให้ใช้ `bunx rea-agents@latest` แทน `npx rea-agents@latest`
+เมื่อใช้ Bun ให้ใช้ `bunx @owlvisions/ptah@latest` แทน `npx @owlvisions/ptah@latest`
 
 ## REA ทำงานอย่างไร
 
@@ -294,7 +294,7 @@ REA เริ่ม Hopper เมื่อการดำเนินการ�
 <details>
 <summary><strong>การติดตั้งสกิลจาก skills.sh ทำอะไร?</strong></summary>
 
-สกิลให้คำแนะนำการตรวจสอบแก่เอเจนต์ ใช้ `npx rea-agents setup` เพื่อลงทะเบียนเซิร์ฟเวอร์ MCP ของ REA และติดตั้งคำแนะนำที่ตรงกัน แล้วเริ่มเอเจนต์ใหม่ ดู[การติดตั้งเฉพาะสกิล](../installation.md#skill-only-installation)
+สกิลให้คำแนะนำการตรวจสอบแก่เอเจนต์ ใช้ `npx @owlvisions/ptah setup` เพื่อลงทะเบียนเซิร์ฟเวอร์ MCP ของ REA และติดตั้งคำแนะนำที่ตรงกัน แล้วเริ่มเอเจนต์ใหม่ ดู[การติดตั้งเฉพาะสกิล](../installation.md#skill-only-installation)
 
 </details>
 
@@ -326,7 +326,7 @@ rea update
 สำหรับการตั้งค่าเอเจนต์ผ่าน `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 หากใช้เอเจนต์ ให้ทำ[การปรับปรุงการตั้งค่า](#อัปเดต-rea) ให้เสร็จแล้วเริ่มเอเจนต์ใหม่ ลองงานเดิมอีกครั้ง หากยังพบปัญหา ให้[เปิด issue](https://github.com/morluto/rea/issues) พร้อมระบุรุ่น REA ประเภทเป้าหมาย ขั้นตอนทำให้เกิดปัญหา และข้อความข้อผิดพลาด

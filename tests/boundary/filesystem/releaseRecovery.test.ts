@@ -32,7 +32,7 @@ const selection = () => ({
     head_repository: { full_name: "fixture/rea" },
   },
   release: {
-    tag_name: "rea-agents-6.5.0",
+    tag_name: "ptah-6.5.0",
     draft: false,
     published_at: "2026-10-14T12:32:45Z",
   },
@@ -137,7 +137,7 @@ it("refuses foreign runs, unrelated workflows and unpublished releases", () => {
   draft.release.draft = true;
   expect(() => selectRecoveryRelease(draft)).toThrow();
   const wrongTag = selection();
-  wrongTag.release.tag_name = "rea-agents-6.6.0";
+  wrongTag.release.tag_name = "ptah-6.6.0";
   expect(() => selectRecoveryRelease(wrongTag)).toThrow();
 });
 
@@ -212,7 +212,10 @@ it("limits recovery to verification and dependent MCP publication from the relea
       parse(await readFile(".github/workflows/release-recovery.yml", "utf8")),
     );
   expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
-  expect(workflow.jobs.verify.if).toBe("github.ref == 'refs/heads/main'");
+  // Recovery stays gated to the upstream repository like the release jobs.
+  expect(workflow.jobs.verify.if).toBe(
+    "github.repository == 'morluto/rea' && (github.ref == 'refs/heads/main')",
+  );
   expect(workflow.jobs.verify.permissions).toEqual({
     contents: "read",
     actions: "read",

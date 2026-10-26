@@ -9,7 +9,7 @@
 
 **¿Ves una función que te gusta? Entiende cómo funciona, hasta el nivel binario.**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
+[![npm version](https://img.shields.io/npm/v/@owlvisions/ptah?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@owlvisions/ptah)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -22,7 +22,7 @@
 
 [Inicio rápido](#inicio-rápido) · [Cómo funciona REA](#cómo-funciona-rea) · [Qué puedes analizar](#qué-puedes-analizar) · [Casos prácticos](#casos-prácticos) · [Crear entornos de RL](#build-rl-environments) · [Preguntas frecuentes](#preguntas-frecuentes) · [Herramientas GNU objdump y Rizin](../reverse-engineering-tools.md) · [Documentación](#documentación)
 
-<code>npx rea-agents setup</code>
+<code>npx @owlvisions/ptah setup</code>
 
 </div>
 
@@ -73,7 +73,7 @@ En Linux, iniciar Ghidra, JADX y herramientas de firmware, y analizar JavaScript
 Con Node.js y npm instalados, ejecuta:
 
 ```bash
-npx rea-agents setup
+npx @owlvisions/ptah setup
 ```
 
 Elige tus agentes, revisa los cambios propuestos y apruébalos. La configuración añade el servidor MCP de REA y las instrucciones de trabajo correspondientes, con copias de seguridad de la configuración existente. Reinicia tu agente al terminar.
@@ -95,7 +95,7 @@ Sustituye Notes por la aplicación objetivo y especifica la función que quieres
 Inspecciona un directorio extraído de una aplicación JavaScript/Electron o un archivo ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y @owlvisions/ptah@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
 El resultado incluye módulos, importaciones, límites de Electron y sus pruebas. Sustituye la ruta por la de tu objetivo, por ejemplo `"D:/apps/example"` en Windows.
@@ -103,7 +103,7 @@ El resultado incluye módulos, importaciones, límites de Electron y sus pruebas
 Para instalar el comando `rea` y usarlo habitualmente:
 
 ```bash
-npm install --global rea-agents
+npm install --global @owlvisions/ptah
 rea --help
 ```
 
@@ -128,12 +128,12 @@ Para actualizar los registros de tus agentes y la skill, ejecuta el comando de c
 Si usas `npx`, actualiza la configuración de tu agente con:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
-Revisa los cambios de configuración y reinicia tu agente. Para ejecutar comandos de CLI puntuales, usa `npx rea-agents@latest` seguido del comando.
+Revisa los cambios de configuración y reinicia tu agente. Para ejecutar comandos de CLI puntuales, usa `npx @owlvisions/ptah@latest` seguido del comando.
 
-Con Bun, usa `bunx rea-agents@latest` en lugar de `npx rea-agents@latest`.
+Con Bun, usa `bunx @owlvisions/ptah@latest` en lugar de `npx @owlvisions/ptah@latest`.
 
 ## Cómo funciona REA
 
@@ -294,7 +294,7 @@ REA inicia Hopper cuando una operación lo necesita. En macOS, puede aparecer un
 <details>
 <summary><strong>¿Qué hace la instalación de la skill desde skills.sh?</strong></summary>
 
-La skill proporciona instrucciones de investigación a tu agente. Usa `npx rea-agents setup` para registrar el servidor MCP de REA e instalar las instrucciones correspondientes; después reinicia tu agente. Consulta [instalación solo de la skill](../installation.md#skill-only-installation).
+La skill proporciona instrucciones de investigación a tu agente. Usa `npx @owlvisions/ptah setup` para registrar el servidor MCP de REA e instalar las instrucciones correspondientes; después reinicia tu agente. Consulta [instalación solo de la skill](../installation.md#skill-only-installation).
 
 </details>
 
@@ -326,7 +326,7 @@ rea update
 Para configurar el agente mediante `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 Si usas un agente, completa la [actualización de la configuración](#actualiza-rea) y reinícialo. Repite la misma tarea. Si el problema continúa, [abre una issue](https://github.com/morluto/rea/issues) con tu versión de REA, el tipo de objetivo, los pasos para reproducirlo y la salida del error.

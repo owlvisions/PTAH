@@ -9,7 +9,7 @@
 
 **Ai găsit o funcționalitate care îți place? Înțelege cum funcționează, până la nivel de cod binar.**
 
-[![Versiunea npm](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
+[![Versiunea npm](https://img.shields.io/npm/v/@owlvisions/ptah?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@owlvisions/ptah)
 [![Catalogul uneltelor MCP](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
 [![Cerințe Node.js](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#ce-poți-analiza)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -22,7 +22,7 @@
 
 [Pornire rapidă](#pornire-rapidă) · [Cum funcționează REA](#cum-funcționează-rea) · [Ce poți analiza](#ce-poți-analiza) · [Studii de caz](#studii-de-caz) · [Construiește medii RL](#build-rl-environments) · [Întrebări frecvente](#întrebări-frecvente) · [Documentație](#documentație)
 
-<code>npx rea-agents setup</code>
+<code>npx @owlvisions/ptah setup</code>
 
 </div>
 
@@ -78,7 +78,7 @@ pentru a verifica dacă procesele îi aparțin. Pașii de remediere sunt în
 Cu Node.js și npm instalate, rulează:
 
 ```bash
-npx rea-agents setup
+npx @owlvisions/ptah setup
 ```
 
 Alege agenții, verifică modificările propuse și aprobă-le. Configurarea adaugă
@@ -111,7 +111,7 @@ construiește o funcționalitate similară pentru proiectul meu.
 Inspectează directorul extras al unei aplicații JavaScript/Electron sau o arhivă ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y @owlvisions/ptah@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Rezultatul include modulele, importurile, delimitările dintre componentele Electron
@@ -121,7 +121,7 @@ Rezultatul include modulele, importurile, delimitările dintre componentele Elec
 Pentru a instala comanda `rea` și a o folosi în mod curent:
 
 ```bash
-npm install --global rea-agents
+npm install --global @owlvisions/ptah
 rea --help
 ```
 
@@ -159,12 +159,12 @@ configurare afișată de programul de actualizare.
 Dacă folosești `npx`, actualizează configurarea agentului cu:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 Verifică modificările de configurare și repornește agentul. Pentru comenzi CLI
-ocazionale, folosește `npx rea-agents@latest` urmat de comandă. Cu Bun, folosește
-`bunx rea-agents@latest` în loc de `npx rea-agents@latest`.
+ocazionale, folosește `npx @owlvisions/ptah@latest` urmat de comandă. Cu Bun, folosește
+`bunx @owlvisions/ptah@latest` în loc de `npx @owlvisions/ptah@latest`.
 
 ## Cum funcționează REA
 
@@ -365,7 +365,7 @@ Consultă [pornirea Hopper și depanarea](../installation.md#launcher-paths-and-
 <details>
 <summary><strong>Ce face instalarea skill-ului de pe skills.sh?</strong></summary>
 
-Skill-ul oferă agentului instrucțiuni de investigare. Folosește `npx rea-agents setup`
+Skill-ul oferă agentului instrucțiuni de investigare. Folosește `npx @owlvisions/ptah setup`
 pentru a înregistra serverul MCP REA și a instala instrucțiunile corespunzătoare,
 apoi repornește agentul. Consultă [instalarea doar a skill-ului](../installation.md#skill-only-installation).
 
@@ -403,7 +403,7 @@ rea update
 Pentru configurarea agentului prin `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 Dacă folosești un agent, finalizează [actualizarea configurării](#actualizează-rea)

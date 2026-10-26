@@ -753,7 +753,7 @@ describe("version report requests", () => {
 
 describe("version report rendering", () => {
   const host = {
-    packageName: "rea-agents",
+    packageName: "@owlvisions/ptah",
     packageVersion: "6.7.0",
     versions: { node: "24.22.1" },
     platform: "linux",

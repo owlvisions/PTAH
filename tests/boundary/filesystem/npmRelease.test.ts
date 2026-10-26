@@ -15,8 +15,10 @@ const metadata = (
   integrity: string,
   tags: Record<string, string>,
 ) => ({
-  name: "rea-agents",
-  versions: { [version]: { name: "rea-agents", version, dist: { integrity } } },
+  name: "@owlvisions/ptah",
+  versions: {
+    [version]: { name: "@owlvisions/ptah", version, dist: { integrity } },
+  },
   "dist-tags": tags,
 });
 
@@ -79,7 +81,11 @@ it("distinguishes absence from failed or malformed registry responses", async ()
   ).resolves.toEqual({ status: "absent" });
   await expect(
     readNpmRelease("6.5.0", async () =>
-      Response.json({ name: "rea-agents", versions: {}, "dist-tags": {} }),
+      Response.json({
+        name: "@owlvisions/ptah",
+        versions: {},
+        "dist-tags": {},
+      }),
     ),
   ).resolves.toEqual({ status: "absent" });
   await expect(
@@ -134,11 +140,15 @@ it("waits only for confirmed propagation absence and does not retry errors", asy
 it.each([
   {
     name: "array versions",
-    value: { name: "rea-agents", versions: [], "dist-tags": {} },
+    value: { name: "@owlvisions/ptah", versions: [], "dist-tags": {} },
   },
   {
     name: "invalid tag facts",
-    value: { name: "rea-agents", versions: {}, "dist-tags": { latest: 42 } },
+    value: {
+      name: "@owlvisions/ptah",
+      versions: {},
+      "dist-tags": { latest: 42 },
+    },
   },
   {
     name: "different package",

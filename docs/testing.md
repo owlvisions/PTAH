@@ -1121,7 +1121,7 @@ It also invokes the actual bridge methods on detached Ghidra model objects to
 check ambiguous dispatches, signed literals, precision bounds, shared targets,
 and conflicting labels. This reflection fixture depends on the pinned Ghidra
 model and does not claim a compiler produced those synthetic graph shapes.
-Pass `--entrypoint /path/to/installed/rea-agents/scripts/rea.mjs` directly to
+Pass `--entrypoint /path/to/installed/@owlvisions/ptah/scripts/rea.mjs` directly to
 `scripts/verify-real-ghidra-switch.mjs` to verify an installed package through
 the same compiler oracles and CLI/MCP checks.
 

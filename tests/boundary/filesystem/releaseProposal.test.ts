@@ -125,7 +125,7 @@ function historyPage(
 }
 
 function releaseRecord(version: string, sha = baseline) {
-  const tagName = `rea-agents-${version}`;
+  const tagName = `ptah-${version}`;
   return {
     name: version,
     tag: { name: tagName },
@@ -155,7 +155,7 @@ const defaultConfiguration = {
   "include-v-in-tag": false,
   packages: {
     ".": {
-      "package-name": "rea-agents",
+      "package-name": "@owlvisions/ptah",
       "extra-files": [{ type: "generic", path: "version.txt" }],
     },
   },
@@ -169,11 +169,11 @@ function releaseFileEntries(
     "release-please-config.json": configuration,
     ".release-please-manifest.json": releasedVersions,
     "package.json": {
-      name: "rea-agents",
+      name: "@owlvisions/ptah",
       version: releasedVersions["."] ?? "0.0.0",
     },
     "pkg/package.json": {
-      name: "rea-agents",
+      name: "@owlvisions/ptah",
       version: releasedVersions.pkg ?? "0.0.0",
     },
   };
@@ -457,7 +457,7 @@ it.each([
     name: "package exclusion",
     config: {
       packages: {
-        ".": { "package-name": "rea-agents", "exclude-paths": ["docs"] },
+        ".": { "package-name": "@owlvisions/ptah", "exclude-paths": ["docs"] },
       },
     },
     excluded: true,
@@ -479,7 +479,7 @@ it.each([
   },
   {
     name: "subpackage",
-    config: { packages: { pkg: { "package-name": "rea-agents" } } },
+    config: { packages: { pkg: { "package-name": "@owlvisions/ptah" } } },
     excluded: true,
   },
 ])("retains file-backed semantics for $name", async ({ config, excluded }) => {
@@ -558,7 +558,7 @@ it("uses a tag-only manifest release and excludes older version overrides", asyn
   const fixture = await releaseFixture({
     releasedVersions: { ".": "6.8.0" },
     releases: [],
-    tags: [{ name: "rea-agents-6.8.0", commit: { sha: baseline } }],
+    tags: [{ name: "ptah-6.8.0", commit: { sha: baseline } }],
     commits: [
       { sha: latest, message: "fix: current change", files: ["src/change.ts"] },
       {
@@ -756,7 +756,7 @@ it("preserves complete mixed bootstrap history with all known release boundaries
     releasedVersions: { ".": "6.7.0", pkg: "0.0.0" },
     config: {
       packages: {
-        ".": { "package-name": "rea-agents" },
+        ".": { "package-name": "@owlvisions/ptah" },
         pkg: { "package-name": "unreleased" },
       },
     },

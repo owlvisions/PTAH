@@ -4,7 +4,7 @@ import { SUPPORTED_NODE_VERSION_RANGE } from "./runtimeVersion.js";
 import { versionReport, versionReportSchema } from "./versionReport.js";
 
 const host = {
-  packageName: "rea-agents",
+  packageName: "@owlvisions/ptah",
   packageVersion: "6.7.0",
   platform: "linux",
   architecture: "x64",
@@ -15,7 +15,7 @@ describe("version report", () => {
     const report = versionReport({ ...host, versions: { node: "24.22.1" } });
 
     expect(versionReportSchema.parse(report)).toEqual({
-      name: "rea-agents",
+      name: "@owlvisions/ptah",
       version: "6.7.0",
       runtime: { id: "node", version: "24.22.1" },
       platform: "linux",

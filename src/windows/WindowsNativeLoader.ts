@@ -93,7 +93,7 @@ export interface WindowsNativeLoadHost {
 }
 
 const missingWindowsNativeFileReason = (file: string): string =>
-  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the rea-agents@${PACKAGE_METADATA.version} tarball or build them with native/windows/README.md; no native artifact was loaded.`;
+  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the @owlvisions/ptah@${PACKAGE_METADATA.version} tarball or build them with native/windows/README.md; no native artifact was loaded.`;
 
 /** Recovery when Windows refuses to load the verified artifact, for example by code-integrity policy. */
 export const WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION =

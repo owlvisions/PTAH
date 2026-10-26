@@ -199,9 +199,9 @@ evidence_id}` (or `{kind: "evidence-file", path}`), an absolute
 `output_directory` that does not exist yet and whose parent does, and a `name`
 (required when the application runs on `localhost` or an IP address). It returns
 the coverage again, `tool_count`, the written files and warnings; `dry_run:
-true` reports without writing. The bundle installs `rea-agents` of this REA's
+true` reports without writing. The bundle installs `@owlvisions/ptah` of this REA's
 version from the registry; when the user runs an unreleased REA build, pass the
-`package_tarball` they give you (a packed `rea-agents` tarball) instead.
+`package_tarball` they give you (a packed `@owlvisions/ptah` tarball) instead.
 
 Tell the user how many tools answer from the state, which writes are served and
 which are withheld and why, and the run command (`agent-env run <folder>`). Say

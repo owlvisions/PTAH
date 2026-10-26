@@ -138,7 +138,7 @@ const registerBundlePublicationCases = () => {
       state: { served: true, evidence_id: expect.stringMatching(/^ev_/u) },
       package_source: {
         kind: "registry",
-        specifier: `rea-agents@${PACKAGE_METADATA.version}`,
+        specifier: `@owlvisions/ptah@${PACKAGE_METADATA.version}`,
       },
     });
     const written = exported.value.files.map((file) => file.path).sort();
@@ -177,7 +177,7 @@ const registerBundlePublicationCases = () => {
     const { root, input, directory } = await prepare(
       "rea-environment-export-tarball-",
     );
-    const tarball = join(root, "rea-agents-0.0.0.tgz");
+    const tarball = join(root, "owlvisions-ptah-0.0.0.tgz");
     await writeFile(tarball, Buffer.from([0x1f, 0x8b, 8, 0, 1, 2, 3]));
     const exported = await exportEnvironmentBundle({
       ...input,
@@ -191,18 +191,18 @@ const registerBundlePublicationCases = () => {
       path: tarball,
     });
     expect(exported.value.files).toContainEqual({
-      path: "envs/replay-copy/rea-agents.tgz",
+      path: "envs/replay-copy/ptah.tgz",
       bytes: 7,
     });
     expect(
       Buffer.compare(
-        await readFile(join(directory, "envs/replay-copy/rea-agents.tgz")),
+        await readFile(join(directory, "envs/replay-copy/ptah.tgz")),
         await readFile(tarball),
       ),
     ).toBe(0);
     expect(
       await readFile(join(directory, "envs/replay-copy/Dockerfile"), "utf8"),
-    ).toContain("COPY rea-agents.tgz /tmp/");
+    ).toContain("COPY ptah.tgz /tmp/");
   });
 };
 

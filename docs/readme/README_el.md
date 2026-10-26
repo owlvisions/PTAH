@@ -8,7 +8,7 @@
 
 **Βρήκες μια λειτουργία που σου αρέσει; Μάθε πώς λειτουργεί, μέχρι το επίπεδο του δυαδικού κώδικα.**
 
-[![Έκδοση npm](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
+[![Έκδοση npm](https://img.shields.io/npm/v/@owlvisions/ptah?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@owlvisions/ptah)
 [![Κατάλογος εργαλείων MCP](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
 [![Απαιτήσεις Node.js](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#τι-μπορείς-να-αναλύσεις)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -21,7 +21,7 @@
 
 [Γρήγορη εκκίνηση](#γρήγορη-εκκίνηση) · [Πώς λειτουργεί το REA](#πώς-λειτουργεί-το-rea) · [Τι μπορείς να αναλύσεις](#τι-μπορείς-να-αναλύσεις) · [Μελέτες περίπτωσης](#μελέτες-περίπτωσης) · [Δημιουργία περιβαλλόντων RL](#build-rl-environments) · [Συχνές ερωτήσεις](#συχνές-ερωτήσεις) · [Τεκμηρίωση](#τεκμηρίωση)
 
-<code>npx rea-agents setup</code>
+<code>npx @owlvisions/ptah setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@
 Αφού εγκαταστήσεις το Node.js και το npm, εκτέλεσε:
 
 ```bash
-npx rea-agents setup
+npx @owlvisions/ptah setup
 ```
 
 Επίλεξε τους agents σου, έλεγξε τις προτεινόμενες αλλαγές και ενέκρινέ τες. Η διαδικασία προσθέτει τον MCP server του REA και τις αντίστοιχες οδηγίες εργασίας, κρατώντας αντίγραφα ασφαλείας των υφιστάμενων ρυθμίσεων. Στη συνέχεια, επανεκκίνησε τον agent σου.
@@ -97,7 +97,7 @@ npx rea-agents setup
 Εξέτασε τον αποσυμπιεσμένο φάκελο μιας εφαρμογής JavaScript/Electron ή ένα αρχείο ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y @owlvisions/ptah@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Το αποτέλεσμα περιλαμβάνει modules, εισαγωγές, τα όρια μεταξύ των μερών της εφαρμογής Electron και τα αντίστοιχα τεκμήρια. Αντικατάστησε τη διαδρομή με τη δική σου, για παράδειγμα `"D:/apps/example"` στα Windows.
@@ -105,7 +105,7 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 Για να εγκαταστήσεις την εντολή `rea` για τακτική χρήση:
 
 ```bash
-npm install --global rea-agents
+npm install --global @owlvisions/ptah
 rea --help
 ```
 
@@ -130,10 +130,10 @@ rea update
 Αν χρησιμοποιείς `npx`, ενημέρωσε τη ρύθμιση του agent με:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
-Έλεγξε τις αλλαγές και επανεκκίνησε τον agent σου. Για μεμονωμένες εντολές CLI, χρησιμοποίησε `npx rea-agents@latest` και στη συνέχεια την εντολή που θέλεις. Με Bun, χρησιμοποίησε `bunx rea-agents@latest` αντί για `npx rea-agents@latest`.
+Έλεγξε τις αλλαγές και επανεκκίνησε τον agent σου. Για μεμονωμένες εντολές CLI, χρησιμοποίησε `npx @owlvisions/ptah@latest` και στη συνέχεια την εντολή που θέλεις. Με Bun, χρησιμοποίησε `bunx @owlvisions/ptah@latest` αντί για `npx @owlvisions/ptah@latest`.
 
 ## Πώς λειτουργεί το REA
 
@@ -298,7 +298,7 @@ agent-env run ./my-env
 <details>
 <summary><strong>Τι προσφέρει η εγκατάσταση του skill από το skills.sh;</strong></summary>
 
-Το skill παρέχει οδηγίες διερεύνησης για τον agent σου. Χρησιμοποίησε `npx rea-agents setup` για να καταχωρίσεις τον MCP server του REA και να εγκαταστήσεις τις αντίστοιχες οδηγίες. Στη συνέχεια, επανεκκίνησε τον agent σου. Δες την [εγκατάσταση μόνο του skill](../installation.md#skill-only-installation).
+Το skill παρέχει οδηγίες διερεύνησης για τον agent σου. Χρησιμοποίησε `npx @owlvisions/ptah setup` για να καταχωρίσεις τον MCP server του REA και να εγκαταστήσεις τις αντίστοιχες οδηγίες. Στη συνέχεια, επανεκκίνησε τον agent σου. Δες την [εγκατάσταση μόνο του skill](../installation.md#skill-only-installation).
 
 </details>
 
@@ -330,7 +330,7 @@ rea update
 Για ρύθμιση agent μέσω `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 Αν χρησιμοποιείς agent, ολοκλήρωσε την [ανανέωση της ρύθμισης](#ενημέρωση-του-rea) και επανεκκίνησέ τον. Δοκίμασε ξανά την ίδια εργασία. Αν το πρόβλημα παραμένει, [άνοιξε ένα issue](https://github.com/morluto/rea/issues) με την έκδοση του REA, τον τύπο του στόχου, τα βήματα αναπαραγωγής και την έξοδο του σφάλματος.

@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
+const UPSTREAM_RELEASE_GATE = "github.repository == 'morluto/rea'";
 const stepSchema = z.object({
   id: z.string().optional(),
   name: z.string().optional(),
@@ -108,7 +109,11 @@ it("keeps main pushes proposal-only and gates merged-release automation", async 
     branches: ["main"],
   });
   const proposal = workflow.jobs["release-proposal"];
-  expect(proposal.if).toBe("github.event_name == 'push'");
+  // Release jobs stay gated to the upstream repository until PTAH publishes
+  // under its own npm/MCP identity; a fork push must never publish.
+  expect(proposal.if).toBe(
+    `${UPSTREAM_RELEASE_GATE} && (github.event_name == 'push')`,
+  );
   const controller = proposal.steps.find((step) =>
     step.run?.includes("scripts/release-proposal.mjs"),
   );
@@ -136,13 +141,14 @@ it("keeps main pushes proposal-only and gates merged-release automation", async 
   const merged = workflow.jobs["merged-release"];
   expect(merged.if).toContain("github.event.pull_request.merged == true");
   expect(merged.if).toContain("github.repository");
+  expect(merged.if?.startsWith(`${UPSTREAM_RELEASE_GATE} && (`)).toBe(true);
   expect(merged.if).toContain("release-please--branches--main--");
   expect(merged.outputs).toEqual({
     release_created: "${{ steps.release.outputs.release_created }}",
     sha: "${{ steps.release.outputs.sha }}",
   });
   expect(workflow.jobs["release-please"].if).toBe(
-    "github.event_name == 'workflow_dispatch'",
+    `${UPSTREAM_RELEASE_GATE} && (github.event_name == 'workflow_dispatch')`,
   );
   expect(workflow.concurrency.group).toBe(
     "release-${{ inputs.release_branch || github.event.pull_request.merge_commit_sha || github.ref_name }}",
@@ -151,7 +157,7 @@ it("keeps main pushes proposal-only and gates merged-release automation", async 
 
 const finalizedRelease = {
   number: 1399,
-  headRefName: "release-please--branches--main--components--rea-agents",
+  headRefName: "release-please--branches--main--components--ptah",
   headRepository: { nameWithOwner: "fixture/rea" },
 };
 

@@ -419,7 +419,7 @@ describe("buildEnvironment cancellation and input checks", () => {
   it("refuses an unreadable package tarball on a dry run as a build does", async () => {
     if (process.getuid?.() === 0) return;
     const root = await createTestTempDirectory("rea-environment-build-tgz-");
-    const tarball = join(root, "rea-agents.tgz");
+    const tarball = join(root, "ptah.tgz");
     await writeFile(tarball, "packed");
     await chmod(tarball, 0o000);
     try {
@@ -709,7 +709,7 @@ describe("buildEnvironment credential scan coverage", () => {
 describe("buildEnvironment dry-run package tarball", () => {
   it("refuses a tarball whose descriptor stats successfully but fails to read", async () => {
     const root = await createTestTempDirectory("rea-environment-build-read-");
-    const tarball = join(root, "rea-agents.tgz");
+    const tarball = join(root, "ptah.tgz");
     await writeFile(tarball, "packed");
     const input = await buildInput(root, undefined, {
       dryRun: true,
@@ -741,7 +741,7 @@ describe("buildEnvironment dry-run package tarball", () => {
       const root = await createTestTempDirectory(
         "rea-environment-build-close-",
       );
-      const tarball = join(root, "rea-agents.tgz");
+      const tarball = join(root, "ptah.tgz");
       await writeFile(tarball, "packed");
       const input = await buildInput(root, undefined, {
         dryRun: true,
@@ -814,7 +814,7 @@ describe("buildEnvironment dry-run package tarball", () => {
     const root = await createTestTempDirectory(
       "rea-environment-build-tgz-stop-",
     );
-    const tarball = join(root, "rea-agents.tgz");
+    const tarball = join(root, "ptah.tgz");
     await writeFile(tarball, "packed");
     const controller = new AbortController();
     const input = await buildInput(root, undefined, {

@@ -30,7 +30,16 @@ it.each([
       "mcp",
     ],
   },
-  { previousCommand: ["cmd", "/c", "npx", "-y", "rea-agents@5.0.0", "mcp"] },
+  {
+    previousCommand: [
+      "cmd",
+      "/c",
+      "npx",
+      "-y",
+      "@owlvisions/ptah@5.0.0",
+      "mcp",
+    ],
+  },
 ])(
   "migrates Windows npx registration $previousCommand idempotently and uninstalls only REA",
   async ({ previousCommand }) => {
@@ -130,14 +139,23 @@ it("retains rea-named custom shell registrations without writing a backup", asyn
   } as const;
   for (const command of [
     ["cmd.exe", "/d", "/c", "node", "custom.js", "mcp"],
-    ["cmd.exe", "/k", "npx", "-y", "rea-agents@5.0.0", "mcp"],
-    ["cmd.exe", "/c", "npx -y rea-agents@5.0.0 mcp"],
+    ["cmd.exe", "/k", "npx", "-y", "@owlvisions/ptah@5.0.0", "mcp"],
+    ["cmd.exe", "/c", "npx -y @owlvisions/ptah@5.0.0 mcp"],
     ["cmd.exe", "/c", "npx", "-y", "another-package", "mcp"],
-    ["cmd.exe", "/c", "npx", "-y", "rea-agents@5.0.0", "mcp", "&", "other"],
-    ["cmd.exe", "/c", "npx", "-y", "rea-agents@5.0.0 & other", "mcp"],
+    [
+      "cmd.exe",
+      "/c",
+      "npx",
+      "-y",
+      "@owlvisions/ptah@5.0.0",
+      "mcp",
+      "&",
+      "other",
+    ],
+    ["cmd.exe", "/c", "npx", "-y", "@owlvisions/ptah@5.0.0 & other", "mcp"],
     ["cmd.exe", "/c", "bunx", "another-package", "mcp"],
-    ["cmd.exe", "/c", "bunx", "-y", "rea-agents@5.0.0", "mcp"],
-    ["cmd.exe", "/c", "bunx", "rea-agents@5.0.0", "mcp", "&", "other"],
+    ["cmd.exe", "/c", "bunx", "-y", "@owlvisions/ptah@5.0.0", "mcp"],
+    ["cmd.exe", "/c", "bunx", "@owlvisions/ptah@5.0.0", "mcp", "&", "other"],
   ]) {
     const original = JSON.stringify({
       mcpServers: { rea: { command: command[0], args: command.slice(1) } },

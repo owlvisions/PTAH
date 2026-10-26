@@ -2,7 +2,7 @@
 
 PTAH is the emerging product identity for this codebase: a program-understanding and reverse-engineering toolkit with a dependency-free investigation engine, CLI, MCP interface, and early local workbench. This repository is a **migration preview**, not a completed replacement of every REA capability.
 
-> **Status and compatibility:** the codebase still contains the upstream REA runtime and legacy identifiers. The npm package is intentionally still named `rea-agents` until a verified owner-controlled package namespace and coordinated release migration exist. Do not treat this checkout or its PTAH additions as an official upstream release merely because the original implementation is present.
+> **Status and compatibility:** the codebase still contains the upstream REA runtime and its source identifiers. The npm package is `@owlvisions/ptah` (`npx @owlvisions/ptah help`); the `rea` and `rea-agents` executables remain compatibility aliases. This is not an official REA (`morluto/rea`) release; REA itself continues to be published as `rea-agents`. `@owlvisions/ptah` is not yet on npm; until it is, use the source-checkout commands below.
 
 ## Current PTAH-native features
 

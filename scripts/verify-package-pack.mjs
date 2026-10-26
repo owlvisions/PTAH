@@ -35,7 +35,7 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     throw new Error("package retained a lifecycle-dependent PTY installation");
   if (
     packedManifest.bin?.rea !== "scripts/rea.mjs" ||
-    packedManifest.bin?.["rea-agents"] !== "scripts/rea.mjs"
+    packedManifest.bin?.["@owlvisions/ptah"] !== "scripts/rea.mjs"
   )
     throw new Error("package did not expose both rea command entry points");
   if (packedManifest.mcpName !== "io.github.morluto/rea")

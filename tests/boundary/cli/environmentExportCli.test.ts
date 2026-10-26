@@ -300,9 +300,7 @@ cliTest.skipIf(process.platform === "win32")(
     });
     expect(
       Buffer.compare(
-        await readFile(
-          join(physical, "bundle/envs/grafana-example/rea-agents.tgz"),
-        ),
+        await readFile(join(physical, "bundle/envs/grafana-example/ptah.tgz")),
         bytes,
       ),
     ).toBe(0);

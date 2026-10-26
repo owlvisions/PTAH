@@ -67,7 +67,7 @@ it("retains the admitted tarball descriptor and refuses a pathname replacement d
     });
     expect(
       Buffer.compare(
-        await readFile(join(directory, "envs/grafana-example/rea-agents.tgz")),
+        await readFile(join(directory, "envs/grafana-example/ptah.tgz")),
         originalBytes,
       ),
     ).toBe(0);
@@ -96,7 +96,7 @@ it("keeps tarball ownership when the admitted inode grows during output", async 
       ...args: Parameters<SafeOutputTree["write"]>
     ) {
       const [relative] = args;
-      if (!grown && relative === "envs/grafana-example/rea-agents.tgz") {
+      if (!grown && relative === "envs/grafana-example/ptah.tgz") {
         grown = true;
         await appendFile(tarball, Buffer.alloc(1024 * 1024, 0x42));
       }
@@ -116,7 +116,7 @@ it("keeps tarball ownership when the admitted inode grows during output", async 
         _tag: "AnalysisOutputError",
         operation: "environment-export",
         reason:
-          "Extracted content exceeds the inventoried size: envs/grafana-example/rea-agents.tgz",
+          "Extracted content exceeds the inventoried size: envs/grafana-example/ptah.tgz",
       },
     });
     if (result.ok)

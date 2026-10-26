@@ -168,13 +168,15 @@ export const detectNpmInstallation = async (
     // The curl installer uses a Unix prefix that may differ from npm's current default.
     void cause;
   }
-  const nodeModules = dirname(canonicalPackageRoot);
+  // Walk up one segment per package-name segment so scoped names (@scope/name) resolve.
+  const nameSegments = PRODUCT_IDENTITY.packageName.split("/");
+  let nodeModules = canonicalPackageRoot;
+  for (const segment of [...nameSegments].reverse()) {
+    if (basename(nodeModules) !== segment) return undefined;
+    nodeModules = dirname(nodeModules);
+  }
   const library = dirname(nodeModules);
-  if (
-    basename(canonicalPackageRoot) !== PRODUCT_IDENTITY.packageName ||
-    basename(nodeModules) !== "node_modules" ||
-    basename(library) !== "lib"
-  )
+  if (basename(nodeModules) !== "node_modules" || basename(library) !== "lib")
     return undefined;
   return {
     manager: "npm",

@@ -48,7 +48,7 @@ export function selectRecoveryRelease({
     })
     .parse(run);
   z.object({
-    tag_name: z.literal(`rea-agents-${version}`),
+    tag_name: z.literal(`ptah-${version}`),
     draft: z.literal(false),
     published_at: z.string().min(1),
   }).parse(release);
@@ -166,11 +166,11 @@ async function main() {
           ]),
         ),
       );
-    const release = await api(`releases/tags/rea-agents-${version}`);
+    const release = await api(`releases/tags/ptah-${version}`);
     const tagSha = await command("git", [
       "rev-parse",
       "--verify",
-      `refs/tags/rea-agents-${version}^{commit}`,
+      `refs/tags/ptah-${version}^{commit}`,
     ]);
     const selection = selectRecoveryRelease({
       repository,
@@ -207,7 +207,7 @@ async function main() {
       JSON.parse(
         await command("npm", [
           "view",
-          `rea-agents@${version}`,
+          `@owlvisions/ptah@${version}`,
           "dist.integrity",
           "--json",
           "--registry=https://registry.npmjs.org",

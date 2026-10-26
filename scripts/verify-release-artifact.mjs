@@ -43,5 +43,5 @@ try {
   await rm(workspace, { recursive: true, force: true });
 }
 process.stdout.write(
-  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: "rea-agents", version, source, ...result })}\n`,
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: "@owlvisions/ptah", version, source, ...result })}\n`,
 );

@@ -9,7 +9,7 @@
 
 **Нашли интересную функцию? Разберитесь, как она работает, вплоть до двоичного кода.**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
+[![npm version](https://img.shields.io/npm/v/@owlvisions/ptah?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@owlvisions/ptah)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -22,7 +22,7 @@
 
 [Быстрый старт](#быстрый-старт) · [Как работает REA](#как-работает-rea) · [Что можно анализировать](#что-можно-анализировать) · [Примеры](#примеры) · [Создание RL-окружений](#build-rl-environments) · [Частые вопросы](#частые-вопросы) · [Инструменты GNU objdump и Rizin](../reverse-engineering-tools.md) · [Документация](#документация)
 
-<code>npx rea-agents setup</code>
+<code>npx @owlvisions/ptah setup</code>
 
 </div>
 
@@ -73,7 +73,7 @@ REA подключает вашего агента к инструментам �
 Если Node.js и npm установлены, выполните:
 
 ```bash
-npx rea-agents setup
+npx @owlvisions/ptah setup
 ```
 
 Выберите агентов, проверьте предлагаемые изменения и подтвердите их. Настройка добавляет MCP-сервер REA и соответствующие рабочие инструкции, сохраняя резервные копии существующих настроек. После этого перезапустите агента.
@@ -95,7 +95,7 @@ MCP по умолчанию использует компактные входн
 Исследуйте распакованный каталог приложения JavaScript/Electron или файл ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y @owlvisions/ptah@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Результат включает модули, импорты, границы Electron и подтверждающие данные. Замените путь своим, например `"D:/apps/example"` в Windows.
@@ -103,7 +103,7 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 Для регулярного использования установите команду `rea`:
 
 ```bash
-npm install --global rea-agents
+npm install --global @owlvisions/ptah
 rea --help
 ```
 
@@ -128,12 +128,12 @@ rea update
 Если используете `npx`, обновите настройку агента командой:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
-Проверьте изменения настроек и перезапустите агента. Для разовых команд CLI используйте `npx rea-agents@latest`, а затем нужную команду.
+Проверьте изменения настроек и перезапустите агента. Для разовых команд CLI используйте `npx @owlvisions/ptah@latest`, а затем нужную команду.
 
-С Bun используйте `bunx rea-agents@latest` вместо `npx rea-agents@latest`.
+С Bun используйте `bunx @owlvisions/ptah@latest` вместо `npx @owlvisions/ptah@latest`.
 
 ## Как работает REA
 
@@ -294,7 +294,7 @@ REA запускает Hopper, когда он нужен для операци�
 <details>
 <summary><strong>Что даёт установка skill с skills.sh?</strong></summary>
 
-Skill предоставляет агенту инструкции по исследованию. Используйте `npx rea-agents setup`, чтобы зарегистрировать MCP-сервер REA и установить соответствующие инструкции, затем перезапустите агента. См. [установку только skill](../installation.md#skill-only-installation).
+Skill предоставляет агенту инструкции по исследованию. Используйте `npx @owlvisions/ptah setup`, чтобы зарегистрировать MCP-сервер REA и установить соответствующие инструкции, затем перезапустите агента. См. [установку только skill](../installation.md#skill-only-installation).
 
 </details>
 
@@ -326,7 +326,7 @@ rea update
 Для настройки агента через `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx @owlvisions/ptah@latest setup
 ```
 
 Если используете агента, завершите [обновление настройки](#обновите-rea) и перезапустите его. Повторите ту же задачу. Если проблема сохраняется, [откройте issue](https://github.com/morluto/rea/issues), указав версию REA, тип цели, шаги воспроизведения и вывод ошибки.

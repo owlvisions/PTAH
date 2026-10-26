@@ -27,7 +27,13 @@ it.skipIf(process.platform === "win32")(
     const old = join(installs, "old");
     const next = join(installs, "next");
     const scriptWithin = (tag: string) =>
-      join("node_modules", ".mise", `rea-agents@${tag}`, "scripts", "rea.mjs");
+      join(
+        "node_modules",
+        ".mise",
+        `@owlvisions/ptah@${tag}`,
+        "scripts",
+        "rea.mjs",
+      );
     for (const [version, tag] of [
       [old, "old"],
       [next, "next"],

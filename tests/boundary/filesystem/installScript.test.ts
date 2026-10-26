@@ -385,7 +385,7 @@ describe("Linux user-prefix installer", { timeout: 20_000 }, () => {
       "--global",
       "--prefix",
       join(home, ".local"),
-      "rea-agents@0.3.0",
+      "@owlvisions/ptah@0.3.0",
       "",
     ]);
     expect((await readFile(argvLog)).toString()).toBe(printed.stdout);
@@ -400,11 +400,11 @@ describe("native macOS installer", { timeout: 20_000 }, () => {
       FAKE_NPM_PREFIX: join(fixture.home, "npm global prefix"),
     });
     expect(result.stdout).toContain(
-      "  Command: npm install --global rea-agents@0.3.0\n",
+      "  Command: npm install --global @owlvisions/ptah@0.3.0\n",
     );
     expect(result.stdout).toContain("REA 0.3.0 is installed");
     expect(await readFile(fixture.npmLog, "utf8")).toBe(
-      "prefix --global\ninstall --global rea-agents@0.3.0\n",
+      "prefix --global\ninstall --global @owlvisions/ptah@0.3.0\n",
     );
     expect(await readFile(fixture.reaLog, "utf8")).toBe("--version\n");
     expect(await readdir(fixture.temporary)).toEqual([]);
@@ -486,7 +486,7 @@ describe("installer semantic version parsing", { timeout: 20_000 }, () => {
   it("rejects build metadata in the latest release tag before printing a plan", async () => {
     const fixture = await createFixture();
     const failure = await runInstaller(fixture, [], {
-      FAKE_CURL_BODY: '{"tag_name":"rea-agents-1.2.3+build.01"}',
+      FAKE_CURL_BODY: '{"tag_name":"ptah-1.2.3+build.01"}',
     }).then(
       () => undefined,
       (cause: unknown) => cause,
@@ -507,7 +507,7 @@ describe("installer semantic version parsing", { timeout: 20_000 }, () => {
     const fixture = await createFixture();
     await expect(
       runInstaller(fixture, [], {
-        FAKE_CURL_BODY: '{"tag_name":"rea-agents-1.2.3-01"}',
+        FAKE_CURL_BODY: '{"tag_name":"ptah-1.2.3-01"}',
       }),
     ).rejects.toMatchObject({
       stderr:
@@ -585,7 +585,7 @@ chmod +x "$prefix/bin/rea"
       join(bin, "curl"),
       `#!/bin/sh
 [ "\${FAKE_CURL_FAIL:-}" = "1" ] && exit 1
-if [ -n "\${FAKE_CURL_BODY:-}" ]; then printf '%s' "$FAKE_CURL_BODY"; else printf '%s' '{"tag_name":"rea-agents-0.3.0"}'; fi
+if [ -n "\${FAKE_CURL_BODY:-}" ]; then printf '%s' "$FAKE_CURL_BODY"; else printf '%s' '{"tag_name":"ptah-0.3.0"}'; fi
 `,
     ),
     executable(
