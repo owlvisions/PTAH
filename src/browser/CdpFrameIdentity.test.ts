@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { cdpFrameIdentity } from "./CdpCaptureEventHelpers.js";
+import {
+  selectCdpFrameIdentity,
+  cdpFrameEventFacts,
+} from "./CdpFrameIdentity.js";
 
 describe("CDP frame identity ownership", () => {
   it.each([
@@ -8,8 +11,8 @@ describe("CDP frame identity ownership", () => {
     ["non-object", { frame: "frame" }],
   ])("does not infer a root from a %s frame object", (_label, params) => {
     expect(
-      cdpFrameIdentity(
-        { method: "Page.frameNavigated", params },
+      selectCdpFrameIdentity(
+        cdpFrameEventFacts({ method: "Page.frameNavigated", params }),
         "selected-main",
       ),
     ).toMatchObject({
@@ -25,11 +28,11 @@ describe("CDP frame identity ownership", () => {
 
   it("recognizes a valid frame with no parent property as a root", () => {
     expect(
-      cdpFrameIdentity(
-        {
+      selectCdpFrameIdentity(
+        cdpFrameEventFacts({
           method: "Page.frameNavigated",
           params: { frame: { id: "replacement-main" } },
-        },
+        }),
         "selected-main",
       ),
     ).toMatchObject({
@@ -45,11 +48,11 @@ describe("CDP frame identity ownership", () => {
 
   it("does not interpret a malformed parent value as root evidence", () => {
     expect(
-      cdpFrameIdentity(
-        {
+      selectCdpFrameIdentity(
+        cdpFrameEventFacts({
           method: "Page.frameNavigated",
           params: { frame: { id: "replacement-main", parentId: "" } },
-        },
+        }),
         "selected-main",
       ),
     ).toMatchObject({
@@ -64,13 +67,13 @@ describe("CDP frame identity ownership", () => {
 
   it("preserves a self-parented frame ID but leaves its parent relation unknown", () => {
     expect(
-      cdpFrameIdentity(
-        {
+      selectCdpFrameIdentity(
+        cdpFrameEventFacts({
           method: "Page.frameNavigated",
           params: {
             frame: { id: "candidate-root", parentId: "candidate-root" },
           },
-        },
+        }),
         "selected-main",
       ),
     ).toMatchObject({
@@ -86,11 +89,11 @@ describe("CDP frame identity ownership", () => {
 
   it("retains the selected-main parent issue for a self-parented selected frame", () => {
     expect(
-      cdpFrameIdentity(
-        {
+      selectCdpFrameIdentity(
+        cdpFrameEventFacts({
           method: "Page.frameNavigated",
           params: { frame: { id: "selected-main", parentId: "selected-main" } },
-        },
+        }),
         "selected-main",
       ),
     ).toMatchObject({

@@ -1,3 +1,4 @@
+import type { NodeSeaAdmission } from "../nodeSea/NodeSeaAdmission.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { locateGodotPck } from "../GodotPckLocation.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
@@ -43,6 +44,10 @@ interface RootClassification {
 
 type RootInventoryClassification = RootClassification & {
   readonly rootSource: RootInventorySource | undefined;
+  readonly readerAdmission:
+    | StableRegularFileDescriptor
+    | NodeSeaAdmission
+    | undefined;
 };
 
 /** The admitted descriptor and the single owner that can confirm its close. */
@@ -50,7 +55,7 @@ export interface RootInventorySource extends StableRegularFileDescriptor {
   readonly owner: OwnedFileHandle;
 }
 
-/** Classify a root and retain its admitted ZIP descriptor for child inventory. */
+/** Classify a root and retain its admitted source and format facts for child inventory. */
 export const classifyAndHashRootForInventory = async (
   path: string,
   directory: boolean,
@@ -61,7 +66,12 @@ export const classifyAndHashRootForInventory = async (
   >,
 ): Promise<RootInventoryClassification> => {
   if (directory)
-    return { format: "directory", digest: null, rootSource: undefined };
+    return {
+      format: "directory",
+      digest: null,
+      rootSource: undefined,
+      readerAdmission: undefined,
+    };
   const source = await openRootArtifact(
     path,
     options.resourceScope,
@@ -85,12 +95,14 @@ export const classifyAndHashRootForInventory = async (
         "integrity",
         `Root artifact changed before inventory: ${path}`,
       );
-    const format = await classifyRootFormat(
+    const classified = await classifyRootFormat(
       path,
-      handle,
+      source,
       options.signal,
       options.asarHeaderAdmission,
     );
+    const format =
+      typeof classified === "string" ? classified : classified.kind;
     const digest = await hashStableRootArtifactHandle(
       path,
       handle,
@@ -109,6 +121,12 @@ export const classifyAndHashRootForInventory = async (
         format,
         digest,
         rootSource: retainSource ? source : undefined,
+        readerAdmission:
+          typeof classified !== "string"
+            ? classified
+            : retainSource
+              ? source
+              : undefined,
       },
     };
   } catch (cause: unknown) {
@@ -125,10 +143,11 @@ export const classifyAndHashRootForInventory = async (
 
 const classifyRootFormat = async (
   path: string,
-  handle: FileHandle,
+  source: RootInventorySource,
   signal?: AbortSignal,
   asarHeaderAdmission?: AsarHeaderAdmission,
-): Promise<ArtifactOccurrence["artifact_format"]> => {
+): Promise<ArtifactOccurrence["artifact_format"] | NodeSeaAdmission> => {
+  const { handle } = source;
   const probe = createArtifactClassificationProbe(asarHeaderAdmission);
   const chunk = Buffer.alloc(64 * 1024);
   while (probe.length < probe.limit) {
@@ -206,11 +225,11 @@ const classifyRootFormat = async (
     const sea = await locateNodeSea(handle, archiveBytes, signal);
     abortIfNeeded(signal);
     if (sea !== undefined) {
-      await decodeNodeSeaBlob(
+      const decoded = await decodeNodeSeaBlob(
         await readNodeSeaBlob(handle, sea, archiveBytes, signal),
         signal,
       );
-      return "node-sea";
+      return { kind: "node-sea", source, location: sea, decoded };
     }
     const packaged = await containsPyInstallerArchive(
       handle,

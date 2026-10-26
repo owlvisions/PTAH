@@ -1,3 +1,4 @@
+import type { NodeSeaAdmission } from "../nodeSea/NodeSeaAdmission.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type {
@@ -25,9 +26,13 @@ export const createReader = (
   path: string,
   format: ArtifactOccurrence["artifact_format"],
   environment: Readonly<NodeJS.ProcessEnv>,
-  rootSource?: StableRegularFileDescriptor,
+  readerAdmission?: StableRegularFileDescriptor | NodeSeaAdmission,
   asarHeaderAdmission?: AsarHeaderAdmission,
 ): ArtifactReader | undefined => {
+  const rootSource =
+    readerAdmission !== undefined && "kind" in readerAdmission
+      ? readerAdmission.source
+      : readerAdmission;
   if (isZipPackageFormat(format))
     return new ZipArtifactReader(path, format, undefined, rootSource);
   switch (format) {
@@ -43,7 +48,7 @@ export const createReader = (
     case "pyinstaller":
       return new PyInstallerArtifactReader(path, rootSource);
     case "node-sea":
-      return new NodeSeaArtifactReader(path, rootSource);
+      return new NodeSeaArtifactReader(path, readerAdmission);
     case "godot-pck":
       return new GodotPckArtifactReader(path, rootSource);
     case "mach-o-universal":

@@ -96,13 +96,17 @@ const fixture = async (
   // Exercise the real projection and owned-process boundary on every host.
   // The child authors debugger output; this does not establish GDB/pwndbg support.
   const project = async (signal: AbortSignal) =>
-    provider.profile.project({
+    provider.profile.enrich!({
       input: { path, include_debugger_context: true },
-      payload,
+      report: provider.profile.project({
+        input: { path, include_debugger_context: true },
+        payload,
+        snapshot: { bytes, sha256 },
+        diagnostics: value.decoder_diagnostics,
+      }),
       snapshot: { bytes, sha256 },
       rootPath: workspace.root,
       resources,
-      diagnostics: value.decoder_diagnostics,
       options: { signal },
       timeoutMs: 10_000,
       runCommand: async (spawn) => {

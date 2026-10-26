@@ -64,7 +64,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { RustBinaryProvider } from "../../src/rust/RustBinaryProvider.js";
 import { RustBinaryService } from "../../src/application/rust/RustBinaryService.js";
-import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  resolvedAnalysisError,
+} from "../../src/domain/analysisErrorBase.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
@@ -213,16 +216,40 @@ it.each(
       if (result.ok)
         throw new Error("Expected descriptor finalization failure");
       expect(result.error.cleanupIncomplete).toBe(true);
+      const snapshot = {
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      };
       expect(result.error.partialObservation).toEqual(
-        outcome === "physical failure"
-          ? undefined
-          : {
-              kind: "file-snapshot-hash",
-              path,
-              sha256: createHash("sha256").update(bytes).digest("hex"),
-              bytes: bytes.length,
-            },
+        consumer === "source map"
+          ? {
+              kind: "web-artifact-acquisition",
+              analysis: "not-performed",
+              files: [
+                {
+                  role: "manifest",
+                  file: script.manifestFile,
+                  admission: "manifest-validated",
+                },
+                {
+                  role: "source",
+                  file: script.sourceFile,
+                  admission: "source-verified",
+                },
+                ...(outcome === "physical failure"
+                  ? []
+                  : [
+                      { role: "source-map", file: snapshot, admission: "read" },
+                    ]),
+              ],
+            }
+          : outcome === "physical failure"
+            ? undefined
+            : { kind: "file-snapshot-hash", ...snapshot },
       );
+      const beforeCleanup = projectAnalysisError(result.error).details
+        ?.partial_observation;
       if (outcome === "physical failure")
         expect(result.error.cleanupPrimary?.cause).toBe(physical);
       if (outcome === "close cancellation")
@@ -232,6 +259,11 @@ it.each(
       fault.blocked.clear();
       await close();
       expect(result.error.cleanupIncomplete).toBe(false);
+      if (consumer === "source map")
+        expect(
+          projectAnalysisError(resolvedAnalysisError(result.error)).details
+            ?.partial_observation,
+        ).toEqual(beforeCleanup);
       expect(fault.handles).toHaveLength(1);
       expect(fault.handles[0]?.fd).toBe(-1);
     } finally {

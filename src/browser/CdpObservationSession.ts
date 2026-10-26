@@ -30,7 +30,11 @@ import {
   observeMainFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
-import { cdpFrameIdentity } from "./CdpCaptureEventHelpers.js";
+import {
+  selectCdpFrameIdentity,
+  cdpFrameRecordFacts,
+  cdpFrameEventFacts,
+} from "./CdpFrameIdentity.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
 interface ObservationContext {
@@ -385,7 +389,10 @@ class TimelineCapture {
     params: UnknownRecord,
     contextOnly: boolean,
   ): void {
-    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(
+      cdpFrameEventFacts(event),
+      this.mainFrameId,
+    );
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main") return;
@@ -411,7 +418,10 @@ class TimelineCapture {
     contextOnly: boolean,
   ): void {
     const frame = recordValue(params.frame);
-    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(
+      cdpFrameEventFacts(event),
+      this.mainFrameId,
+    );
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main" && !identity.isRootReplacement) return;
@@ -454,7 +464,10 @@ class TimelineCapture {
     params: UnknownRecord,
     contextOnly: boolean,
   ): void {
-    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(
+      cdpFrameEventFacts(event),
+      this.mainFrameId,
+    );
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main") return;
@@ -770,9 +783,9 @@ const captureFinalUrl = async (
 };
 
 const frameId = (result: unknown): string | undefined =>
-  cdpStringValue(
-    recordValue(recordValue(recordValue(result)?.frameTree)?.frame)?.id,
-  );
+  cdpFrameRecordFacts(
+    recordValue(recordValue(recordValue(result)?.frameTree)?.frame),
+  ).frameId ?? undefined;
 
 const hasNoComparableProducerTimestamp = (method: string): boolean =>
   method === "Page.frameRequestedNavigation" ||
