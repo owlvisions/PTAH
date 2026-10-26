@@ -6,10 +6,10 @@ PTAH is the emerging product identity for this codebase: a program-understanding
 
 ## Current PTAH-native features
 
-- **Investigation engine:** target SHA-256 fingerprinting, file-signature hints, schema/provenance validation, evidence reports (JSON and Markdown) and graphs, deterministic investigation diff, deterministic bounded planning, target-drift verification, and corruption-checked portable case bundles.
-- **CLI:** `ptah` commands for `info`, `self-check`, `providers`, `fingerprint`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `verify`, `export-case`, `verify-case`, `import-case`, `report [--format json|markdown]`, `diff`, `graph`, `plan`, and bounded `analyze` operations.
-- **MCP:** `ptah-mcp` exposes PTAH investigation, report, diff, and portable case operations over stdio using JSON-RPC/MCP.
-- **Local workbench:** `ptah ui` launches an early loopback-only interface for investigations, evidence, reports (including Markdown download), graphs, planning, case export, and verified case import.
+- **Investigation engine:** target SHA-256 fingerprinting with 25+ signatures, ELF/PE/Mach-O header details and entropy, bounded string extraction, schema/provenance validation with a published JSON Schema, hash-chained history, evidence artifact digests, reports (JSON and Markdown), graphs (JSON, DOT, Mermaid), deterministic diff/lint/stats, single- and multi-step bounded planning, target-drift verification, and corruption-checked portable case bundles.
+- **CLI:** `ptah` commands for `info`, `self-check`, `providers`, `fingerprint [--inspect]`, `strings`, `init`, `add-evidence [--artifact]`, `add-claim`, `add-question`, `add-action`, `set-claim-status`, `resolve-question`, `verify`, `lint`, `stats`, `history`, `schema`, `export-case`, `verify-case`, `import-case`, `report [--format json|markdown]`, `diff`, `graph [--format json|dot|mermaid]`, `plan [--steps N]`, and bounded `analyze` operations.
+- **MCP:** `ptah-mcp` exposes inspection, strings, investigation, report, diff, lint, stats, schema, planning, and portable case operations over stdio using JSON-RPC/MCP.
+- **Local workbench:** `ptah ui` launches an early loopback-only interface for investigations, evidence, reports (including Markdown download), graphs, planning, lint, metrics, format/entropy inspection, strings, case export, and verified case import; every change is recorded in the hash-chained history.
 - **Compatibility:** `rea` and `rea-agents` remain as legacy entry points while feature parity is evaluated.
 
 These features are deliberately scoped. Static adapters for `objdump`, `llvm-objdump`, and `wasm-tools` provide bounded metadata/validation operations; they are not a universal decompiler. External tools are not OS-sandboxed by this migration slice, and the workbench is a local single-user utility rather than a production multi-user application.

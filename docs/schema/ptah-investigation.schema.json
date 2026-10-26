@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/owlvisions/PTAH/docs/schema/ptah-investigation.schema.json",
+  "title": "PTAH investigation",
+  "type": "object",
+  "required": ["schemaVersion", "target"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "target": {
+      "type": "object",
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "summary",
+          "source",
+          "confidence",
+          "targetSha256"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "static-analysis",
+              "runtime-observation",
+              "decompilation",
+              "symbol",
+              "network-observation",
+              "filesystem-observation",
+              "documentation",
+              "test-result",
+              "other"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["observed", "derived", "inferred"]
+          },
+          "targetSha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          },
+          "artifact": {
+            "type": "object",
+            "required": ["sha256", "sizeBytes"],
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-fA-F0-9]{64}$"
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "evidenceIds"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["hypothesis", "supported", "verified", "rejected"]
+          }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priority": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "requiredEvidenceKinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "static-analysis",
+                "runtime-observation",
+                "decompilation",
+                "symbol",
+                "network-observation",
+                "filesystem-observation",
+                "documentation",
+                "test-result",
+                "other"
+              ]
+            }
+          },
+          "resolved": {
+            "type": "boolean"
+          },
+          "resolution": {
+            "type": "object",
+            "required": ["reason"],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidenceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "produces": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "static-analysis",
+                "runtime-observation",
+                "decompilation",
+                "symbol",
+                "network-observation",
+                "filesystem-observation",
+                "documentation",
+                "test-result",
+                "other"
+              ]
+            }
+          },
+          "cost": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "description": "Append-only hash chain; each entrySha256 covers the entry and previousEntrySha256.",
+      "items": {
+        "type": "object",
+        "required": [
+          "seq",
+          "action",
+          "at",
+          "previousEntrySha256",
+          "entrySha256"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "previousEntrySha256": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-fA-F0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entrySha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

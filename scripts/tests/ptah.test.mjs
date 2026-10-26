@@ -43,11 +43,193 @@ void test("PTAH info reports compatibility honestly as a migration preview", () 
   assert.equal(info.compatibilityEngine, "rea-agents");
   assert.equal(info.packageManagerNameUnchanged, true);
   assert.ok(
-    info.nativeCapabilities.includes("deterministic investigation diff"),
+    info.nativeCapabilities.some((item) =>
+      item.includes("deterministic investigation diff"),
+    ),
   );
   assert.match(info.inheritedCapabilities, /REA analyzers run beneath PTAH/);
   const text = run(["info"]);
   assert.match(text.stdout, /^PTAH \(بتاح\)/);
+});
+
+void test("history, lint, stats, claim status, question resolution, schema, strings, and inspect work from the CLI", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-cli-workflow-"));
+  try {
+    const target = join(dir, "target.bin");
+    const file = join(dir, "investigation.json");
+    const artifact = join(dir, "objdump.txt");
+    await writeFile(
+      target,
+      Buffer.concat([
+        Buffer.from([0x1f, 0x8b, 8, 0]),
+        Buffer.from("payload-string-here"),
+      ]),
+    );
+    await writeFile(artifact, "section .text 0x1000");
+    const ok = (result) => assert.equal(result.status, 0, result.stderr);
+    ok(run(["init", "--target", target, "--output", file]));
+    ok(
+      run([
+        "add-evidence",
+        "--input",
+        file,
+        "--output",
+        file,
+        "--id",
+        "ev-1",
+        "--kind",
+        "static-analysis",
+        "--summary",
+        "Sections listed",
+        "--source",
+        "objdump -h",
+        "--artifact",
+        artifact,
+      ]),
+    );
+    ok(
+      run([
+        "add-claim",
+        "--input",
+        file,
+        "--output",
+        file,
+        "--id",
+        "c-1",
+        "--text",
+        "Has .text",
+        "--evidence-ids",
+        "ev-1",
+      ]),
+    );
+    ok(
+      run([
+        "add-question",
+        "--input",
+        file,
+        "--output",
+        file,
+        "--id",
+        "q-1",
+        "--text",
+        "Runs?",
+        "--required-evidence-kinds",
+        "runtime-observation",
+      ]),
+    );
+    const saved = JSON.parse(await readFile(file, "utf8"));
+    assert.equal(saved.evidence[0].artifact.sizeBytes, 20);
+    assert.match(saved.evidence[0].artifact.sha256, /^[a-f0-9]{64}$/);
+    assert.deepEqual(
+      saved.history.map((h) => h.action),
+      ["init", "evidence-added", "claims-added", "questions-added"],
+    );
+
+    const status = run([
+      "set-claim-status",
+      "--input",
+      file,
+      "--output",
+      file,
+      "--id",
+      "c-1",
+      "--status",
+      "verified",
+      "--reason",
+      "header seen",
+    ]);
+    ok(status);
+    assert.equal(JSON.parse(status.stdout).claimStatus, "verified");
+    const resolved = run([
+      "resolve-question",
+      "--input",
+      file,
+      "--output",
+      file,
+      "--id",
+      "q-1",
+      "--reason",
+      "not needed",
+      "--evidence-ids",
+      "ev-1",
+    ]);
+    ok(resolved);
+    const history = run(["history", "--input", file]);
+    ok(history);
+    const chain = JSON.parse(history.stdout);
+    assert.equal(chain.entries, 6);
+    assert.equal(chain.chainValid, true);
+    assert.equal(chain.history.at(-1).action, "question-resolved");
+
+    const lint = run(["lint", "--input", file]);
+    ok(lint);
+    assert.equal(JSON.parse(lint.stdout).ok, true);
+    const stats = run(["stats", "--input", file]);
+    ok(stats);
+    const metrics = JSON.parse(stats.stdout);
+    assert.equal(metrics.claims.bySupportLabel.verified, 1);
+    assert.equal(metrics.evidence.artifactRatio, 1);
+    assert.equal(metrics.historyEntries, 6);
+
+    const tampered = JSON.parse(await readFile(file, "utf8"));
+    tampered.history[1].action = "forged";
+    const tamperedPath = join(dir, "tampered.json");
+    await writeFile(tamperedPath, JSON.stringify(tampered));
+    const refused = run(["history", "--input", tamperedPath]);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /entrySha256 does not match/);
+
+    const inferredOnly = JSON.parse(await readFile(file, "utf8"));
+    inferredOnly.evidence[0].confidence = "inferred";
+    inferredOnly.claims[0].status = "supported";
+    delete inferredOnly.history;
+    const badPath = join(dir, "bad.json");
+    await writeFile(badPath, JSON.stringify(inferredOnly));
+    const badLint = run(["lint", "--input", badPath]);
+    assert.equal(badLint.status, 2);
+    assert.ok(
+      JSON.parse(badLint.stdout).findings.some(
+        (f) => f.code === "status-exceeds-evidence",
+      ),
+    );
+    const cannotVerify = run([
+      "set-claim-status",
+      "--input",
+      badPath,
+      "--output",
+      badPath,
+      "--id",
+      "c-1",
+      "--status",
+      "verified",
+    ]);
+    assert.equal(cannotVerify.status, 1);
+    assert.match(cannotVerify.stderr, /no cited evidence is observed/);
+
+    const schema = run(["schema"]);
+    ok(schema);
+    assert.equal(JSON.parse(schema.stdout).title, "PTAH investigation");
+    const strings = run(["strings", "--target", target, "--min-length", "5"]);
+    ok(strings);
+    assert.ok(
+      JSON.parse(strings.stdout).strings.some(
+        (s) => s.text === "payload-string-here",
+      ),
+    );
+    const inspect = run(["fingerprint", "--target", target, "--inspect"]);
+    ok(inspect);
+    const inspected = JSON.parse(inspect.stdout);
+    assert.equal(inspected.detectedFormat, "gzip archive");
+    assert.equal(typeof inspected.entropy.bitsPerByte, "number");
+    const dot = run(["graph", "--input", file, "--format", "dot"]);
+    ok(dot);
+    assert.match(dot.stdout, /^digraph ptah/);
+    const steps = run(["plan", "--input", file, "--steps", "2"]);
+    ok(steps);
+    assert.equal(JSON.parse(steps.stdout).status, "no-action-needed");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 void test("report --format markdown and diff work end to end from the CLI", async () => {

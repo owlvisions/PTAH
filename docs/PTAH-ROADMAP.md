@@ -140,6 +140,10 @@ Added `ptah ui` / `ptah-ui`, a dependency-free loopback-only browser workbench a
 
 The root README and package description/keywords now identify PTAH while explicitly labeling the codebase a migration preview. The previous README snapshot is retained at `docs/legacy/REA-README-upstream-snapshot.md`, and `docs/PTAH-BRAND-AUDIT.md` records what changed, what remains upstream-bound, and the release gates. The npm package name, `mcpName`, repository URLs, legacy executable names, translated docs, and upstream license references have deliberately not been renamed without an owner-controlled namespace and a coordinated compatibility plan. This is an intentional safety boundary, not a claim that all visible REA references have been migrated.
 
+## Delivery status update — PTAH-first increment (2026-10-26)
+
+Shipped and covered by `npm run test:ptah` (50 dependency-free tests): PTAH-first README/help/info; Markdown reports; deterministic diff; hash-chained history on every CLI and workbench mutation; guarded `set-claim-status` and `resolve-question`; `lint` and `stats`; evidence artifact digests; ELF/PE/Mach-O header decoding and entropy (`fingerprint --inspect`); bounded `strings`; 12 additional magic signatures incl. tar; DOT/Mermaid graph export; multi-step planning; published JSON Schema with drift test; matching MCP tools; workbench lint/metrics/inspect/strings panels. Still open from the backlog in `docs/PTAH-DEVELOPMENT-PROMPT.md`: evaluation harness with pinned fixtures, provider conformance suite, OS-level analyzer isolation, workbench job state and graph visualization, bundle signatures, and native analyzers replacing REA adapters only where parity is proven.
+
 ## Upstream freshness and integration
 
 - [x] Add an opt-in scheduled upstream sync workflow that proposes review PRs every 15 minutes.

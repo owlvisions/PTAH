@@ -18,7 +18,14 @@ import {
   saveInvestigation,
   renderEvidenceReportMarkdown,
   diffInvestigations,
+  inspectTarget,
+  lintInvestigation,
+  investigationStats,
+  planSteps,
+  renderEvidenceGraph,
+  investigationJsonSchema,
 } from "./ptah-engine.mjs";
+import { extractStrings } from "./ptah-analysis.mjs";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const tools = [
@@ -111,6 +118,70 @@ const tools = [
     },
   },
   {
+    name: "ptah_inspect",
+    description:
+      "Fingerprint a file and add executable-format details (ELF/PE/Mach-O class, machine, type) and entropy without executing it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Path to a regular file" },
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_strings",
+    description:
+      "Extract printable ASCII and UTF-16LE strings with byte offsets under bounded length, result, and byte limits. Never executes the target.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Path to a regular file" },
+        minLength: { type: "integer", minimum: 2 },
+        maxResults: { type: "integer", minimum: 1 },
+        maxBytes: { type: "integer", minimum: 1 },
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_lint",
+    description:
+      "Advisory, deterministic quality findings for an investigation: orphan evidence, status exceeding evidence, unreachable questions, duplicates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Investigation JSON file path" },
+      },
+      required: ["input"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_stats",
+    description:
+      "Deterministic evidence/claim/question metrics, including evidence-backed and inference-only claim ratios.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Investigation JSON file path" },
+      },
+      required: ["input"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_schema",
+    description: "Return the JSON Schema for PTAH investigation documents.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
     name: "ptah_report",
     description:
       "Create a provenance-aware report from a validated PTAH investigation as JSON or Markdown.",
@@ -154,7 +225,7 @@ const tools = [
   {
     name: "ptah_graph",
     description:
-      "Build the directed evidence graph for a validated PTAH investigation.",
+      "Build the directed evidence graph for a validated PTAH investigation as JSON, Graphviz DOT, or Mermaid.",
     inputSchema: {
       type: "object",
       properties: {
@@ -162,6 +233,7 @@ const tools = [
           type: "string",
           description: "Path to a PTAH investigation JSON file",
         },
+        format: { type: "string", enum: ["json", "dot", "mermaid"] },
       },
       required: ["input"],
       additionalProperties: false,
@@ -180,6 +252,11 @@ const tools = [
         },
         maxCalls: { type: "integer", minimum: 0 },
         maxCost: { type: "number", exclusiveMinimum: 0 },
+        steps: {
+          type: "integer",
+          minimum: 1,
+          description: "Plan this many greedy steps instead of one",
+        },
       },
       required: ["input"],
       additionalProperties: false,
@@ -273,6 +350,24 @@ async function callTool(name, args) {
         claimCount: investigation.claims.length,
       };
     }
+    case "ptah_inspect":
+      if (typeof args.target !== "string" || !args.target.trim())
+        throw new TypeError("target must be a non-empty file path");
+      return await inspectTarget(args.target);
+    case "ptah_strings":
+      if (typeof args.target !== "string" || !args.target.trim())
+        throw new TypeError("target must be a non-empty file path");
+      return await extractStrings(args.target, {
+        minLength: args.minLength,
+        maxResults: args.maxResults,
+        maxBytes: args.maxBytes,
+      });
+    case "ptah_lint":
+      return lintInvestigation(await loadInvestigation(args.input));
+    case "ptah_stats":
+      return investigationStats(await loadInvestigation(args.input));
+    case "ptah_schema":
+      return investigationJsonSchema();
     case "ptah_report":
       if (args.format === "markdown")
         return renderEvidenceReportMarkdown(
@@ -287,8 +382,18 @@ async function callTool(name, args) {
         await loadInvestigation(args.head),
       );
     case "ptah_graph":
+      if (args.format !== undefined && args.format !== "json")
+        return renderEvidenceGraph(
+          await loadInvestigation(args.input),
+          args.format,
+        );
       return buildEvidenceGraph(await loadInvestigation(args.input));
     case "ptah_plan":
+      if (args.steps !== undefined)
+        return planSteps(await loadInvestigation(args.input), {
+          steps: args.steps,
+          maxCost: args.maxCost ?? Number.POSITIVE_INFINITY,
+        });
       return planNextAction(await loadInvestigation(args.input), {
         maxCalls: args.maxCalls ?? 1,
         maxCost: args.maxCost ?? Number.POSITIVE_INFINITY,

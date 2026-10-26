@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, symlink, chmod } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -21,7 +22,21 @@ import {
   saveInvestigationCase,
   renderEvidenceReportMarkdown,
   diffInvestigations,
+  inspectTarget,
+  recordHistory,
+  setClaimStatus,
+  resolveQuestion,
+  lintInvestigation,
+  investigationStats,
+  planSteps,
+  renderEvidenceGraph,
+  investigationJsonSchema,
 } from "../ptah-engine.mjs";
+import {
+  describeFormat,
+  extractStrings,
+  shannonEntropy,
+} from "../ptah-analysis.mjs";
 
 const targetDigest = "a".repeat(64);
 function fixture(overrides = {}) {
@@ -341,6 +356,480 @@ void test("investigation diff is deterministic and reports target drift, changes
   const tampered = structuredClone(bundle);
   tampered.investigation.claims[0].text = "edited";
   assert.throws(() => diffInvestigations(base, tampered), /checksum mismatch/);
+});
+
+void test("format inspection decodes ELF, PE, and Mach-O headers and reports entropy without executing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-inspect-"));
+  try {
+    const elf = Buffer.alloc(64);
+    elf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0], 0);
+    elf.writeUInt16LE(3, 16);
+    elf.writeUInt16LE(0xb7, 18);
+    const elfPath = join(dir, "lib.so");
+    await writeFile(elfPath, elf);
+    assert.deepEqual(await describeFormat(elfPath), {
+      format: "ELF",
+      class: "ELF64",
+      endianness: "little",
+      osAbi: 0,
+      type: "shared-object",
+      machine: "AArch64",
+    });
+
+    const pe = Buffer.alloc(0x100);
+    pe.write("MZ", 0, "ascii");
+    pe.writeUInt32LE(0x80, 0x3c);
+    pe.write("PE\0\0", 0x80, "ascii");
+    pe.writeUInt16LE(0x8664, 0x84);
+    pe.writeUInt16LE(5, 0x86);
+    pe.writeUInt16LE(0x2002, 0x80 + 22);
+    pe.writeUInt16LE(0x20b, 0x80 + 24);
+    const pePath = join(dir, "app.exe");
+    await writeFile(pePath, pe);
+    const peDetails = await describeFormat(pePath);
+    assert.equal(peDetails.format, "PE");
+    assert.equal(peDetails.machine, "x86-64");
+    assert.equal(peDetails.sectionCount, 5);
+    assert.equal(peDetails.isDll, true);
+    assert.equal(peDetails.optionalHeader, "PE32+");
+    const inspected = await inspectTarget(pePath);
+    assert.equal(
+      inspected.detectedFormat,
+      "DOS MZ header (PE format not confirmed)",
+    );
+    assert.equal(inspected.formatDetails.format, "PE");
+    assert.equal(inspected.executed, false);
+    assert.ok(
+      inspected.entropy.bitsPerByte < 1,
+      "mostly-zero file has low entropy",
+    );
+
+    const mzOnly = Buffer.from(
+      "MZ not a real PE file at all, just text that mentions MZ",
+    );
+    const mzPath = join(dir, "fake.exe");
+    await writeFile(mzPath, mzOnly);
+    assert.equal(
+      (await describeFormat(mzPath)).format,
+      "DOS MZ header (PE format not confirmed)",
+    );
+
+    const macho = Buffer.alloc(32);
+    macho.writeUInt32BE(0xcffaedfe, 0);
+    macho.writeUInt32LE(0x0100000c, 4);
+    const machoPath = join(dir, "bin");
+    await writeFile(machoPath, macho);
+    assert.deepEqual(await describeFormat(machoPath), {
+      format: "Mach-O 64-bit",
+      endianness: "little",
+      cpu: "ARM64",
+    });
+
+    const textPath = join(dir, "notes.txt");
+    await writeFile(textPath, "plain text");
+    assert.equal((await inspectTarget(textPath)).formatDetails, null);
+    assert.equal(shannonEntropy(Buffer.alloc(0)), 0);
+    assert.equal(shannonEntropy(Buffer.from([0, 0, 0, 0])), 0);
+    assert.equal(shannonEntropy(Buffer.from([0, 1, 2, 3])), 2);
+
+    const { fingerprintTarget } = await import("../ptah-engine.mjs");
+    const gz = join(dir, "a.gz");
+    await writeFile(gz, Buffer.from([0x1f, 0x8b, 0x08, 0x00]));
+    assert.equal((await fingerprintTarget(gz)).detectedFormat, "gzip archive");
+    const tar = Buffer.alloc(512);
+    tar.write("ustar", 257, "ascii");
+    const tarPath = join(dir, "a.tar");
+    await writeFile(tarPath, tar);
+    assert.equal(
+      (await fingerprintTarget(tarPath)).detectedFormat,
+      "tar archive (ustar)",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+void test("string extraction is bounded, offset-accurate, and handles UTF-16LE", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-strings-"));
+  try {
+    const path = join(dir, "blob.bin");
+    const wide = Buffer.from("WideString!", "utf16le");
+    const data = Buffer.concat([
+      Buffer.from([0, 1, 2]),
+      Buffer.from("hello world"),
+      Buffer.from([0xff, 0xfe]),
+      wide,
+      Buffer.from([0, 0]),
+      Buffer.from("short"),
+      Buffer.from([0]),
+      Buffer.from("x".repeat(40)),
+    ]);
+    await writeFile(path, data);
+    const result = await extractStrings(path, { minLength: 6 });
+    assert.equal(result.executed, false);
+    assert.equal(result.truncated, false);
+    const ascii = result.strings.find((s) => s.text === "hello world");
+    assert.deepEqual(ascii, {
+      offset: 3,
+      encoding: "ascii",
+      length: 11,
+      text: "hello world",
+    });
+    const utf16 = result.strings.find((s) => s.encoding === "utf-16le");
+    assert.equal(utf16.text, "WideString!");
+    assert.equal(utf16.offset, 16);
+    assert.ok(!result.strings.some((s) => s.text === "short"));
+
+    const limited = await extractStrings(path, { minLength: 6, maxResults: 1 });
+    assert.equal(limited.count, 1);
+    assert.equal(limited.truncated, true);
+    const partial = await extractStrings(path, { minLength: 6, maxBytes: 10 });
+    assert.equal(partial.truncated, true);
+    assert.equal(partial.scannedBytes, 10);
+    await assert.rejects(
+      () => extractStrings(path, { minLength: 1 }),
+      /minLength/,
+    );
+    await assert.rejects(() => extractStrings(dir), /regular file/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+void test("history is an append-only hash chain and tampering is rejected", () => {
+  const first = recordHistory(
+    fixture(),
+    "init",
+    { targetId: "sample-app" },
+    "2026-01-01T00:00:00.000Z",
+  );
+  const second = recordHistory(
+    first,
+    "evidence-added",
+    { evidenceId: "ev-static" },
+    "2026-01-01T00:01:00.000Z",
+  );
+  assert.equal(second.history.length, 2);
+  assert.equal(second.history[0].previousEntrySha256, null);
+  assert.equal(
+    second.history[1].previousEntrySha256,
+    second.history[0].entrySha256,
+  );
+  assert.match(second.history[1].entrySha256, /^[a-f0-9]{64}$/);
+  assert.equal(validateInvestigation(second).history.length, 2);
+  assert.deepEqual(
+    recordHistory(
+      fixture(),
+      "init",
+      { targetId: "sample-app" },
+      "2026-01-01T00:00:00.000Z",
+    ),
+    first,
+    "same input and timestamp produce the same chain",
+  );
+
+  const edited = structuredClone(second);
+  edited.history[0].action = "forged";
+  assert.throws(
+    () => validateInvestigation(edited),
+    /entrySha256 does not match/,
+  );
+  const reordered = structuredClone(second);
+  reordered.history.reverse();
+  assert.throws(() => validateInvestigation(reordered), /seq must be/);
+  const dropped = structuredClone(second);
+  dropped.history.splice(0, 1);
+  assert.throws(() => validateInvestigation(dropped), /seq must be 1/);
+  assert.throws(
+    () => recordHistory(fixture(), "x", {}, "not a date"),
+    /ISO timestamp/,
+  );
+});
+
+void test("claim status and question resolution are guarded and recorded in history", () => {
+  const base = fixture({
+    evidence: [
+      ...fixture().evidence,
+      {
+        id: "ev-guess",
+        kind: "other",
+        summary: "Looks like it",
+        source: "note",
+        confidence: "inferred",
+        targetSha256: targetDigest,
+      },
+    ],
+    claims: [
+      ...fixture().claims,
+      { id: "claim-guess", text: "Guess", evidenceIds: ["ev-guess"] },
+    ],
+  });
+  const verified = setClaimStatus(base, "claim-1", "verified", {
+    reason: "trace matched",
+    at: "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(verified.claims[0].status, "verified");
+  assert.deepEqual(
+    (({ seq, action, claimId, from, to, reason }) => ({
+      seq,
+      action,
+      claimId,
+      from,
+      to,
+      reason,
+    }))(verified.history.at(-1)),
+    {
+      seq: 1,
+      action: "claim-status",
+      claimId: "claim-1",
+      from: "supported",
+      to: "verified",
+      reason: "trace matched",
+    },
+  );
+  assert.throws(
+    () => setClaimStatus(base, "claim-guess", "verified"),
+    /no cited evidence is observed/,
+  );
+  assert.throws(
+    () => setClaimStatus(base, "missing", "rejected"),
+    /claim not found/,
+  );
+  assert.throws(
+    () => setClaimStatus(base, "claim-1", "maybe"),
+    /status must be one of/,
+  );
+
+  const resolved = resolveQuestion(
+    base,
+    "q-runtime",
+    { reason: "answered by trace", evidenceIds: ["ev-static"] },
+    { at: "2026-01-01T00:00:00.000Z" },
+  );
+  assert.equal(resolved.questions[0].resolved, true);
+  assert.deepEqual(resolved.questions[0].resolution, {
+    reason: "answered by trace",
+    evidenceIds: ["ev-static"],
+  });
+  assert.equal(resolved.history.at(-1).action, "question-resolved");
+  assert.throws(
+    () =>
+      resolveQuestion(base, "q-runtime", {
+        reason: "x",
+        evidenceIds: ["nope"],
+      }),
+    /missing evidence/,
+  );
+  assert.throws(
+    () => resolveQuestion(base, "q-runtime", { evidenceIds: [] }),
+    /resolution.reason/,
+  );
+  const reopened = resolveQuestion(resolved, "q-runtime", null);
+  assert.equal(reopened.questions[0].resolved, false);
+  assert.equal(reopened.questions[0].resolution, undefined);
+  assert.equal(reopened.history.length, 2);
+  const broken = structuredClone(resolved);
+  broken.questions[0].resolution.evidenceIds = ["ghost"];
+  assert.throws(
+    () => validateInvestigation(broken),
+    /references missing evidence/,
+  );
+});
+
+void test("lint and stats are deterministic and never mutate the investigation", () => {
+  const investigation = fixture({
+    evidence: [
+      ...fixture().evidence,
+      {
+        id: "ev-dup",
+        kind: "static-analysis",
+        summary: "found a handler reference",
+        source: "other.js:1",
+        confidence: "observed",
+        targetSha256: targetDigest,
+      },
+      {
+        id: "ev-guess",
+        kind: "other",
+        summary: "Looks like it",
+        source: "note",
+        confidence: "inferred",
+        targetSha256: targetDigest,
+      },
+    ],
+    claims: [
+      ...fixture().claims,
+      {
+        id: "claim-overstated",
+        text: "Overstated",
+        evidenceIds: ["ev-guess"],
+        status: "supported",
+      },
+    ],
+    questions: [
+      ...fixture().questions,
+      { id: "q-vague", text: "What else?", priority: 10 },
+      { id: "q-done", text: "Done?", resolved: true },
+    ],
+    actions: [fixture().actions[1]],
+  });
+  const snapshot = JSON.stringify(investigation);
+  const lint = lintInvestigation(investigation);
+  assert.equal(JSON.stringify(investigation), snapshot);
+  assert.equal(lint.ok, false);
+  assert.deepEqual(lint.counts, { error: 1, warning: 4, info: 4 });
+  const codes = lint.findings.map(
+    (f) => `${f.severity}:${f.code}:${f.subject}`,
+  );
+  assert.deepEqual(codes, [
+    "error:status-exceeds-evidence:claim-overstated",
+    "warning:duplicate-evidence-summary:ev-dup",
+    "warning:inference-only-claim:claim-overstated",
+    "warning:resolved-without-reason:q-done",
+    "warning:unreachable-question:q-runtime",
+    "info:observed-without-artifact:ev-dup",
+    "info:observed-without-artifact:ev-static",
+    "info:orphan-evidence:ev-dup",
+    "info:question-without-requirements:q-vague",
+  ]);
+  assert.equal(
+    JSON.stringify(lintInvestigation(investigation)),
+    JSON.stringify(lint),
+  );
+
+  const stats = investigationStats(investigation);
+  assert.equal(stats.evidence.total, 3);
+  assert.deepEqual(stats.evidence.byConfidence, {
+    observed: 2,
+    derived: 0,
+    inferred: 1,
+  });
+  assert.equal(stats.evidence.citedRatio, Number((2 / 3).toFixed(4)));
+  assert.deepEqual(stats.claims.bySupportLabel, {
+    "evidence-backed": 1,
+    "derived-support": 0,
+    "inference-only": 1,
+    verified: 0,
+  });
+  assert.equal(stats.claims.evidenceBackedRatio, 0.5);
+  assert.deepEqual(stats.questions, {
+    total: 3,
+    resolved: 1,
+    open: 2,
+    openWithMissingEvidence: 1,
+    resolvedRatio: Number((1 / 3).toFixed(4)),
+  });
+  assert.equal(
+    investigationStats(fixture({ evidence: [], claims: [] })).claims
+      .evidenceBackedRatio,
+    null,
+  );
+  assert.equal(lintInvestigation(fixture()).ok, true);
+});
+
+void test("multi-step planning respects budgets and stops honestly", () => {
+  const investigation = fixture({
+    questions: [
+      ...fixture().questions,
+      {
+        id: "q-docs",
+        text: "Documented?",
+        priority: 40,
+        requiredEvidenceKinds: ["documentation"],
+      },
+    ],
+  });
+  const plan = planSteps(investigation, { steps: 3 });
+  assert.equal(plan.status, "planned");
+  assert.deepEqual(
+    plan.steps.map((s) => [s.step, s.actionId, s.questionId]),
+    [
+      [1, "a-runtime", "q-runtime"],
+      [2, "a-docs", "q-docs"],
+    ],
+  );
+  assert.equal(plan.totalEstimatedCost, 4);
+  assert.equal(plan.stoppedBecause.status, "no-action-needed");
+  const budgeted = planSteps(investigation, { steps: 3, maxCost: 3 });
+  assert.equal(budgeted.steps.length, 1);
+  assert.equal(budgeted.stoppedBecause.status, "budget-exhausted");
+  const tight = planSteps(investigation, { steps: 3, maxCost: 2 });
+  assert.equal(tight.steps.length, 0);
+  assert.equal(tight.status, "blocked");
+  assert.equal(tight.stoppedBecause.status, "blocked");
+  const limited = planSteps(investigation, { steps: 1 });
+  assert.equal(limited.stoppedBecause.status, "step-limit");
+  assert.equal(
+    planSteps(fixture({ questions: [] }), { steps: 2 }).status,
+    "no-action-needed",
+  );
+  assert.throws(() => planSteps(investigation, { steps: 0 }), /steps/);
+  assert.equal(
+    JSON.stringify(planSteps(investigation, { steps: 3 })),
+    JSON.stringify(plan),
+  );
+});
+
+void test("graph renders to DOT and Mermaid with escaped labels", () => {
+  const investigation = fixture({
+    evidence: [{ ...fixture().evidence[0], summary: 'Says "hi" | twice' }],
+  });
+  const dot = renderEvidenceGraph(investigation, "dot");
+  assert.match(dot, /^digraph ptah \{/);
+  assert.match(
+    dot,
+    /"target:sample-app" \[label="target: sample-app", shape=ellipse\]/,
+  );
+  assert.match(dot, /Says \\"hi\\" \| twice/);
+  assert.match(
+    dot,
+    /"evidence:ev-static" -> "claim:claim-1" \[label="supports"\]/,
+  );
+  assert.match(dot, /"question:q-runtime".*style=dashed/);
+  const mermaid = renderEvidenceGraph(investigation, "mermaid");
+  assert.match(mermaid, /^graph LR/);
+  assert.match(mermaid, /n0\["target: sample-app"\]/);
+  assert.match(mermaid, /&quot;hi&quot;/);
+  assert.match(mermaid, /n1 -->\|supports\| n2/);
+  assert.throws(
+    () => renderEvidenceGraph(investigation, "svg"),
+    /json, dot, or mermaid/,
+  );
+});
+
+void test("JSON schema describes the accepted document and the fixture conforms structurally", () => {
+  const schema = investigationJsonSchema();
+  assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
+  assert.deepEqual(schema.required, ["schemaVersion", "target"]);
+  assert.equal(schema.properties.schemaVersion.const, 1);
+  assert.ok(
+    schema.properties.evidence.items.properties.kind.enum.includes(
+      "static-analysis",
+    ),
+  );
+  assert.deepEqual(schema.properties.claims.items.properties.status.enum, [
+    "hypothesis",
+    "supported",
+    "verified",
+    "rejected",
+  ]);
+  assert.ok(schema.properties.history.items.required.includes("entrySha256"));
+  for (const key of Object.keys(fixture()))
+    assert.ok(key in schema.properties, key);
+  const committed = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../docs/schema/ptah-investigation.schema.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(
+    committed,
+    schema,
+    "docs/schema file drifted from the engine; run `ptah schema`",
+  );
 });
 
 void test("planner chooses an action that covers highest-priority missing evidence", () => {
@@ -912,6 +1401,57 @@ void test("PTAH MCP exports, verifies, and imports portable case bundles", async
           arguments: { base: inputPath, head: bundlePath },
         },
       },
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "ptah_inspect", arguments: { target: targetPath } },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: {
+          name: "ptah_strings",
+          arguments: { target: targetPath, minLength: 3, maxResults: 10 },
+        },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/call",
+        params: { name: "ptah_lint", arguments: { input: inputPath } },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: { name: "ptah_stats", arguments: { input: inputPath } },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 11,
+        method: "tools/call",
+        params: { name: "ptah_schema", arguments: {} },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 12,
+        method: "tools/call",
+        params: {
+          name: "ptah_graph",
+          arguments: { input: inputPath, format: "dot" },
+        },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 13,
+        method: "tools/call",
+        params: {
+          name: "ptah_plan",
+          arguments: { input: inputPath, steps: 2 },
+        },
+      },
     ];
     const run = spawnSync(process.execPath, [server], {
       input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
@@ -950,6 +1490,35 @@ void test("PTAH MCP exports, verifies, and imports portable case bundles", async
       listed.result.tools.some((tool) => tool.name === "ptah_diff"),
       "ptah_diff must be listed",
     );
+    const text = (id) =>
+      messages.find((m) => m.id === id).result.content[0].text;
+    const ok = (id) =>
+      assert.equal(
+        messages.find((m) => m.id === id).result.isError,
+        false,
+        `tool ${id}`,
+      );
+    for (const id of [7, 8, 9, 10, 11, 12, 13]) ok(id);
+    assert.equal(JSON.parse(text(7)).executed, false);
+    assert.ok("entropy" in JSON.parse(text(7)));
+    assert.ok(
+      JSON.parse(text(8)).strings.some((s) => s.text.includes("portable")),
+    );
+    assert.equal(JSON.parse(text(9)).ok, true);
+    assert.equal(JSON.parse(text(10)).evidence.total, 0);
+    assert.equal(JSON.parse(text(11)).title, "PTAH investigation");
+    assert.match(text(12), /^digraph ptah/);
+    assert.equal(JSON.parse(text(13)).status, "planned");
+    assert.equal(JSON.parse(text(13)).steps[0].actionId, "a-runtime");
+    const names = listed.result.tools.map((tool) => tool.name);
+    for (const name of [
+      "ptah_inspect",
+      "ptah_strings",
+      "ptah_lint",
+      "ptah_stats",
+      "ptah_schema",
+    ])
+      assert.ok(names.includes(name), name);
     assert.deepEqual(
       JSON.parse(
         await (await import("node:fs/promises")).readFile(restoredPath, "utf8"),
@@ -1163,6 +1732,26 @@ void test("local UI serves the workbench and supports upload, evidence, report, 
     assert.match(markdownReport.headers.get("content-type"), /text\/markdown/);
     assert.match(await markdownReport.text(), /\| ev-ui \| static-analysis \|/);
     assert.match(pageHtml, /Markdown report/);
+    assert.match(pageHtml, /data-output="lint"/);
+    assert.match(pageHtml, /data-output="strings"/);
+    const lint = await (await fetch(`${base}/api/lint`)).json();
+    assert.equal(lint.ok, true);
+    const stats = await (await fetch(`${base}/api/stats`)).json();
+    assert.equal(stats.evidence.total, 1);
+    assert.equal(stats.historyEntries, 2);
+    const inspect = await (await fetch(`${base}/api/inspect`)).json();
+    assert.equal(inspect.detectedFormat, "WebAssembly");
+    assert.equal(inspect.executed, false);
+    const strings = await fetch(`${base}/api/strings?minLength=2&maxResults=5`);
+    assert.equal(strings.status, 200);
+    assert.equal((await strings.json()).executed, false);
+    const badStrings = await fetch(`${base}/api/strings?maxResults=999999`);
+    assert.equal(badStrings.status, 400);
+    const state = await (await fetch(`${base}/api/state`)).json();
+    assert.deepEqual(
+      state.investigation.history.map((entry) => entry.action),
+      ["init", "evidence-added"],
+    );
     const download = await fetch(`${base}/api/download`);
     assert.equal(download.status, 200);
     assert.match(

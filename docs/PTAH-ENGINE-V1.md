@@ -23,6 +23,32 @@ npm run test:ptah
 
 `diff --base FILE --head FILE` accepts investigations or verified case bundles on either side (a bundle with a checksum mismatch is refused). The result lists added, removed, and changed items by ID for evidence, claims, questions, and actions, claim status transitions, resolved and reopened questions, and a `target.sameTarget` flag; evidence is never treated as transferable between different target digests. The MCP equivalents are `ptah_report` with `format` and `ptah_diff`.
 
+## Target inspection without execution
+
+`fingerprint --inspect` (MCP `ptah_inspect`) adds `formatDetails` and `entropy` to the fingerprint. ELF headers yield class, endianness, OS ABI, type, and machine; `MZ` files are confirmed as PE only when `e_lfanew` points at a valid `PE\0\0` signature, and then yield machine, section count, DLL/executable flags, and PE32/PE32+; Mach-O yields endianness and CPU; universal (fat) binaries are distinguished from Java class files. Entropy is Shannon entropy in bits per byte over a bounded read (default 64 MiB) with a coarse hint (high entropy suggests compression, encryption, or packing). `strings` (MCP `ptah_strings`) extracts printable ASCII and UTF-16LE runs with byte offsets under `minLength`, `maxResults`, and `maxBytes` limits and reports `truncated` when any limit was hit. Neither operation launches the target or any external tool.
+
+## History, claim status, and question resolution
+
+Every CLI and workbench mutation appends an entry to `history`: `{ seq, action, at, …details, previousEntrySha256, entrySha256 }`. `entrySha256` is the SHA-256 of the canonical JSON of the entry (without itself) and therefore covers the previous digest, so editing, reordering, or dropping entries fails validation. `ptah history` prints and verifies the chain.
+
+`set-claim-status` changes a claim to `hypothesis`, `supported`, `verified`, or `rejected` and records the transition. Setting `verified` is refused unless at least one cited evidence item is `observed`. `resolve-question` marks a question resolved with a required `reason` and optional supporting `evidenceIds` (which must exist); `--reopen` clears the resolution. Both are recorded in history.
+
+## Lint and stats
+
+`lint` (MCP `ptah_lint`) returns deterministic, advisory findings sorted by severity, code, and subject: `status-exceeds-evidence` (error), `duplicate-evidence-summary`, `inference-only-claim`, `resolved-without-reason`, `unreachable-question` (warning), and `orphan-evidence`, `observed-without-artifact`, `question-without-requirements` (info). The CLI exits `2` when any error exists. `stats` (MCP `ptah_stats`) reports evidence counts by confidence and kind, cited and artifact ratios, claim counts by support label, evidence-backed and inference-only ratios, question resolution metrics, and history length. Ratios are `null` when the denominator is zero.
+
+## Evidence artifacts
+
+`add-evidence --artifact FILE` records `{ sha256, sizeBytes, name }` of a raw output file (for example saved analyzer output) alongside the evidence item without embedding the file. This lets a reviewer confirm the exact bytes behind an observation.
+
+## Multi-step planning and graph formats
+
+`plan --steps N` runs the single-step planner greedily up to `N` times under a shared `--max-cost`, simulating that each selected action yields its listed evidence kinds; it reports every step, total estimated cost, and why it stopped (`step-limit`, `no-action-needed`, `blocked`, or `budget-exhausted`). Nothing is executed. `graph --format dot|mermaid` renders the evidence graph as Graphviz DOT or Mermaid with escaped labels.
+
+## JSON Schema
+
+`ptah schema` (MCP `ptah_schema`) prints the JSON Schema (draft 2020-12) for investigation documents; the committed copy at `docs/schema/ptah-investigation.schema.json` is tested against the engine so it cannot drift.
+
 ## Portable case bundles
 
 Export an investigation as a portable JSON case, verify it, then restore the ordinary investigation document:
@@ -50,6 +76,6 @@ The MCP server exposes matching `ptah_case_export`, `ptah_case_verify`, and `pta
 - This schema is not yet wired into existing REA workflows or MCP tools.
 - The planner is rule-based and uses evidence kinds, not semantic information-gain estimates.
 - `verified` is a caller-supplied status, not independently attested by this module.
-- The v1 digest is supplied by the caller; this module does not hash target files itself.
-- The graph is an in-memory export only; persistence, incremental updates, and adapters to the existing ledger are not implemented yet.
+- The graph export has no incremental update mode; adapters to the existing REA ledger remain a separate TypeScript module.
+- `history` is tamper-evident, not tamper-proof: a party who can rewrite the whole file can rewrite the whole chain. Pair it with case checksums kept outside the file or with a future signature scheme.
 - No dynamic analysis is performed. Any future runtime provider must add isolation, permission gates, and bounded resource use.
