@@ -161,7 +161,10 @@ try {
       });
       assert.ok(assembly.trim().length > 0);
       const dossier = functionDossierSchema.parse(
-        await call("analyze_function", { procedure: entry.address }),
+        await call("analyze_function", {
+          procedure: entry.address,
+          detail: "complete",
+        }),
       );
       assert.ok(dossier.pseudocode.trim().length > 0);
       const mapping = await call("address_to_file_offset", {

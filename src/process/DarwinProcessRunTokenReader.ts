@@ -19,7 +19,11 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { boundedUtf8Text } from "./boundedUtf8Text.js";
-import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+  execFileFailureCapturedOutput,
+} from "./ExecFileOutput.js";
 import type {
   ProcessIdentityObservation,
   ProcessRunTokenObservation,
@@ -30,13 +34,13 @@ const responseSchema = z.strictObject({
   results: z.array(
     z.discriminatedUnion("state", [
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
         state: z.literal("readable"),
         run_id: z.string().optional(),
         reason: z.null().optional(),
       }),
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
         state: z.literal("unavailable"),
         run_id: z.union([z.string(), z.null()]).optional(),
         reason: z.string().min(1),
@@ -48,28 +52,28 @@ const identityResponseSchema = z.strictObject({
   results: z.array(
     z.discriminatedUnion("state", [
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
         state: z.literal("absent"),
         identity: z.null().optional(),
         reason: z.literal("not-in-snapshot"),
       }),
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
         state: z.literal("readable"),
         identity: z.string().min(1),
-        effective_uid: z.number().int().nonnegative().optional(),
+        effective_uid: z.int().nonnegative().optional(),
         lifecycle: z.enum(["non-zombie", "zombie"]).optional(),
         relation: z
           .strictObject({
             state: z.literal("observed"),
-            parent_pid: z.number().int().nonnegative(),
-            process_group_id: z.number().int().nonnegative(),
+            parent_pid: z.int().nonnegative(),
+            process_group_id: z.int().nonnegative(),
           })
           .optional(),
         reason: z.null().optional(),
       }),
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
         state: z.literal("unavailable"),
         identity: z.null().optional(),
         reason: z.string().min(1),
@@ -256,18 +260,11 @@ const compilerFailureFacts = (
       ...(outcome === "timed_out" ? { timeoutMs } : {}),
     },
     capturedOutput: {
+      ...execFileFailureCapturedOutput(failure),
       stdout: stdout.text,
       stderr: stderr.text,
       truncated:
         stdout.truncated || stderr.truncated || failure.outputTruncated,
-      ...(failure.stdoutBytes === undefined
-        ? {}
-        : { stdout_bytes: failure.stdoutBytes }),
-      ...(failure.stderrBytes === undefined
-        ? {}
-        : { stderr_bytes: failure.stderrBytes }),
-      exit_code: typeof failure.code === "number" ? failure.code : null,
-      signal: failure.signal,
     },
   };
 };

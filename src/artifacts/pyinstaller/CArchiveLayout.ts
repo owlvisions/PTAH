@@ -137,6 +137,13 @@ export const parseCArchiveToc = (
 ): Result<readonly CArchiveEntry[], PyInstallerFailure> => {
   const entries: CArchiveEntry[] = [];
   let offset = 0;
+  const malformedEntry = (message: string): Result<never, PyInstallerFailure> =>
+    err(
+      pyInstallerFailure(
+        "format",
+        `CArchive table index ${String(entries.length)} at TOC offset ${String(offset)}: ${message}`,
+      ),
+    );
   while (offset < bytes.length) {
     if (entries.length >= MAX_TOC_ENTRIES)
       return err(
@@ -146,42 +153,26 @@ export const parseCArchiveToc = (
         ),
       );
     if (offset + TOC_HEADER_BYTES > bytes.length)
-      return err(
-        pyInstallerFailure(
-          "format",
-          "CArchive table of contents entry is truncated",
-        ),
-      );
+      return malformedEntry("CArchive table of contents entry is truncated");
     const entryLength = bytes.readUInt32BE(offset);
     if (entryLength < TOC_HEADER_BYTES || offset + entryLength > bytes.length)
-      return err(
-        pyInstallerFailure(
-          "format",
-          "CArchive table of contents entry extends outside the table",
-        ),
+      return malformedEntry(
+        "CArchive table of contents entry extends outside the table",
       );
     const nameBytes = bytes.subarray(
       offset + TOC_HEADER_BYTES,
       offset + entryLength,
     );
     const name = tocName(nameBytes);
-    if (!name.ok) return name;
+    if (!name.ok) return malformedEntry(name.error.message);
     const compressionFlag = bytes[offset + 16] ?? 0;
     if (compressionFlag !== 0 && compressionFlag !== 1)
-      return err(
-        pyInstallerFailure(
-          "format",
-          `CArchive compression flag ${String(compressionFlag)} is not stored or zlib`,
-        ),
+      return malformedEntry(
+        `CArchive compression flag ${String(compressionFlag)} is not stored or zlib`,
       );
     const typeCode = bytes[offset + 17] ?? 0;
     if (typeCode < 0x20 || typeCode > 0x7e)
-      return err(
-        pyInstallerFailure(
-          "format",
-          "CArchive type code is not a printable character",
-        ),
-      );
+      return malformedEntry("CArchive type code is not a printable character");
     entries.push({
       index: entries.length,
       tocRecordOffset: offset,
@@ -320,7 +311,6 @@ const validateCArchiveMembers = (
   entries: readonly CArchiveEntry[],
   tocOffset: number,
 ): Result<null, PyInstallerFailure> => {
-  const names = new Set<string>();
   for (const entry of entries) {
     if (isCArchiveDeclaration(entry)) {
       if (
@@ -334,15 +324,6 @@ const validateCArchiveMembers = (
             `CArchive declaration at table index ${String(entry.index)} has local payload or compression`,
           ),
         );
-    } else {
-      if (names.has(entry.name))
-        return err(
-          pyInstallerFailure(
-            "integrity",
-            `Duplicate CArchive member name at table index ${String(entry.index)}`,
-          ),
-        );
-      names.add(entry.name);
     }
     if (
       entry.compressionFlag === 0 &&

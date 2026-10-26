@@ -16,6 +16,10 @@ import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { CdpConnection } from "./CdpConnection.js";
+import {
+  parseCdpDiscoveryTargets,
+  type CdpDiscoveryTarget,
+} from "./CdpDiscoveryTargets.js";
 
 const endpointVersionSchema = z.object({
   Browser: z.string().min(1),
@@ -25,16 +29,6 @@ const endpointVersionSchema = z.object({
   "WebKit-Version": z.string(),
   webSocketDebuggerUrl: z.string().min(1),
 });
-
-const endpointTargetSchema = z.object({
-  id: z.string().min(1),
-  type: z.string().min(1),
-  title: z.string().default(""),
-  url: z.string(),
-  attached: z.boolean().nullable().optional(),
-  webSocketDebuggerUrl: z.string().min(1).optional(),
-});
-const endpointTargetsSchema = z.array(endpointTargetSchema);
 
 /** Per-response bounds for loopback CDP discovery documents. There is no runtime override. */
 const CDP_DISCOVERY_RESPONSE_LIMITS = {
@@ -114,6 +108,7 @@ export interface CdpEndpointTarget {
 }
 
 export interface CdpEndpointDiscovery {
+  readonly limitations?: readonly string[];
   readonly webSocket: CdpWebSocketEndpoint;
   readonly version: {
     readonly product: string;
@@ -146,12 +141,12 @@ export const discoverCdpEndpoint = async (
     versionInput,
     operation,
   );
-  const targets = parseCdpEndpointValue(
-    endpointTargetsSchema,
+  const { targets, limitations } = parseCdpDiscoveryTargets(
     targetsInput,
     operation,
   );
   return {
+    limitations,
     webSocket: safeCdpWebSocketEndpoint(
       endpoint,
       version.webSocketDebuggerUrl,
@@ -435,10 +430,14 @@ const pathIdentifier = (
 
 const targetWebSocket = (
   endpoint: string,
-  target: z.infer<typeof endpointTargetSchema>,
+  target: CdpDiscoveryTarget,
   operation: BrowserObservationOperation,
 ): { readonly webSocket?: CdpPageWebSocketEndpoint } => {
-  if (target.webSocketDebuggerUrl === undefined) return {};
+  if (
+    typeof target.webSocketDebuggerUrl !== "string" ||
+    target.webSocketDebuggerUrl.length === 0
+  )
+    return {};
   try {
     const webSocket = safeCdpWebSocketEndpoint(
       endpoint,

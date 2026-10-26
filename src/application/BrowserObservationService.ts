@@ -4,6 +4,7 @@ import type {
   ListBrowserTargetsInput,
 } from "../domain/browserObservation.js";
 import {
+  webBundleAcquisitionPartialObservationSchema,
   webBundleAnalysisSchema,
   type AnalyzeWebBundleInput,
 } from "../domain/webBundleAnalysis.js";
@@ -288,6 +289,24 @@ const retainBrowserObservation = (
   errorOperation: "inspect_web_page" | "analyze_web_bundle",
 ): Result<Evidence, AnalysisError> => {
   const partial = error.partialObservation;
+  if (
+    errorOperation === "analyze_web_bundle" &&
+    partial !== undefined &&
+    "kind" in partial &&
+    partial.kind === "web-bundle-acquisition"
+  ) {
+    const acquisition =
+      webBundleAcquisitionPartialObservationSchema.safeParse(partial);
+    if (acquisition.success) {
+      error.partialObservation = createBrowserEvidence(
+        "analyze_web_bundle",
+        input,
+        acquisition.data,
+        provider.identity(),
+      );
+      return err(error);
+    }
+  }
   if (
     errorOperation === "analyze_web_bundle" &&
     partial !== undefined &&

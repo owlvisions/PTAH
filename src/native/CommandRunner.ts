@@ -19,11 +19,6 @@ import type {
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 
-/**
- * Omitted `native_command_timeout_ms`. Distinct from objdump/rizin
- * `command_timeout_ms`, which is a separate 120000 ms one-shot budget.
- */
-export const NATIVE_COMMAND_TIMEOUT_MS = DEFAULT_NATIVE_COMMAND_TIMEOUT_MS;
 /** Retain complete command output up to a bounded aggregate size. */
 export const NATIVE_COMMAND_OUTPUT_BUDGET_BYTES = 64 * 1024 * 1024;
 /**
@@ -131,7 +126,7 @@ export interface NativeCommandFailureCapture {
 export interface NativeCommandOptions {
   readonly signal?: AbortSignal;
   readonly acceptNonZero?: boolean;
-  /** Selected wall clock; omitted uses `NATIVE_COMMAND_TIMEOUT_MS`. */
+  /** Selected wall clock; omitted uses `DEFAULT_NATIVE_COMMAND_TIMEOUT_MS`. */
   readonly timeoutMs?: number;
 }
 
@@ -155,7 +150,7 @@ export type NativeToolResolver = (
   tool: string,
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,
-  /** Selected command deadline. Omitted uses `NATIVE_COMMAND_TIMEOUT_MS`. */
+  /** Selected command deadline. Omitted uses `DEFAULT_NATIVE_COMMAND_TIMEOUT_MS`. */
   timeoutMs?: number,
 ) => Promise<Result<ResolvedTool, NativeCommandFailure>>;
 
@@ -228,18 +223,16 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       this.launcher,
     );
     if (!captured.ok) return err(this.#retainCleanupOwner(captured.error));
-    return captured.ok
-      ? ok({
-          ...captured.value,
-          tool,
-          executable: resolved.value.path,
-          executableSha256: resolved.value.sha256,
-          toolVersion: null,
-          versionReason:
-            "Tool exposes no uniform stable version flag; executable SHA-256 is a prelaunch file sample and does not prove atomic OS image binding.",
-          arguments: [...arguments_],
-        })
-      : captured;
+    return ok({
+      ...captured.value,
+      tool,
+      executable: resolved.value.path,
+      executableSha256: resolved.value.sha256,
+      toolVersion: null,
+      versionReason:
+        "Tool exposes no uniform stable version flag; executable SHA-256 is a prelaunch file sample and does not prove atomic OS image binding.",
+      arguments: [...arguments_],
+    });
   }
 
   async #retryCleanup(): Promise<readonly NativeCommandCleanupFailure[]> {
@@ -533,7 +526,7 @@ const captureProcess = async (
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       },
       {
-        timeoutMs: options.timeoutMs ?? NATIVE_COMMAND_TIMEOUT_MS,
+        timeoutMs: options.timeoutMs ?? DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
         diagnosticBytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
         acceptNonZeroExit: options.acceptNonZero === true,
       },

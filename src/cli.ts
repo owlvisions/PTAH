@@ -3,6 +3,7 @@ import { registerNativeFunctionMatchingCommands } from "./cli/nativeFunctionMatc
 import { registerCaptureCommands } from "./cli/captureCommands.js";
 import { registerSignalCommands } from "./cli/signalCommands.js";
 import { registerWasmCommands } from "./cli/wasmCommands.js";
+import { registerApkSignatureCommands } from "./cli/apkSignatureCommands.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 import { createDirectAnalysis } from "./composition/directAnalysis.js";
 import { registerEvmCommands } from "./cli/evmCommands.js";
@@ -11,6 +12,8 @@ import { registerGoCommands } from "./cli/goCommands.js";
 import { registerModelCommands } from "./cli/modelCommands.js";
 import { registerIl2cppCommands } from "./cli/il2cppCommands.js";
 import { registerRustCommands } from "./cli/rustCommands.js";
+import { registerPythonPycCommands } from "./cli/pythonPycCommands.js";
+import { registerErlangCommands } from "./cli/erlangCommands.js";
 import { registerSqliteCommands } from "./cli/sqliteCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
@@ -19,8 +22,8 @@ import type { FridaInstrumentationPort } from "./application/frida/FridaInstrume
 import { Cli } from "incur";
 import { normalizeCliArguments } from "./cliOutput.js";
 
-import { createLogger, parseLogLevel } from "./logger.js";
-import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
+import { createLogger } from "./logger.js";
+import { parseLogLevel } from "./config/processStart.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { npxRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
 import { registerSetupCommands } from "./cli/setupCommands.js";
@@ -48,7 +51,7 @@ import { registerJavaScriptRecoveryCommands } from "./cli/javascriptRecoveryComm
 import { registerAdvancedBrowserCommands } from "./cli/browserAdvancedCommands.js";
 import { registerBrowserScenarioCommands } from "./cliBrowserScenarioCommands.js";
 import { registerElectronCommands } from "./cli/electronCommands.js";
-import { registerJavaScriptRuntimeObservationCommands } from "./cliJavaScriptRuntimeCommands.js";
+import { registerJavaScriptRuntimeObservationCommands } from "./cli/javascriptRuntimeCommands.js";
 import { registerApplicationCommands } from "./cli/applicationCommands.js";
 import { presentOmittableDefaults } from "./cli/omittableDefaults.js";
 import type { CliInstance } from "./cli/types.js";
@@ -58,21 +61,12 @@ import {
 } from "./cli/cliResultOutput.js";
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
+import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
+import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
+import { presentCliArgumentErrors } from "./cli/argumentErrors.js";
+import { createCliCompletions } from "./cli/completions.js";
 
 export { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
-
-/**
- * Describe CLI settings that are invalid before any command runs, as MCP does.
- * Keep this aligned with PROCESS_START_CONFIGURATION_SETTINGS.
- */
-export const cliConfigurationError = (
-  selectedEnvironment: Readonly<Record<string, string | undefined>>,
-): string | undefined => {
-  const value = selectedEnvironment.REA_LOG_LEVEL;
-  if (value === undefined) return undefined;
-  const level = parseLogLevel(value);
-  return level.ok ? undefined : projectAnalysisError(level.error).message;
-};
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -121,9 +115,15 @@ export const createCli = (
   registerSetupCommands(cli, logger, environment);
   registerReverseEngineeringCommands(cli, logger, environment);
   registerCutterCommands(cli, logger, environment);
-  registerCoreAnalysisCommands(cli, logger, analysis.runDirectAnalysis);
+  registerCoreAnalysisCommands(
+    cli,
+    logger,
+    analysis.runDirectAnalysis,
+    environment,
+  );
   registerUtilityCommands(cli, logger, environment, analysis);
   registerWasmCommands(cli, logger, environment);
+  registerApkSignatureCommands(cli, logger, environment);
   registerCaptureCommands(cli, logger, environment);
   registerSignalCommands(cli, logger, environment);
   registerEvmCommands(cli, logger, environment);
@@ -133,6 +133,8 @@ export const createCli = (
   registerModelCommands(cli, logger);
   registerGpuCommands(cli, logger);
   registerRustCommands(cli, logger);
+  registerPythonPycCommands(cli, logger);
+  registerErlangCommands(cli, logger);
   registerSqliteCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
   registerManagedCommands(cli, logger, analysis.runProviderAnalysis);
@@ -145,7 +147,7 @@ export const createCli = (
   registerFirmwareCommands(cli, logger, environment);
   registerBinaryDiagnosticsCommands(cli, logger, environment);
   registerAnalysisViewCommands(cli, logger);
-  registerNativeFunctionMatchingCommands(cli, logger);
+  registerNativeFunctionMatchingCommands(cli, logger, environment);
   registerFridaCommands(cli, logger, fridaInstrumentation);
   registerEvidenceCommands(cli, logger);
   registerEnvironmentCommands(cli, logger, environment);
@@ -160,12 +162,22 @@ export const createCli = (
   registerAdvancedBrowserCommands(cli, logger);
   registerBrowserScenarioCommands(cli, logger, environment);
   registerElectronCommands(cli, logger, environment);
-  registerJavaScriptRuntimeObservationCommands(cli, logger);
+  registerJavaScriptRuntimeObservationCommands(cli, logger, environment);
   registerApplicationCommands(cli, logger);
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
+  const serveStrict = rejectSurplusCliArguments(cli);
+  presentCliArgumentErrors(cli);
+  const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   const serve = cli.serve.bind(cli);
+  const complete = createCliCompletions(cli, environment);
   cli.serve = (arguments_ = process.argv.slice(2), options) =>
-    serve(normalizeCliArguments(arguments_), options);
+    complete(arguments_, options ?? {})
+      ? Promise.resolve()
+      : serveStrict(
+          normalizeCliArguments(arguments_),
+          options ?? {},
+          (tokens, selected) => serveDeclared(tokens, selected, serve),
+        );
   return cli;
 };

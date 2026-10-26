@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { dosMz, pe } from "./binaryTarget.fixture.js";
 import { parseExecutableHeader } from "./binaryTarget.js";
-import { observeMzWindowsHeader, parseDosMzHeader } from "./dosMz.js";
+import {
+  observeMzWindowsHeader,
+  parseDosMzHeader,
+  parseMzHeaderEvidence,
+} from "./dosMz.js";
 
 describe("DOS MZ load-module validation", () => {
   it("separates initialized module and appended overlay bytes", () => {
@@ -163,6 +167,20 @@ describe("DOS MZ load-module validation", () => {
 });
 
 describe("MZ Windows header observations", () => {
+  it("keeps a confirmed overlapping PE distinct from malformed header offsets", () => {
+    const bytes = pe(0x014c, 4);
+    expect(observeMzWindowsHeader(bytes)).toEqual({
+      state: "declared",
+      offset: 4,
+      signature: "PE",
+    });
+    expect(parseExecutableHeader(bytes, "x64")).toEqual({
+      ok: false,
+      error:
+        "Unsupported overlapping PE header at file offset 4; this reader requires the Windows header outside the 64-byte DOS header",
+    });
+  });
+
   it.each(["NE", "LE", "LX"])(
     "distinguishes unsupported %s from DOS",
     (signature) => {
@@ -260,24 +278,105 @@ describe("MZ Windows header observations", () => {
       offset,
     });
     expect(
-      observeMzWindowsHeader(
-        prefix,
-        offset + 512,
-        Buffer.from("PE\0\0", "binary"),
-      ),
+      observeMzWindowsHeader(prefix, offset + 512, {
+        offset,
+        bytes: Buffer.from("PE\0\0", "binary"),
+      }),
     ).toEqual({ state: "declared", offset, signature: "PE" });
   });
+});
 
-  it("does not fall back to DOS when a Windows declaration is damaged", () => {
+describe("MZ header padding observations", () => {
+  it("treats a complete header after the relocation table as DOS padding", () => {
+    const bytes = Buffer.alloc(128);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(128, 2);
+    bytes.writeUInt16LE(1, 4);
+    bytes.writeUInt16LE(2, 6);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(28, 24);
+    bytes.writeUInt32LE(0, 28);
+    bytes.writeUInt32LE(0, 32);
+    bytes.write("ABCD", 60, "ascii");
+
+    const evidence = parseMzHeaderEvidence(bytes);
+    expect(evidence.dos).toMatchObject({
+      ok: true,
+      value: {
+        headerBytes: 64,
+        imageBytes: 128,
+        moduleBytes: 64,
+        relocationCount: 2,
+        relocationTableOffset: 28,
+      },
+    });
+    expect(evidence.windowsHeader).toEqual({ state: "absent" });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+
+    bytes.writeUInt32LE(0xfffffff0, 60);
+    expect(parseMzHeaderEvidence(bytes).windowsHeader).toEqual({
+      state: "absent",
+    });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+  });
+
+  it("requests an unread signature before treating padding as DOS data", () => {
+    const offset = 8192;
+    const bytes = Buffer.alloc(offset + 512);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(128, 2);
+    bytes.writeUInt16LE(1, 4);
+    bytes.writeUInt16LE(2, 6);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(28, 24);
+    bytes.writeUInt32LE(offset, 60);
+    const prefix = bytes.subarray(0, 4096);
+
+    expect(observeMzWindowsHeader(prefix, bytes.length)).toEqual({
+      state: "signature-needed",
+      offset,
+    });
+    expect(
+      observeMzWindowsHeader(prefix, bytes.length, {
+        offset,
+        bytes: Buffer.from("PE\0\0", "binary"),
+      }),
+    ).toEqual({ state: "declared", offset, signature: "PE" });
+    expect(
+      observeMzWindowsHeader(prefix, bytes.length, {
+        offset,
+        bytes: Buffer.from("ZZZZ", "ascii"),
+      }),
+    ).toEqual({ state: "absent" });
+  });
+
+  it("keeps an unconfirmed pointer outside a relocation table unresolved", () => {
     const bytes = Buffer.alloc(256);
     dosMz().copy(bytes, 0, 0, 28);
     bytes.writeUInt16LE(256, 2);
     bytes.writeUInt16LE(4, 8);
     bytes.writeUInt16LE(64, 24);
     bytes.writeUInt32LE(192, 60);
-    expect(parseDosMzHeader(bytes).ok).toBe(false);
+
+    expect(parseMzHeaderEvidence(bytes).windowsHeader).toEqual({
+      state: "candidate",
+      offset: 192,
+      signature: "other",
+    });
     expect(parseExecutableHeader(bytes, "x64")).toMatchObject({ ok: false });
+
     bytes.writeUInt32LE(0xfffffff0, 60);
+    expect(parseMzHeaderEvidence(bytes).windowsHeader).toEqual({
+      state: "candidate",
+      offset: 0xfffffff0,
+      signature: "unobserved",
+    });
     expect(parseExecutableHeader(bytes, "x64")).toMatchObject({ ok: false });
   });
 });

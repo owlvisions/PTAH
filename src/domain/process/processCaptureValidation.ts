@@ -282,6 +282,9 @@ const validateCoverage = (
     hasCaptureTruncation(
       details,
     ), "truncation_details", "aggregate truncation must match producer coverage");
+  require((details.rendered_terminal.normalization_over_budget_frames ?? 0) <=
+    (details.rendered_terminal.unknown_size_frames ??
+      0), "truncation_details.rendered_terminal.normalization_over_budget_frames", "normalization omissions must be a subset of unknown-size rendered frames");
   for (const [name, retention, count, bytes] of [
     [
       "raw_terminal",
@@ -378,18 +381,25 @@ const validateCoverage = (
         coverage.enumeration_omissions.some(
           ({ reason }) => reason === "entry_unavailable",
         )) &&
-      coverage.enumeration_omissions.every(
-        (omission) =>
-          coverage.enumeration_reasons.includes(omission.reason) &&
-          (omission.reason === "directory_unavailable"
-            ? entryTypes.get(omission.path) === "directory" &&
-              omission.system_code !== null
-            : (entryTypes.get(omission.path) === undefined ||
-                entryTypes.get(omission.path) === "directory") &&
-              (omission.reason === "entry_unavailable"
-                ? omission.system_code !== null
-                : omission.system_code === null)),
-      ), `truncation_details.${name}.enumeration_omissions`, "every enumeration omission must identify an unavailable entry or retained directory, with a matching reason and system error only for unavailable reads");
+      (!coverage.enumeration_reasons.includes("symlink_not_followed") ||
+        coverage.enumeration_omissions.some(
+          ({ reason }) => reason === "symlink_not_followed",
+        )) &&
+      coverage.enumeration_omissions.every((omission) => {
+        if (!coverage.enumeration_reasons.includes(omission.reason))
+          return false;
+        const entryType = entryTypes.get(omission.path);
+        if (omission.reason === "symlink_not_followed")
+          return entryType === "symlink" && omission.system_code === null;
+        if (omission.reason === "directory_unavailable")
+          return entryType === "directory" && omission.system_code !== null;
+        return (
+          (entryType === undefined || entryType === "directory") &&
+          (omission.reason === "entry_unavailable"
+            ? omission.system_code !== null
+            : omission.system_code === null)
+        );
+      }), `truncation_details.${name}.enumeration_omissions`, "every enumeration omission must identify an unavailable entry, retained directory or unfollowed symlink, with a matching reason and system error only for unavailable reads");
     require(coverage.hashed_bytes ===
       files
         .filter((file) => file.type === "file" && file.sha256 !== null)

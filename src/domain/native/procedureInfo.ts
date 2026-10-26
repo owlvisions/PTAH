@@ -1,3 +1,4 @@
+import { nativeSymbolMetadataSchema } from "./nativeSymbol.js";
 import { z } from "zod";
 import {
   functionBodySchema,
@@ -8,6 +9,7 @@ import {
 /** Provider-neutral procedure metadata, including exact body ranges. */
 export const procedureInfoSchema = z.object({
   name: z.string(),
+  symbol: nativeSymbolMetadataSchema.nullable().exactOptional(),
   entrypoint: z.string(),
   basicblock_count: z.number().int().min(0),
   length: z.number().min(0),

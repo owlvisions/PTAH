@@ -2,9 +2,11 @@ import {
   chmod,
   copyFile,
   lstat,
+  mkdir,
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -24,6 +26,43 @@ import {
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
+
+it
+  .skipIf(process.platform === "win32")
+  .each(["direct", "parent", "lexical-parent"] as const)(
+  "keeps the selected file after a parent alias retarget: %s",
+  async (variant) => {
+    const parentTraversal = variant !== "direct";
+    const root = await createTestTempDirectory("rea-config-retarget-");
+    const first = join(root, "first");
+    const second = variant === "lexical-parent" ? root : join(root, "second");
+    for (const directory of [first, second]) {
+      await mkdir(join(directory, "child"), { recursive: true });
+      await writeFile(join(directory, "config.json"), "original");
+    }
+    const alias = join(root, "link");
+    await symlink(parentTraversal ? join(first, "child") : first, alias);
+    const requestedPath = `${alias}/${parentTraversal ? "../" : ""}config.json`;
+    const selected = join(first, "config.json");
+    const state = await lstat(selected);
+    await rm(alias);
+    await symlink(parentTraversal ? join(second, "child") : second, alias);
+    const publication = await ClientConfigurationPublication.write(
+      selected,
+      "updated",
+      "original",
+      undefined,
+      { requestedPath, state },
+    );
+    await publication.verify(async () => {
+      await publication.assertCurrent();
+      expect(await readFile(selected, "utf8")).toBe("updated");
+      expect(await readFile(join(second, "config.json"), "utf8")).toBe(
+        "original",
+      );
+    });
+  },
+);
 
 const failedVerificationFileSystem = (
   failure: "verification" | "recovery",
@@ -205,7 +244,9 @@ it("accepts a literal UTF-8 replacement character without changing its value", a
     ["rea", "mcp"],
   );
   expect(result.status).toBe("configured");
-  expect(await readFile(`${configPath}.rea.backup`)).toEqual(original);
+  expect(
+    Buffer.compare(await readFile(`${configPath}.rea.backup`), original),
+  ).toBe(0);
   expect(JSON.parse(await readFile(configPath, "utf8")).label).toBe("\uFFFD");
 });
 
@@ -280,7 +321,15 @@ describe("client configuration write failures", () => {
             format,
             configPath: join(root, `config.${format}`),
           }),
-        ).toEqual({ status: "failed", reason: "write" });
+        ).toMatchObject({
+          status: "failed",
+          reason: "write",
+          failure: {
+            operation: "publish",
+            path: join(root, `config.${format}`),
+            systemCode: expect.stringMatching(/^(?:EACCES|EPERM)$/u),
+          },
+        });
       } finally {
         await chmod(root, 0o700);
       }

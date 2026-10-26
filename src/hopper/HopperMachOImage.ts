@@ -9,17 +9,22 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type {
+  BinaryTarget,
+  HeaderArchitecture,
+} from "../domain/binaryTargetTypes.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
+  findOverlappingFatSlices,
   readFatSliceDeclarations,
+  readMachoHeaderPrefixFacts,
   validateFatSlice,
+  validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
-import type { HeaderArchitecture } from "../domain/binaryTargetTypes.js";
 import {
   HopperCancelledError,
   HopperStartError,
@@ -28,39 +33,26 @@ import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 
-/** Narrow file-opening dependency for the owned prepared-image copy. */
-export interface HopperMachOImageFileSystem {
-  readonly open: typeof open;
-}
-
-export interface HopperMachOImageCopyDependencies {
-  /** Persistent owner that can retry any retained descriptor cleanup. */
-  readonly resourceScope: ArtifactResourceScope;
-  readonly fileSystem?: HopperMachOImageFileSystem;
-}
-
-export interface HopperMachOImagePreparationOptions extends HopperMachOImageCopyDependencies {
-  readonly signal?: AbortSignal;
-  readonly observer?: HopperMachOImageCopyObserver;
-}
-
-const defaultHopperMachOImageFileSystem: HopperMachOImageFileSystem = { open };
+import {
+  copyHopperSource,
+  type HopperImageCopyOptions,
+} from "./HopperImageCopy.js";
 
 const hopperFatMachOImageSchema = z.strictObject({
   method: z.enum(["fat32_thin_slice", "fat64_thin_slice"]),
-  architecture_count: z.number().int().min(1).max(128),
+  architecture_count: z.int().min(1).max(128),
   container_table_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  source_offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  byte_length: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  cpu_type: z.number().int().nonnegative(),
-  cpu_subtype: z.number().int().nonnegative(),
+  source_offset: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  byte_length: z.int().positive().max(Number.MAX_SAFE_INTEGER),
+  cpu_type: z.int().nonnegative(),
+  cpu_subtype: z.int().nonnegative(),
 });
 
 const hopperThinMachOImageSchema = z.strictObject({
   method: z.literal("thin_verified_copy"),
-  byte_length: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  cpu_type: z.number().int().nonnegative(),
-  cpu_subtype: z.number().int().nonnegative(),
+  byte_length: z.int().positive().max(Number.MAX_SAFE_INTEGER),
+  cpu_type: z.int().nonnegative(),
+  cpu_subtype: z.int().nonnegative(),
 });
 
 /** Stable source coordinates committed before preparing an owned thin image. */
@@ -73,11 +65,6 @@ export type HopperMachOImage = z.infer<typeof hopperMachOImageSchema>;
 type HopperMachOImageResolutionError =
   | BinaryTargetError
   | AnalysisCancelledError;
-
-/** Controlled checkpoint for deterministic interruption of a real copy. */
-export interface HopperMachOImageCopyObserver {
-  readonly afterChunkWritten?: (copiedBytes: number) => Promise<void>;
-}
 
 /** Filesystem access used by the admitted Mach-O preflight. */
 export interface HopperMachOImageResolutionFileSystem {
@@ -339,15 +326,14 @@ const inspectHopperMachOImage = async (
       return invalid(
         `Thin Mach-O source changed after target admission: expected SHA-256 ${target.sha256}, observed ${observedSha256}`,
       );
-    const little = magic === 0xcefaedfe || magic === 0xcffaedfe;
-    const headerMagic = prefix.readUInt32BE(0);
-    if (headerMagic !== magic)
+    const facts = readMachoHeaderPrefixFacts(prefix);
+    if (facts.magic !== magic || facts.identity === null)
       return invalid("Thin Mach-O header changed during profile resolution");
     return ok({
       method: "thin_verified_copy",
       byte_length: size,
-      cpu_type: little ? prefix.readUInt32LE(4) : prefix.readUInt32BE(4),
-      cpu_subtype: little ? prefix.readUInt32LE(8) : prefix.readUInt32BE(8),
+      cpu_type: facts.identity.cpuType,
+      cpu_subtype: facts.identity.cpuSubtype,
     });
   }
   const isFatMagic = [0xcafebabe, 0xcafebabf, 0xbebafeca, 0xbfbafeca].includes(
@@ -384,7 +370,6 @@ const inspectHopperMachOImage = async (
   const architecture = target.architecture;
   const cpuTypes = { x86: 7, x86_64: 0x1000007, arm: 12, arm64: 0x100000c };
   const matches = [];
-  const ranges = [];
   for (const slice of parsed.slices) {
     if (signal?.aborted)
       return err(
@@ -392,15 +377,10 @@ const inspectHopperMachOImage = async (
       );
     const rangeError = validateFatSlice(slice, size, tableEnd);
     if (rangeError !== null) return invalid(rangeError);
-    if (wide) {
-      const reserved = littleEndian
-        ? table.readUInt32LE(slice.index * 32 + 28)
-        : table.readUInt32BE(slice.index * 32 + 28);
-      if (reserved !== 0)
-        return invalid(
-          `FAT64 architecture ${slice.index} has a nonzero reserved field`,
-        );
-    }
+    if (slice.reserved !== null && slice.reserved !== 0)
+      return invalid(
+        `FAT64 architecture ${slice.index} has a nonzero reserved field`,
+      );
     if (slice.size < 12)
       return invalid(
         `FAT architecture ${slice.index} has a truncated Mach-O header`,
@@ -408,32 +388,17 @@ const inspectHopperMachOImage = async (
     const embedded = await read(slice.offset, 12);
     if (embedded.length !== 12)
       return invalid(`FAT architecture ${slice.index} became truncated`);
-    const thinMagic = embedded.readUInt32BE(0);
-    if (![0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(thinMagic))
+    const identity = readMachoHeaderPrefixFacts(embedded).identity;
+    if (identity === null)
       return invalid(
         `FAT architecture ${slice.index} does not contain a Mach-O image`,
       );
-    const little = thinMagic === 0xcefaedfe || thinMagic === 0xcffaedfe;
-    const identity = {
-      cpuType: little ? embedded.readUInt32LE(4) : embedded.readUInt32BE(4),
-      cpuSubtype: little ? embedded.readUInt32LE(8) : embedded.readUInt32BE(8),
-    };
-    const identityError = validateFatSlice(slice, size, tableEnd, identity);
+    const identityError = validateFatSliceIdentity(slice, identity);
     if (identityError !== null) return invalid(identityError);
-    ranges.push(slice);
     if (slice.cpuType === cpuTypes[architecture]) matches.push(slice);
   }
-  ranges.sort((a, b) => a.offset - b.offset);
-  for (let index = 1; index < ranges.length; index++) {
-    const previous = ranges[index - 1];
-    const current = ranges[index];
-    if (
-      previous !== undefined &&
-      current !== undefined &&
-      current.offset < previous.offset + previous.size
-    )
-      return invalid("FAT slices overlap");
-  }
+  if (findOverlappingFatSlices(parsed.slices) !== null)
+    return invalid("FAT slices overlap");
   const selected = selectHopperSlice(matches, architecture);
   if (selected === undefined)
     return invalid(
@@ -481,11 +446,11 @@ export const prepareHopperMachOImage = async (
   sourceSha256: string,
   image: HopperMachOImage,
   destination: string,
-  options: HopperMachOImagePreparationOptions,
+  options: HopperImageCopyOptions,
 ): Promise<Result<string, HopperStartError | HopperCancelledError>> => {
   const copyDependencies = {
     resourceScope: options.resourceScope,
-    fileSystem: options.fileSystem ?? defaultHopperMachOImageFileSystem,
+    fileSystem: options.fileSystem,
   };
   const { signal, observer } = options;
   if (signal?.aborted) return err(new HopperCancelledError(signal.reason));
@@ -537,15 +502,12 @@ export const prepareHopperMachOImage = async (
   if (!copiedResult.ok) return copiedResult;
   const observed = hash.digest("hex");
   const header = Buffer.concat(thinHeader);
-  const magic = header.length === 12 ? header.readUInt32BE(0) : 0;
-  const little = magic === 0xcefaedfe || magic === 0xcffaedfe;
+  const identity = readMachoHeaderPrefixFacts(header).identity;
   const headerMatches =
     header.length === 12 &&
-    [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic) &&
-    (little ? header.readUInt32LE(4) : header.readUInt32BE(4)) ===
-      image.cpu_type &&
-    (little ? header.readUInt32LE(8) : header.readUInt32BE(8)) ===
-      image.cpu_subtype;
+    identity !== null &&
+    identity.cpuType === image.cpu_type &&
+    identity.cpuSubtype === image.cpu_subtype;
   if (
     tableHash.digest("hex") !== image.container_table_sha256 ||
     !headerMatches
@@ -573,9 +535,9 @@ const prepareThinHopperMachOImage = async (
   destination: string,
   options: {
     readonly signal: AbortSignal | undefined;
-    readonly observer: HopperMachOImageCopyObserver | undefined;
+    readonly observer: HopperImageCopyOptions["observer"];
     readonly resourceScope: ArtifactResourceScope;
-    readonly fileSystem: HopperMachOImageFileSystem;
+    readonly fileSystem?: HopperImageCopyOptions["fileSystem"];
   },
 ): Promise<Result<string, HopperStartError | HopperCancelledError>> => {
   const { signal, observer, resourceScope, fileSystem } = options;
@@ -609,15 +571,14 @@ const prepareThinHopperMachOImage = async (
       }),
     );
   const observed = hash.digest("hex");
-  const magic = prefixLength === prefix.length ? prefix.readUInt32BE(0) : 0;
-  const little = magic === 0xcefaedfe || magic === 0xcffaedfe;
+  const identity = readMachoHeaderPrefixFacts(
+    prefix.subarray(0, prefixLength),
+  ).identity;
   const headerMatches =
     prefixLength === prefix.length &&
-    [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic) &&
-    (little ? prefix.readUInt32LE(4) : prefix.readUInt32BE(4)) ===
-      image.cpu_type &&
-    (little ? prefix.readUInt32LE(8) : prefix.readUInt32BE(8)) ===
-      image.cpu_subtype;
+    identity !== null &&
+    identity.cpuType === image.cpu_type &&
+    identity.cpuSubtype === image.cpu_subtype;
   if (
     observed !== sourceSha256 ||
     copied !== image.byte_length ||
@@ -631,248 +592,4 @@ const prepareThinHopperMachOImage = async (
   return signal?.aborted
     ? err(new HopperCancelledError(signal.reason))
     : ok(destination);
-};
-
-type HopperImageHandle = OwnedFileHandle | undefined;
-type HopperImageCloseFailure = {
-  readonly resource: string;
-  readonly cause: unknown;
-};
-type HopperImageCleanupAttempt = Extract<
-  Awaited<ReturnType<ArtifactResourceScope["release"]>>,
-  { readonly kind: "failed" }
->;
-
-interface HopperImageCopyOperation {
-  readonly copied: number;
-  readonly operationFailure:
-    | { readonly failed: false }
-    | {
-        readonly failed: true;
-        readonly cause: unknown;
-      };
-  readonly cancelled:
-    | { readonly cancelled: false }
-    | {
-        readonly cancelled: true;
-        readonly reason: unknown;
-      };
-  readonly source: HopperImageHandle;
-  readonly output: HopperImageHandle;
-}
-
-interface HopperImageCopyFinalization {
-  readonly closeFailures: readonly HopperImageCloseFailure[];
-  readonly retained: readonly HopperImageCleanupAttempt[];
-}
-
-/** Own source/output handles and copy finalization for both Mach-O layouts. */
-const copyHopperSource = async (options: {
-  readonly sourcePath: string;
-  readonly destination: string;
-  readonly signal: AbortSignal | undefined;
-  readonly observer: HopperMachOImageCopyObserver | undefined;
-  readonly resourceScope: ArtifactResourceScope;
-  readonly fileSystem: HopperMachOImageFileSystem;
-  readonly selectBytes: (chunk: Buffer, position: number) => Buffer | undefined;
-  readonly failureContext: string;
-}): Promise<Result<number, HopperStartError | HopperCancelledError>> => {
-  if (options.signal?.aborted)
-    return err(new HopperCancelledError(options.signal.reason));
-  const operation = await performHopperImageCopy(options);
-  const cancellationBeforeFinalization = operation.cancelled.cancelled
-    ? operation.cancelled
-    : options.signal?.aborted === true
-      ? { cancelled: true as const, reason: options.signal.reason }
-      : { cancelled: false as const };
-  const finalization = await closeHopperImageHandles(operation, options);
-  const cancelled =
-    cancellationBeforeFinalization.cancelled ||
-    (finalization.closeFailures.length === 0 &&
-      options.signal?.aborted === true);
-  const cancelReason = cancellationBeforeFinalization.cancelled
-    ? cancellationBeforeFinalization.reason
-    : options.signal?.reason;
-  if (
-    !operation.operationFailure.failed &&
-    !cancelled &&
-    finalization.closeFailures.length === 0
-  )
-    return ok(operation.copied);
-  return hopperImageCopyFailure({
-    operation,
-    finalization,
-    failureContext: options.failureContext,
-    cancelled,
-    cancelReason,
-  });
-};
-
-const performHopperImageCopy = async (options: {
-  readonly sourcePath: string;
-  readonly destination: string;
-  readonly signal: AbortSignal | undefined;
-  readonly observer: HopperMachOImageCopyObserver | undefined;
-  readonly fileSystem: HopperMachOImageFileSystem;
-  readonly selectBytes: (chunk: Buffer, position: number) => Buffer | undefined;
-}): Promise<HopperImageCopyOperation> => {
-  let copied = 0;
-  let source: HopperImageHandle;
-  let output: HopperImageHandle;
-  try {
-    source = new OwnedFileHandle(
-      await options.fileSystem.open(options.sourcePath, "r"),
-    );
-    output = new OwnedFileHandle(
-      await options.fileSystem.open(options.destination, "wx", 0o600),
-    );
-  } catch (cause: unknown) {
-    return {
-      copied,
-      operationFailure: { failed: true, cause },
-      cancelled: { cancelled: false },
-      source,
-      output,
-    };
-  }
-
-  try {
-    let position = 0;
-    for await (const bytes of readFileHandleChunks(source.handle)) {
-      if (options.signal?.aborted)
-        return {
-          copied,
-          operationFailure: { failed: false },
-          cancelled: { cancelled: true, reason: options.signal.reason },
-          source,
-          output,
-        };
-      const selected = options.selectBytes(bytes, position);
-      if (selected !== undefined && selected.length > 0) {
-        await output.handle.writeFile(selected);
-        copied += selected.length;
-        await options.observer?.afterChunkWritten?.(copied);
-      }
-      position += bytes.length;
-    }
-    return {
-      copied,
-      operationFailure: { failed: false },
-      cancelled: { cancelled: false },
-      source,
-      output,
-    };
-  } catch (cause: unknown) {
-    return {
-      copied,
-      operationFailure: { failed: true, cause },
-      cancelled: { cancelled: false },
-      source,
-      output,
-    };
-  }
-};
-
-const closeHopperImageHandles = async (
-  operation: HopperImageCopyOperation,
-  options: {
-    readonly sourcePath: string;
-    readonly destination: string;
-    readonly resourceScope: ArtifactResourceScope;
-  },
-): Promise<HopperImageCopyFinalization> => {
-  const closeFailures: HopperImageCloseFailure[] = [];
-  const retained: HopperImageCleanupAttempt[] = [];
-  const close = async (
-    owner: HopperImageHandle,
-    resource: string,
-  ): Promise<void> => {
-    if (owner === undefined) return;
-    try {
-      await owner.close();
-    } catch (cause: unknown) {
-      closeFailures.push({ resource, cause });
-      const attempt = await options.resourceScope.release({
-        kind: "file-handle",
-        resource,
-        handle: owner,
-      });
-      if (attempt.kind === "failed") retained.push(attempt);
-    }
-  };
-  await close(operation.output, `hopper-prepared-image:${options.destination}`);
-  await close(operation.source, `hopper-image-source:${options.sourcePath}`);
-  return { closeFailures, retained };
-};
-
-const hopperImageCopyFailure = (options: {
-  readonly operation: HopperImageCopyOperation;
-  readonly finalization: HopperImageCopyFinalization;
-  readonly failureContext: string;
-  readonly cancelled: boolean;
-  readonly cancelReason: unknown;
-}): Result<number, HopperStartError | HopperCancelledError> => {
-  const { operation, finalization } = options;
-  const cleanupErrors = finalization.retained.map((attempt) => {
-    const cleanupError = new ProviderCleanupError(
-      "hopper",
-      [attempt.owner.resource],
-      {
-        reason:
-          attempt.cause instanceof Error
-            ? attempt.cause.message
-            : String(attempt.cause),
-      },
-      { cause: attempt.cause },
-    );
-    attempt.lease.bindCleanupError(cleanupError);
-    return cleanupError;
-  });
-  const cleanup =
-    cleanupErrors.length === 0
-      ? undefined
-      : {
-          reason: cleanupErrors.map((failure) => failure.message).join("; "),
-          resources: [
-            ...new Set(
-              cleanupErrors.flatMap((failure) => failure.cleanupResources),
-            ),
-          ],
-        };
-  const primaryFailure = operation.operationFailure.failed
-    ? operation.operationFailure.cause
-    : finalization.closeFailures[0]?.cause;
-  const resultError =
-    options.cancelled && !operation.operationFailure.failed
-      ? new HopperCancelledError(
-          options.cancelReason,
-          cleanup === undefined ? {} : { cleanup },
-        )
-      : new HopperStartError({
-          ...(operation.operationFailure.failed ||
-          finalization.closeFailures.length > 0
-            ? { cause: primaryFailure }
-            : {}),
-          userMessage: `${options.failureContext}: ${primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure ?? "caller cancellation")}`,
-          ...(cleanup === undefined ? {} : { cleanup }),
-        });
-  for (const closeFailure of finalization.closeFailures) {
-    if (
-      !operation.operationFailure.failed &&
-      !options.cancelled &&
-      closeFailure === finalization.closeFailures[0]
-    )
-      continue;
-    resultError.retainSecondaryFailure(
-      new HopperStartError({
-        cause: closeFailure.cause,
-        userMessage: `Could not confirm closure of ${closeFailure.resource}.`,
-      }),
-    );
-  }
-  for (const cleanupError of cleanupErrors)
-    resultError.retainSecondaryFailure(cleanupError);
-  if (cleanupErrors.length > 0)
-    resultError.bindCleanupDependencies(cleanupErrors);
-  return err(resultError);
 };

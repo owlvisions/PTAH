@@ -53,6 +53,35 @@ const put = async (root: string, path: string, bytes: Buffer | string) => {
   await writeFile(destination, bytes);
 };
 
+it.skipIf(process.platform !== "linux")(
+  "keeps desktop sibling files with partial coverage for invalid UTF-8 names",
+  async () => {
+    const root = await createTestTempDirectory("rea-desktop-filename-bytes-");
+    const rawName = Buffer.from([
+      0x62, 0x61, 0x64, 0xff, 0x2e, 0x74, 0x78, 0x74,
+    ]);
+    const rawPath = Buffer.concat([Buffer.from(`${root}/`), rawName]);
+    await Promise.all([
+      writeFile(rawPath, "RAW_FILE"),
+      writeFile(join(root, "bad\ufffd.txt"), "UNICODE_FILE"),
+      writeFile(join(root, "good.txt"), "GOOD_FILE"),
+    ]);
+
+    const { report } = await inspect(root);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      entries_examined: 3,
+    });
+    expect(
+      report.files.filter(({ path }) => path === "bad\ufffd.txt"),
+    ).toHaveLength(1);
+    expect(report.files.map(({ path }) => path)).toContain("good.txt");
+    expect(report.limitations.join(" ")).toContain(
+      `First raw basename bytes: ${rawName.toString("hex")}`,
+    );
+  },
+);
+
 it("joins real PE/CLI reference facts and independent engine markers without picking a winner", async () => {
   const root = await createTestTempDirectory("rea-desktop-mixed-");
   await put(
@@ -113,13 +142,13 @@ it("joins real PE/CLI reference facts and independent engine markers without pic
     expect(probe.path).toBe(
       join(await realpath(root), files.get(probe.file_id)!.path),
     );
-  const summary = inspectAnalysisView({
+  const summary = await inspectAnalysisView({
     source: { kind: "inline", evidence },
     view: { kind: "summary" },
   });
   if (!summary.ok) throw summary.error;
   expect(JSON.stringify(summary.value)).not.toContain('"files":[');
-  const selected = inspectAnalysisView({
+  const selected = await inspectAnalysisView({
     source: { kind: "inline", evidence },
     view: {
       kind: "desktop-application",
@@ -203,7 +232,7 @@ it("retains bounded coverage and stable pages without claiming absence after a t
     entries_examined: 2,
   });
   expect(report.files).toHaveLength(2);
-  const result = inspectAnalysisView({
+  const result = await inspectAnalysisView({
     source: { kind: "inline", evidence },
     view: {
       kind: "desktop-application",
@@ -497,7 +526,7 @@ it.skipIf(process.platform === "win32").each(["path", "kind"] as const)(
       files_probed: 0,
       bytes_read: 0,
     });
-    const page = inspectAnalysisView({
+    const page = await inspectAnalysisView({
       source: { kind: "inline", evidence: after.evidence },
       view: {
         kind: "desktop-application",
@@ -708,15 +737,16 @@ it.each([
       metadataOffset,
       image.length - metadataOffset,
     );
+    if (layout.blob === null)
+      throw new Error("Fixture requires a #Blob stream");
+    const blobSize = layout.blob.size;
     const reference = layout.table(35)!;
     // ECMA-335 AssemblyRef: 8 version bytes, 4 flag bytes, then PublicKeyOrToken.
     // Keep its name valid while making that unrelated blob index invalid.
     if (layout.blobIndexSize === 2)
       image.writeUInt16LE(0xffff, reference.offset + 12);
     else image.writeUInt32LE(0xffff_ffff, reference.offset + 12);
-    expect(() =>
-      readAssemblyReference(image, layout, 1, layout.blob.size),
-    ).toThrow();
+    expect(() => readAssemblyReference(image, layout, 1, blobSize)).toThrow();
     await put(root, `${managedDirectory}/Assembly-CSharp.dll`, image);
     const { report } = await inspect(root);
     expect(report.candidates.map((candidate) => candidate.family)).toEqual([
@@ -783,6 +813,38 @@ it.each([
         .find((file) => file.path === "data.win")
         ?.facts.some((fact) => fact.kind === "gamemaker-form-header"),
     ).toBe(valid);
+    expect(report.coverage.status).toBe("complete-within-scan");
+  },
+);
+
+it.each(["assets/game.unx", "Example.app/Contents/Resources/game.ios"])(
+  "probes the GameMaker data file at %s",
+  async (path) => {
+    const root = await createTestTempDirectory("rea-desktop-gamemaker-data-");
+    const form = Buffer.alloc(16);
+    form.write("FORM");
+    form.writeUInt32LE(8, 4);
+    form.write("GEN8", 8);
+    form.writeUInt32LE(0, 12);
+    await put(root, path, form);
+
+    const { report } = await inspect(root);
+    expect(report.candidates.map((candidate) => candidate.family)).toContain(
+      "gamemaker",
+    );
+    expect(report.files).toContainEqual(
+      expect.objectContaining({
+        path,
+        read_status: "examined",
+        facts: [
+          expect.objectContaining({
+            kind: "gamemaker-form-header",
+            offset: 0,
+            value: { container: "FORM", first_chunk: "GEN8" },
+          }),
+        ],
+      }),
+    );
     expect(report.coverage.status).toBe("complete-within-scan");
   },
 );
@@ -999,7 +1061,7 @@ it("bounds diagnostic previews while preserving complete caller-provided issue f
     source,
     evidence.provider,
   );
-  const summarized = inspectAnalysisView({
+  const summarized = await inspectAnalysisView({
     source: { kind: "inline", evidence: callerEvidence },
     view: { kind: "summary" },
   });
@@ -1024,7 +1086,7 @@ it("bounds diagnostic previews while preserving complete caller-provided issue f
     },
   });
   for (const ids of [undefined, []]) {
-    const selected = inspectAnalysisView({
+    const selected = await inspectAnalysisView({
       source: { kind: "inline", evidence: callerEvidence },
       view: {
         kind: "desktop-application",

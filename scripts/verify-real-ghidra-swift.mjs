@@ -243,6 +243,7 @@ async function verifyStringLiterals() {
       assert(procedure, `${name} is missing from the procedure inventory`);
       const dossier = await call("analyze_function", {
         procedure: procedure.address,
+        detail: "complete",
       });
       const observed = dossier.swift_string_literals;
       assert(Array.isArray(observed), `${name} recorded no Swift literals`);
@@ -270,6 +271,7 @@ async function verifyStringLiterals() {
     );
     const unresolvedDossier = await call("analyze_function", {
       procedure: unresolvedJump.address,
+      detail: "complete",
     });
     assert.deepEqual(unresolvedDossier.swift_string_literals, []);
     assert.deepEqual(

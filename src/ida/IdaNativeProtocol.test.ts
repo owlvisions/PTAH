@@ -19,9 +19,11 @@ import { parseConfig } from "../config/parseConfig.js";
 import { IdaProvider } from "./IdaProvider.js";
 import { idaCapabilities } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type {
+  RetainedResourceScope,
+  AnalysisProfileResolution,
+} from "../application/AnalysisProvider.js";
 import { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
-import type { AnalysisProfileResolution } from "../application/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 
 const resourceScope: RetainedResourceScope = {
@@ -715,6 +717,9 @@ describe("native IDA literal matching", () => {
       "literal[bracket",
       "a\\b",
       "🧪",
+      "Σ",
+      "ΟΣ",
+      "ος",
     ];
     producer.overrideCall = (name, args) => {
       if (name !== "find_regex") return undefined;
@@ -755,12 +760,36 @@ describe("native IDA literal matching", () => {
         case_sensitive: false,
         expected: ["İstanbul"],
       },
-      { pattern: "σ", mode: "literal", case_sensitive: false, expected: ["σ"] },
+      // Match the shared Unicode contract after the byte-oriented producer has
+      // returned candidates, including final sigma inside a word.
+      ...["σ", "ς", "Σ"].map((pattern) => ({
+        pattern,
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["σ", "ς", "Σ", "ΟΣ", "ος"],
+      })),
+      ...["ΟΣ", "ος"].map((pattern) => ({
+        pattern,
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["ΟΣ", "ος"],
+      })),
+      ...[
+        { pattern: "σ", expected: ["σ"] },
+        { pattern: "ς", expected: ["ς", "ος"] },
+        { pattern: "Σ", expected: ["Σ", "ΟΣ"] },
+        { pattern: "ΟΣ", expected: ["ΟΣ"] },
+        { pattern: "ος", expected: ["ος"] },
+      ].map((query) => ({
+        ...query,
+        mode: "literal",
+        case_sensitive: true,
+      })),
       {
         pattern: "σ",
         mode: "regex",
         case_sensitive: false,
-        expected: ["σ", "ς"],
+        expected: ["σ", "ς", "Σ", "ΟΣ", "ος"],
       },
       {
         pattern: "[",
@@ -792,7 +821,7 @@ describe("native IDA literal matching", () => {
         const before = producer.calls.length;
         const result = await client.execute("search_strings", query);
         if (!result.ok) throw result.error;
-        expect(result.value.result).toEqual(
+        expect(result.value.result, JSON.stringify(query)).toEqual(
           expected.map((value) => ({
             address: `0x${(0x3000 + values.indexOf(value)).toString(16)}`,
             value,

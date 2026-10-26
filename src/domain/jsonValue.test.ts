@@ -5,6 +5,8 @@ import { z } from "zod";
 import {
   jsonObjectSchema,
   jsonValueSchema,
+  jsonValueValidationIssue,
+  jsonValueValidationSteps,
   MAX_JSON_DEPTH,
 } from "./jsonValue.js";
 
@@ -110,6 +112,59 @@ describe("jsonValueSchema depth bound", () => {
       jsonValueSchema.safeParse({ a: Number.POSITIVE_INFINITY }).success,
     ).toBe(false);
     expect(jsonValueSchema.safeParse({ a: 1n }).success).toBe(false);
+  });
+});
+
+describe("jsonValueSchema width", () => {
+  const WIDTH = 300_000;
+
+  it("validates wide containers member by member, including a late defect", () => {
+    const wide = Array.from({ length: WIDTH }, (_, index) => index);
+    const keyed = Object.fromEntries(
+      wide.slice(0, 50_000).map((index) => [`k${String(index)}`, index]),
+    );
+    expect(jsonValueValidationIssue({ wide, keyed })).toBeUndefined();
+    const holed = Array.from({ length: WIDTH }, (_, index) => index);
+    delete holed[WIDTH - 1];
+    expect(jsonValueValidationIssue(holed)).toBe(
+      "JSON arrays require dense data properties without accessors",
+    );
+    const lateAccessor: Record<string, unknown> = { ...keyed };
+    Object.defineProperty(lateAccessor, "zz", {
+      enumerable: true,
+      get: () => 1,
+    });
+    expect(jsonValueValidationIssue(lateAccessor)).toBe(
+      "JSON objects cannot contain accessors",
+    );
+  });
+
+  it("reports the first defect in member order, descending before moving on", () => {
+    const holed: unknown[] = [[Number.NaN], 1, 2];
+    delete holed[2];
+    expect(jsonValueValidationIssue(holed)).toBe("JSON numbers must be finite");
+    expect(jsonValueValidationIssue([Number.NaN, () => 1])).toBe(
+      "JSON numbers must be finite",
+    );
+    expect(jsonValueValidationIssue([() => 1, Number.NaN])).toBe(
+      "Invalid JSON value",
+    );
+  });
+
+  it("still yields cooperatively while walking a wide array", () => {
+    const steps = jsonValueValidationSteps(
+      Array.from({ length: WIDTH }, () => true),
+    );
+    let yields = 0;
+    for (;;) {
+      const step = steps.next();
+      if (step.done) {
+        expect(step.value).toBeUndefined();
+        break;
+      }
+      yields += 1;
+    }
+    expect(yields).toBeGreaterThanOrEqual(Math.floor(WIDTH / 4097) - 1);
   });
 });
 

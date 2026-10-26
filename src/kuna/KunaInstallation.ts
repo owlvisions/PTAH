@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -119,6 +120,7 @@ export interface KunaReadinessFailure {
     | "version_unresolved";
   readonly reason: string;
   readonly diagnostics: Readonly<Record<string, JsonValue>>;
+  readonly remediation?: string;
 }
 
 export interface KunaInstallationOptions {
@@ -171,6 +173,10 @@ export interface KunaResourceScope {
   readonly owner: RetainedResourceScope;
   readonly cleanupResources: readonly string[] | undefined;
   readonly hasPending: boolean;
+  installationCancellationError(
+    cause: unknown,
+    operation: string,
+  ): AnalysisCancelledError | undefined;
   bindFailure(failure: RegularFileCleanupFailure, error: AnalysisError): void;
   bindRetainedFailure(error: AnalysisError): void;
 }
@@ -183,25 +189,48 @@ export const createKunaResourceScope = (
     Parameters<RetainedResourceScope["retain"]>[0],
     { readonly lease: AnalysisCleanupLease }
   >();
-  const bindPendingFailure = (error: AnalysisError) => {
-    const retained = [...leases.values()]
+  const pendingLeases = () =>
+    [...leases.values()]
       .map(({ lease }) => lease)
       .filter((lease) => !lease.released);
+  const bindPendingFailure = (error: AnalysisError) => {
+    const retained = pendingLeases();
     if (retained.length > 0) new AnalysisCleanupLeaseGroup(error, retained);
+  };
+  const cleanupResources = (
+    pending = pendingLeases(),
+  ): readonly string[] | undefined => {
+    if (pending.some((lease) => lease.cleanupResources === undefined))
+      return undefined;
+    return [
+      ...new Set(pending.flatMap((lease) => lease.cleanupResources ?? [])),
+    ];
   };
   return {
     get hasPending() {
-      return [...leases.values()].some(({ lease }) => !lease.released);
+      return pendingLeases().length > 0;
     },
     get cleanupResources() {
-      const pending = [...leases.values()]
-        .map(({ lease }) => lease)
-        .filter((lease) => !lease.released);
-      if (pending.some((lease) => lease.cleanupResources === undefined))
-        return undefined;
-      return [
-        ...new Set(pending.flatMap((lease) => lease.cleanupResources ?? [])),
-      ];
+      return cleanupResources();
+    },
+    installationCancellationError: (cause, operation) => {
+      const cancellation = kunaInstallationCancellation(cause);
+      if (cancellation === undefined) return undefined;
+      const pending = pendingLeases();
+      const error = new AnalysisCancelledError(operation, {
+        cause: cancellation.reason,
+        diagnostics: cancellation.diagnostics,
+        ...(pending.length === 0
+          ? {}
+          : {
+              cleanup: {
+                reason: "Kuna version-probe process cleanup is unconfirmed.",
+                resources: cleanupResources(pending) ?? [],
+              },
+            }),
+      });
+      bindPendingFailure(error);
+      return error;
     },
     owner: {
       retain: (owner, resource) => {
@@ -355,11 +384,16 @@ export const inspectKunaInstallation = async (
 ): Promise<Result<KunaInstallation, KunaReadinessFailure>> => {
   const configuration = readKunaConfiguration(environment, options.platform);
   if (!configuration.ok)
-    return failure(configuration.error.code, configuration.error.reason, {
-      configured: configuration.error.code !== "not_configured",
-      ...(configuration.error.setting === null
-        ? {}
-        : { setting: configuration.error.setting }),
+    return err({
+      code: configuration.error.code,
+      reason: configuration.error.reason,
+      remediation: configuration.error.remediation,
+      diagnostics: {
+        configured: configuration.error.code !== "not_configured",
+        ...(configuration.error.setting === null
+          ? {}
+          : { setting: configuration.error.setting }),
+      },
     });
   const { command } = configuration.value;
   assertRegularFileActive(options.signal);

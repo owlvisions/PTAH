@@ -14,7 +14,7 @@ import {
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import {
   applicationVersionComparisonResultSchema,
@@ -31,7 +31,7 @@ import {
   buildSyntheticJavaScriptApplicationGraph,
 } from "../../../src/domain/javascript/javascriptApplicationGraph.fixture.js";
 import { writeVersionedJavaScriptApplicationFixtures } from "../../fixtures/javascriptArtifactApplication.js";
-import { JAVASCRIPT_APPLICATION_PROVIDER } from "../../../src/application/InvestigationProviders.js";
+import { JAVASCRIPT_APPLICATION_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/managed/ManagedApplicationGraphService.js";
 import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -48,6 +48,37 @@ afterEach(async () => {
 });
 
 describe("JavaScript application workflows", () => {
+  it("preserves source-owned requested native members across trace directions", () => {
+    const graph = buildSyntheticJavaScriptApplicationGraph();
+    const addon = graph.nodes.find(({ kind }) => kind === "native-addon");
+    if (addon === undefined) throw new Error("Expected native fixture node");
+    const traces = (["incoming", "outgoing", "both"] as const).map(
+      (direction) =>
+        traceApplicationFeature({
+          sourceEvidenceId: `ev_${"a".repeat(64)}`,
+          graph,
+          nativeEvidence: [],
+          seed: {
+            kind: "node-id",
+            value: addon.node_id,
+            match: "exact",
+            case_sensitive: true,
+          },
+          direction,
+        }),
+    );
+    for (const trace of traces)
+      expect(trace.native_handoffs).toMatchObject([
+        {
+          native_node_id: addon.node_id,
+          requested_exports: ["openProject"],
+          export_node_ids: [expect.any(String)],
+        },
+      ]);
+    expect(traces[0]!.native_handoffs).toEqual(traces[1]!.native_handoffs);
+    expect(traces[0]!.graph?.edges).not.toEqual(traces[1]!.graph?.edges);
+  });
+
   it("traces a contextBridge API through IPC into linked native evidence", () => {
     const graph = buildSyntheticJavaScriptApplicationGraph();
     const nativeEvidence = createEvidence(
@@ -198,9 +229,9 @@ describe("complete comparison projections", () => {
     ]);
     const compared = compareApplicationVersionsEvidence({ left, right });
     if (!compared.ok) throw compared.error;
-    const result = applicationVersionComparisonResultSchema.parse(
-      compared.value.normalized_result,
-    );
+    expect(compared.value.sources[0]).toBe(left);
+    expect(compared.value.sources[1]).toBe(right);
+    const result = compared.value.result;
     expectFullComparisonResultSchema(result);
     const modules = result.items.filter(
       ({ node_kind: kind }) => kind === "javascript-module",
@@ -261,9 +292,7 @@ describe("complete comparison projections", () => {
     ]);
     const compared = compareApplicationVersionsEvidence({ left, right });
     if (!compared.ok) throw compared.error;
-    const result = applicationVersionComparisonResultSchema.parse(
-      compared.value.normalized_result,
-    );
+    const result = compared.value.result;
     expect(result.items).toContainEqual(
       expect.objectContaining({
         node_kind: "source-module",
@@ -348,10 +377,10 @@ describe("Application graph Evidence envelopes", () => {
         predicateType: source.predicate_type,
         operation: source.operation,
         parameters: source.parameters,
-        result: jsonValueSchema.parse({
+        result: {
           ...result,
           evidence_links: [...result.evidence_links, extraLink],
-        }),
+        },
         rawResult: source.raw_result,
         confidence: source.confidence,
         authority: source.authority,
@@ -450,7 +479,7 @@ describe("JavaScript application workflow error diagnostics", () => {
         predicateType: evidence.predicate_type,
         operation: evidence.operation,
         parameters: evidence.parameters,
-        result: jsonValueSchema.parse(malformedResult),
+        result: malformedResult,
         confidence: evidence.confidence,
         authority: evidence.authority,
         limitations: evidence.limitations,

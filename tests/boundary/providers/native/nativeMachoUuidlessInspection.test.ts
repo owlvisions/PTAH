@@ -42,11 +42,16 @@ const otoolOutputWithoutUuid = async () => {
 
 class UuidlessDyldRunner implements NativeCommandRunner {
   readonly fixture: NativeFixtureRunner;
+  readonly commands: {
+    readonly tool: string;
+    readonly args: readonly string[];
+  }[] = [];
 
   constructor(
     otool: string,
     readonly diagnostic = missingUuidDiagnostic,
     readonly stderr = "",
+    readonly signal: string | null = null,
   ) {
     this.fixture = new NativeFixtureRunner({
       "otool:-h": otool,
@@ -59,6 +64,7 @@ class UuidlessDyldRunner implements NativeCommandRunner {
     arguments_: readonly string[],
     options: NativeCommandOptions,
   ) {
+    this.commands.push({ tool, args: arguments_ });
     if (tool !== "dyld_info") return this.fixture.run(tool, arguments_);
     const capture: NativeCommandCapture = {
       tool,
@@ -74,7 +80,7 @@ class UuidlessDyldRunner implements NativeCommandRunner {
       ),
       stderrBytes: Buffer.byteLength(this.stderr),
       exitCode: 1,
-      signal: null,
+      signal: this.signal,
     };
     if (options.acceptNonZero) return ok(capture);
     return err(
@@ -90,6 +96,85 @@ class UuidlessDyldRunner implements NativeCommandRunner {
     );
   }
 }
+
+it.each([
+  { fileType: "4", diagnostic: "unknown mh.filetype 4" },
+  { fileType: "CORE", diagnostic: "unknown mh.filetype 4" },
+  { fileType: "3", diagnostic: "unknown mh.filetype 3" },
+  { fileType: "4", diagnostic: "unknown filetype 4" },
+  { fileType: "3", diagnostic: "unknown filetype 3" },
+  {
+    fileType: "10",
+    diagnostic:
+      "section '__TEXT/__text' has offset=0 but is not a zero-fill section type",
+  },
+])(
+  "classifies $diagnostic for Mach-O type $fileType before nm fallback",
+  async ({ fileType, diagnostic }) => {
+    const otool = [
+      "Mach header",
+      "magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
+      `0xfeedfacf 16777228 0 0x00 ${fileType} 0 0 0x0`,
+    ].join("\n");
+    const runner = new UuidlessDyldRunner(otool, diagnostic);
+    const path = "/fixture/refused-type";
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(nativeMachoTarget(path))
+      .execute("inspect_macho", {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisUnsupportedTargetError",
+        path,
+        reason: expect.stringContaining(
+          fileType === "10" ? "dSYM" : diagnostic,
+        ),
+        remediationAction: expect.stringContaining("linked Mach-O"),
+        capturedOutput: {
+          stdout: dyldDiagnosticOutput(path, diagnostic),
+          exit_code: 1,
+          signal: null,
+          truncated: false,
+        },
+      },
+    });
+    expect(runner.commands.filter(({ tool }) => tool === "nm")).toEqual([
+      expect.objectContaining({
+        args: expect.arrayContaining(["--no-dyldinfo"]),
+      }),
+    ]);
+  },
+);
+
+it.each([
+  { fileType: "2", signal: null, diagnostic: "unknown mh.filetype 4" },
+  { fileType: "UNKNOWN", signal: null, diagnostic: "unknown mh.filetype 4" },
+  { fileType: "4", signal: "SIGTERM", diagnostic: "unknown mh.filetype 4" },
+  { fileType: "2", signal: null, diagnostic: "unknown filetype 4" },
+  { fileType: "4", signal: "SIGTERM", diagnostic: "unknown filetype 4" },
+])(
+  "keeps $diagnostic as a failure for header $fileType and signal $signal",
+  async ({ fileType, signal, diagnostic }) => {
+    const otool = [
+      "Mach header",
+      "magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
+      `0xfeedfacf 16777228 0 0x00 ${fileType} 0 0 0x0`,
+    ].join("\n");
+    const runner = new UuidlessDyldRunner(otool, diagnostic, "", signal);
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(nativeMachoTarget("/fixture/conflicting-type"))
+      .execute("inspect_macho", {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: signal === null ? "AnalysisOutputError" : "ProviderAdapterError",
+        capturedOutput: { exit_code: 1, signal },
+      },
+    });
+  },
+);
 
 it("returns readable Mach-O Evidence when dyld_info identifies a missing UUID", async () => {
   const withoutUuid = await otoolOutputWithoutUuid();

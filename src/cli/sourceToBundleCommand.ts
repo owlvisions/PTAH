@@ -53,12 +53,15 @@ export const registerSourceToBundleCommand = (
                 resources,
               );
               if (!reference.ok) return reference;
-              const { compareSourceToBundleEvidenceValidated } =
+              const { compareSourceToBundleEvidence } =
                 await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
-              return compareSourceToBundleEvidenceValidated({
+              const compared = compareSourceToBundleEvidence({
                 ...reference.value,
                 application: parsed.data.application,
               });
+              return compared.ok
+                ? { ok: true, value: compared.value.evidence }
+                : compared;
             },
             resources,
             "javascript-application-workflow",

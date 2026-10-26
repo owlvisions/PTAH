@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { offsetDateTimeSchema } from "./offsetDateTime.js";
+import {
+  offsetDateTimeSchema,
+  readRecordedDateTime,
+} from "./offsetDateTime.js";
 
-/** The validator this schema replaces; it remains the oracle for the accepted set. */
-const replaced = z.string().datetime({ offset: true });
+/** Freeze the Zod 4.4.3 accepted set: later releases require seconds.
+ * Recorded evidence must continue accepting historical minute-precision timestamps. */
+const legacyPattern =
+  "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$";
+const replaced = new RegExp(legacyPattern, "u");
 
 const ACCEPTED: readonly (readonly [string, string])[] = [
   ["a UTC timestamp", "2026-10-09T04:00:00Z"],
@@ -56,8 +62,7 @@ describe("offset datetime schema", () => {
   it("classifies every case exactly as the replaced Zod validator does", () => {
     const divergences = CASES.filter(
       ([, value]) =>
-        offsetDateTimeSchema.safeParse(value).success !==
-        replaced.safeParse(value).success,
+        offsetDateTimeSchema.safeParse(value).success !== replaced.test(value),
     ).map(([label]) => label);
     expect(divergences).toEqual([]);
   });
@@ -78,6 +83,137 @@ describe("offset datetime schema", () => {
   });
 });
 
+describe("recorded datetime facts", () => {
+  const epochSecond = Date.UTC(2026, 9, 20, 9) / 1000;
+
+  it.each<{
+    text: string;
+    expected: NonNullable<ReturnType<typeof readRecordedDateTime>>;
+  }>([
+    {
+      text: "2026-10-20T09:00:00.000100Z",
+      expected: {
+        instant: { epochSecond, fraction: "0001" },
+        spelling: {
+          separator: "T",
+          secondsPresent: true,
+          fractionDigits: 6,
+          zone: "Z",
+        },
+      },
+    },
+    {
+      text: "2026-10-20 10:00:00.000100+0100",
+      expected: {
+        instant: { epochSecond, fraction: "0001" },
+        spelling: {
+          separator: " ",
+          secondsPresent: true,
+          fractionDigits: 6,
+          zone: "+0100",
+        },
+      },
+    },
+    {
+      text: "2026-10-20T09:00:00.0000000002",
+      expected: {
+        instant: { epochSecond, fraction: "0000000002" },
+        spelling: {
+          separator: "T",
+          secondsPresent: true,
+          fractionDigits: 10,
+          zone: "",
+        },
+      },
+    },
+    {
+      text: "2026-10-20T08:30:00.1234567890123456789000-00:30",
+      expected: {
+        instant: { epochSecond, fraction: "1234567890123456789" },
+        spelling: {
+          separator: "T",
+          secondsPresent: true,
+          fractionDigits: 22,
+          zone: "-00:30",
+        },
+      },
+    },
+    {
+      text: "2026-10-20T09:00-00:00",
+      expected: {
+        instant: { epochSecond, fraction: "" },
+        spelling: {
+          separator: "T",
+          secondsPresent: false,
+          fractionDigits: 0,
+          zone: "-00:00",
+        },
+      },
+    },
+    {
+      text: "2026-10-20 10:00+0100",
+      expected: {
+        instant: { epochSecond, fraction: "" },
+        spelling: {
+          separator: " ",
+          secondsPresent: false,
+          fractionDigits: 0,
+          zone: "+0100",
+        },
+      },
+    },
+    {
+      text: "0001-01-01T01:00:00.0000000002+0100",
+      expected: {
+        instant: { epochSecond: -62_135_596_800, fraction: "0000000002" },
+        spelling: {
+          separator: "T",
+          secondsPresent: true,
+          fractionDigits: 10,
+          zone: "+0100",
+        },
+      },
+    },
+    {
+      text: "0000-02-29 00:00:00.000Z",
+      expected: {
+        instant: { epochSecond: -62_162_121_600, fraction: "" },
+        spelling: {
+          separator: " ",
+          secondsPresent: true,
+          fractionDigits: 3,
+          zone: "Z",
+        },
+      },
+    },
+  ])(
+    "preserves the exact instant and source spelling of $text",
+    ({ text, expected }) => {
+      expect(readRecordedDateTime(text)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    "0001-02-29T00:00:00Z",
+    "1900-02-29 00:00:00",
+    "2026-04-31 00:00:00+0100",
+    "2026-13-01T00:00:00Z",
+    "2026-10-20T24:00:00Z",
+    "2026-10-20T09:60:00Z",
+    "2026-10-20T09:00:60Z",
+    "2026-10-20T09:00:00+24:00",
+    "2026-10-20 09:00:00+0060",
+    "2026-10-20T09:00:00+01",
+    "2026-10-20T09:00.1Z",
+    "2026-10-20t09:00:00Z",
+    "2026-10-20T09:00:00z",
+    "2026-10-20",
+    "Tue, 20 Oct 2026 09:00:00 GMT",
+  ])("does not invent ISO facts for %s", (text) => {
+    expect(readRecordedDateTime(text)).toBeUndefined();
+  });
+});
+
 const findPattern = (value: unknown): string | undefined => {
   if (value === null || typeof value !== "object") return undefined;
   if ("pattern" in value && typeof value.pattern === "string")
@@ -89,13 +225,5 @@ const findPattern = (value: unknown): string | undefined => {
   return undefined;
 };
 
-/** The pattern the replaced Zod validator projects, recovered through the same path. */
-const replacedSource = (): string => {
-  const emitted = z.toJSONSchema(z.object({ observed_at: replaced }), {
-    target: "draft-2020-12",
-  });
-  const pattern = findPattern(emitted);
-  if (pattern === undefined)
-    throw new Error("The replaced validator must project a pattern");
-  return pattern;
-};
+/** Historical pattern used to prove the client Unicode-mode incompatibility. */
+const replacedSource = (): string => legacyPattern;

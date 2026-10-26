@@ -16,6 +16,7 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -87,7 +88,7 @@ export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
 
 const fileSchema = z.strictObject({
   path: z.string().min(1),
-  bytes: z.number().int().nonnegative(),
+  bytes: z.int().nonnegative(),
   sha256: z.string().regex(SHA256_PATTERN),
 });
 
@@ -98,7 +99,7 @@ const manifestSchema = z.strictObject({
     target_sha256: z.string().regex(SHA256_PATTERN),
     kuna_sha256: z.string().regex(SHA256_PATTERN),
     kuna_version: z.string().min(1),
-    jobs: z.number().int().positive(),
+    jobs: z.int().positive(),
   }),
   files: z.strictObject({
     c: fileSchema,
@@ -108,8 +109,8 @@ const manifestSchema = z.strictObject({
     inventory: fileSchema,
   }),
   summary: z.strictObject({
-    decompiled: z.number().int().nonnegative(),
-    failed: z.number().int().nonnegative(),
+    decompiled: z.int().nonnegative(),
+    failed: z.int().nonnegative(),
   }),
   created_at: z.string().datetime(),
 });
@@ -127,6 +128,35 @@ export interface KunaProject {
   readonly functions: readonly KunaProjectFunction[];
   /** Every callable entry Kuna found, including imports it does not decompile. */
   readonly inventory: readonly KunaInventoryFunction[];
+}
+
+/** Publication succeeded; only its stopped staging still needs cleanup. */
+export class KunaPublishedProjectCleanupError extends ProviderCleanupError {
+  constructor(
+    readonly project: KunaProject,
+    cleanup: ProviderCleanupError,
+  ) {
+    super(
+      KUNA_PROVIDER_ID,
+      cleanup.cleanupResources,
+      {
+        ...cleanup.diagnostics,
+        published_export: {
+          kind: "project-export",
+          key: project.key,
+          directory: project.directory,
+          manifest: project.manifest,
+        },
+      },
+      {
+        operation: KUNA_EXPORT_OPERATION,
+        cause: cleanup,
+        remediationAction:
+          "The immutable project export is published and remains available. Retry only the retained staging cleanup with close_binary; do not rerun the export to recover it.",
+      },
+    );
+    this.bindCleanupDependencies([cleanup]);
+  }
 }
 
 /** One request to produce or reuse the export for a target. */
@@ -776,7 +806,16 @@ export class KunaProjectCache {
     // Only a proven-stopped build may enter trash. A failed write, crash or
     // lost cleanup identity therefore never makes live staging reclaimable.
     const retired = await this.#retireStaging(staging, key);
-    if (retired !== undefined) return err(retired);
+    if (retired !== undefined)
+      return err(
+        built.result.ok
+          ? new KunaPublishedProjectCleanupError(built.result.value, retired)
+          : analysisErrorWithCleanupFailure(
+              built.result.error,
+              retired,
+              KUNA_EXPORT_OPERATION,
+            ).bindCleanupDependencies([built.result.error, retired]),
+      );
     if (built.result.ok)
       // The entry is published either way; a failed eviction retries on the next publish.
       await this.#evict(key).catch(() => undefined);

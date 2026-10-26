@@ -793,27 +793,52 @@ it("refuses raw fragments without changing an encoded query value", async () => 
   });
 });
 
-it("lets only a lone initialize replace a session, not a batch that carries one", async () => {
+it.each([1, 2])(
+  "refuses a %i-message initialize batch without replacing a session",
+  async (size) => {
+    const { served } = await start();
+    const { client } = await connect(served.url);
+    const url = new URL(served.url);
+    const single = JSON.parse(await initializeRequest().text()) as unknown;
+    const batch = await rawHttpRequest(url, {
+      method: "POST",
+      headers: {
+        host: `127.0.0.1:${url.port}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(
+        size === 1
+          ? [single]
+          : [single, { jsonrpc: "2.0", method: "notifications/initialized" }],
+      ),
+    });
+    expect(batch.status).toBeGreaterThanOrEqual(400);
+    expect(batch.status).toBeLessThan(500);
+    expect(await echo(client, "not evicted")).toEqual([
+      { type: "text", text: "not evicted" },
+    ]);
+    await client.close();
+  },
+);
+
+it("refuses an initialize batch before opening the first session", async () => {
   const { served } = await start();
-  const { client } = await connect(served.url);
   const url = new URL(served.url);
   const single = JSON.parse(await initializeRequest().text()) as unknown;
-  const batch = await rawHttpRequest(url, {
+  const response = await rawHttpRequest(url, {
     method: "POST",
     headers: {
       host: `127.0.0.1:${url.port}`,
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
     },
-    body: JSON.stringify([
-      single,
-      { jsonrpc: "2.0", method: "notifications/initialized" },
-    ]),
+    body: JSON.stringify([single]),
   });
-  expect(batch.status).toBeGreaterThanOrEqual(400);
-  expect(batch.status).toBeLessThan(500);
-  expect(await echo(client, "not evicted")).toEqual([
-    { type: "text", text: "not evicted" },
+  expect(response.status).toBe(400);
+  const { client } = await connect(served.url);
+  expect(await echo(client, "valid initialization")).toEqual([
+    { type: "text", text: "valid initialization" },
   ]);
   await client.close();
 });

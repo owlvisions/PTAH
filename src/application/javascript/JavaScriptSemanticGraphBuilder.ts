@@ -18,7 +18,6 @@ import type {
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import { sourceRangesEqual as rangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   projectSemanticEvents,
@@ -31,6 +30,7 @@ import {
   projectSemanticRequests,
 } from "./JavaScriptSemanticGraphDataProjection.js";
 import { projectSemanticResources } from "./JavaScriptSemanticGraphResourceProjection.js";
+import { projectSemanticAssignments } from "./JavaScriptSemanticGraphAssignmentProjection.js";
 import { projectSemanticObjects } from "./JavaScriptSemanticGraphObjectProjection.js";
 import { projectSemanticValues } from "./JavaScriptSemanticGraphValueProjection.js";
 import {
@@ -87,14 +87,7 @@ import type {
 import type { ElectronCallPath } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import { projectElectronSemanticCallPaths } from "./JavaScriptSemanticGraphElectronProjection.js";
 
-interface BuilderInput {
-  readonly rootArtifactSha256: string;
-  readonly applicationGraph: Pick<
-    JavaScriptApplicationGraph,
-    "graph_id" | "nodes"
-  >;
-  readonly analysis: JavaScriptArtifactAnalysis;
-}
+type ApplicationGraph = Pick<JavaScriptApplicationGraph, "graph_id" | "nodes">;
 
 interface FileContext extends SemanticFlowProjectionContext {
   readonly file: JavaScriptArtifactFile;
@@ -143,33 +136,6 @@ export const SEMANTIC_GRAPH_NODE_CEILING =
 export const SEMANTIC_GRAPH_FILE_NODE_CEILING =
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile;
 
-export const buildJavaScriptSemanticGraph = ({
-  rootArtifactSha256,
-  applicationGraph,
-  analysis,
-}: BuilderInput): JavaScriptSemanticGraph => {
-  const projection = createJavaScriptSemanticGraphProjection();
-  for (const analyzed of analysis.files) {
-    if (analyzed.semantic !== null)
-      projection.projectFile(
-        analyzed.file,
-        analyzed.semantic.ir,
-        analyzed.javascript?.electron.call_paths,
-      );
-    else if (
-      !analyzed.file.text.included &&
-      analyzed.file.text.reason === "outside-analysis-scope"
-    )
-      projection.recordUnavailableFile(
-        analyzed.file,
-        "Source was not analyzed because it is outside the caller-selected source_paths.",
-        null,
-        "incomplete-module",
-      );
-  }
-  return projection.finish(rootArtifactSha256, applicationGraph);
-};
-
 /** File-local semantic projection that does not retain consumed source IR. */
 export interface JavaScriptSemanticGraphProjection {
   /** Node capacity offered to the next independently analyzed source file. */
@@ -198,11 +164,11 @@ export interface JavaScriptSemanticGraphProjection {
   ) => Generator<void, void>;
   readonly finish: (
     rootArtifactSha256: string,
-    applicationGraph: BuilderInput["applicationGraph"],
+    applicationGraph: ApplicationGraph,
   ) => JavaScriptSemanticGraph;
   readonly finishImmutableSteps: (
     rootArtifactSha256: string,
-    applicationGraph: BuilderInput["applicationGraph"],
+    applicationGraph: ApplicationGraph,
   ) => Generator<void, JavaScriptSemanticGraph>;
 }
 
@@ -329,7 +295,7 @@ export const createJavaScriptSemanticGraphProjection = (
   const finishWith = <Value>(
     factory: (input: unknown) => Value,
     rootArtifactSha256: string,
-    applicationGraph: BuilderInput["applicationGraph"],
+    applicationGraph: ApplicationGraph,
   ): Value => {
     bindSemanticGraphApplicationNodes(state, applicationGraph);
     if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
@@ -706,6 +672,8 @@ function* projectFileSteps(
     returnSiteNodes,
     argumentNodes: new Map(),
     referenceNodes: [],
+    readNodes: [],
+    writeNodes: [],
     callResolutions: new Map(
       ir.callSites.map((call) => [
         call.callSiteId,
@@ -852,7 +820,11 @@ function* projectDefinitionsAndReferences(
       reference.bindingId === null
         ? undefined
         : context.bindingNodes.get(reference.bindingId);
-    if (expression !== null) context.referenceNodes.push(expression);
+    if (expression !== null) {
+      context.referenceNodes.push(expression);
+      if (reference.role === "read") context.readNodes.push(expression);
+      if (reference.role === "write") context.writeNodes.push(expression);
+    }
     if (binding === undefined || expression === null) continue;
     if (reference.role === "read")
       addRelation(context.state, {
@@ -971,6 +943,7 @@ const FILE_PROJECTION_PASSES: readonly ((
 ) => Iterator<void, void> | void)[] = [
   projectSemanticValues,
   projectSemanticObjects,
+  projectSemanticAssignments,
   projectCalls,
   projectSemanticPromises,
   projectSemanticEvents,

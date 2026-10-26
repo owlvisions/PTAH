@@ -1,11 +1,13 @@
+import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { WasmArtifactPort } from "./WasmArtifactPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectWasmArtifactInputSchema,
   wasmArtifactSchema,
@@ -20,7 +22,10 @@ const OPERATION = "inspect_wasm_artifact";
 
 /** Shared artifact validation and typed inline Evidence for CLI/MCP. */
 export class WasmArtifactService {
-  constructor(readonly provider: WasmArtifactPort) {}
+  constructor(
+    readonly provider: WasmArtifactPort,
+    readonly settings?: AnalysisSettingsReader,
+  ) {}
 
   /** Join provider cleanup during shutdown or an explicit retry. */
   close(): Promise<void> {
@@ -45,15 +50,21 @@ export class WasmArtifactService {
           cause: input.error,
         }),
       );
-    const inspected = await this.provider.inspect(input.data, options);
+    const timeout =
+      input.data.command_timeout_ms ??
+      this.settings?.().overrides["wasm.command_timeout_ms"] ??
+      DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const inspected = await this.provider.inspect(input.data, {
+      ...options,
+      commandTimeoutMs: timeout,
+    });
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const report = wasmArtifactSchema.safeParse(execution.result);
     if (
       !report.success ||
       report.data.artifact.path !== input.data.path ||
-      report.data.tool_profile.timeout_ms !==
-        (input.data.command_timeout_ms ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS) ||
+      report.data.tool_profile.timeout_ms !== timeout ||
       !wasmArtifactMatchesSubject(report.data.artifact, execution.subject) ||
       JSON.stringify(report.data.glue.map((item) => item.artifact.path)) !==
         JSON.stringify(input.data.glue_paths) ||
@@ -69,17 +80,12 @@ export class WasmArtifactService {
         ),
       );
     return completeProviderEvidence(
-      createEvidence(execution.subject, execution.provider, {
-        operation: OPERATION,
-        parameters: input.data,
-        result: report.data,
-        ...(execution.rawResult === null
-          ? {}
-          : { rawResult: execution.rawResult }),
-        confidence: "observed",
-        locations: execution.locations,
-        limitations: execution.limitations,
-      }),
+      createAnalysisExecutionEvidence(
+        OPERATION,
+        input.data,
+        { ...execution, result: report.data },
+        "observed",
+      ),
       options?.signal,
     );
   }

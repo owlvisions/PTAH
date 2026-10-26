@@ -1,5 +1,5 @@
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
-import { blocksProcessStart } from "../logger.js";
+import { blocksProcessStart } from "../config/processStart.js";
 import type {
   ClientRegistrationStatus,
   UnhealthyClientRegistrationStatus,

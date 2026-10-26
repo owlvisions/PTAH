@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
   artifactIntegrityPair,
   artifactIntegrityDetails,
@@ -15,11 +16,11 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-  type ArtifactTraversalOmission,
 } from "../ArtifactReader.js";
+import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
+import { DirectoryArtifactEntryAccessDenied } from "../DirectoryArtifactReader.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
-import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import {
   classifyArtifactContent,
   classifyArtifactBytes,
@@ -34,7 +35,7 @@ import {
   STRICT_INTEGRITY_POLICY,
   type ArtifactIntegrityPolicy,
 } from "./types.js";
-import { hashReadable } from "../ArtifactHash.js";
+import { abortIfNeeded, hashReadable } from "../ArtifactHash.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;
@@ -56,6 +57,7 @@ interface ScanContext {
   readonly reader: ArtifactReader;
   readonly signal: AbortSignal | undefined;
   readonly integrity: ArtifactIntegrityPolicy;
+  readonly asarHeaderAdmission: AsarHeaderAdmission | undefined;
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
@@ -63,8 +65,7 @@ interface ScanContext {
   readonly registry: ArtifactPathRegistry;
   readonly expandedContainerIds: Set<string>;
   readonly ownedReaders: ArtifactReader[];
-  readonly omissions: ArtifactTraversalOmission[];
-  readonly coverage: ArtifactReaderTraversal[];
+  readonly traversal: ArtifactTraversalObservation;
 }
 
 export const scanReader = async (
@@ -72,6 +73,7 @@ export const scanReader = async (
   ownedReaders: ArtifactReader[],
   signal?: AbortSignal,
   integrity: ArtifactIntegrityPolicy = STRICT_INTEGRITY_POLICY,
+  asarHeaderAdmission?: AsarHeaderAdmission,
 ): Promise<{
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
@@ -94,6 +96,7 @@ export const scanReader = async (
     reader,
     signal,
     integrity,
+    asarHeaderAdmission,
     nodes,
     occurrences,
     pendingContradictions,
@@ -101,8 +104,7 @@ export const scanReader = async (
     registry: new ArtifactPathRegistry(),
     expandedContainerIds: new Set<string>(),
     ownedReaders,
-    omissions: [],
-    coverage: [],
+    traversal: new ArtifactTraversalObservation(),
   };
   await visitArtifactEntries(context, reader, "");
   // Archive directories may appear after their children. Resolve containment
@@ -114,30 +116,17 @@ export const scanReader = async (
     context.expandedContainerIds,
   );
   const structuralLimitations = [...parentResolution.limitations];
+  context.traversal.onCoverage({
+    status: structuralLimitations.length === 0 ? "complete" : "unknown",
+    limitations: structuralLimitations,
+  });
   return {
     nodes,
     occurrences,
     pendingContradictions,
     caseCollisionLimitation: annotateEnglishUnicodeCaseCollisions(occurrences),
     unknownParentOccurrences: parentResolution.unknownParentOccurrences,
-    traversal: {
-      status:
-        context.omissions.length === 0 &&
-        structuralLimitations.length === 0 &&
-        context.coverage.every((value) => value.status === "complete")
-          ? "complete"
-          : "unknown",
-      limitations: [
-        ...new Set([
-          ...context.omissions.map(
-            ({ path, kind }) =>
-              `Artifact traversal omitted ${kind} at ${JSON.stringify(path)}.`,
-          ),
-          ...structuralLimitations,
-          ...context.coverage.flatMap((value) => value.limitations),
-        ]),
-      ].sort(compareUnicodeCodePoints),
-    },
+    traversal: context.traversal.snapshot(),
   };
 };
 
@@ -148,13 +137,12 @@ const inventoryEntries = (
 ): AsyncIterator<ArtifactEntry> =>
   reader
     .entries(context.signal, {
-      onCoverage: (coverage) => context.coverage.push(coverage),
+      onCoverage: context.traversal.onCoverage,
       onOmission: (omission) =>
-        context.omissions.push({
+        context.traversal.onOmission({
           ...omission,
-          path: normalizeArtifactPath(
+          path:
             prefix.length === 0 ? omission.path : `${prefix}/${omission.path}`,
-          ),
         }),
     })
     [Symbol.asyncIterator]();
@@ -194,10 +182,14 @@ const visitArtifactEntries = async (
           : `${frame.prefix}/${entry.path}`,
       );
       const expandableAsar = isExpandableAsar(entry, logicalPath);
-      context.registry.add(
-        logicalPath,
-        expandableAsar ? "directory" : entry.kind,
-      );
+      // PyInstaller TOC rows are source-distinct even when their logical
+      // destinations collide. Inventory retains those observations; the
+      // extraction path registry remains the authority for materialization.
+      if (frame.reader.format !== "pyinstaller")
+        context.registry.add(
+          logicalPath,
+          expandableAsar ? "directory" : entry.kind,
+        );
       const duplicateOrdinal =
         context.occurrenceCountByPath.get(logicalPath) ?? 0;
       context.occurrenceCountByPath.set(logicalPath, duplicateOrdinal + 1);
@@ -223,16 +215,31 @@ const visitArtifactEntries = async (
           occurrence,
         );
       } catch (cause: unknown) {
-        if (!isUnavailableUnpackedEntry(cause, entry)) throw cause;
+        let limitation = UNAVAILABLE_UNPACKED_LIMITATION;
+        if (cause instanceof DirectoryArtifactEntryAccessDenied) {
+          abortIfNeeded(context.signal);
+          limitation = cause.message;
+          context.traversal.onCoverage({
+            status: "unknown",
+            limitations: [limitation],
+          });
+        } else if (!isUnavailableUnpackedEntry(cause, entry)) throw cause;
         occurrence.hash_status = "unavailable";
-        occurrence.limitations.push(UNAVAILABLE_UNPACKED_LIMITATION);
+        occurrence.limitations.push(limitation);
       }
       if (digested === undefined) noteUnreadContainerSuffix(occurrence);
       else {
         context.nodes.set(digested.node.artifact_id, digested.node);
         occurrence.artifact_id = digested.node.artifact_id;
-        occurrence.artifact_kind = digested.classification.kind;
-        occurrence.artifact_format = digested.classification.format;
+        const seaMainScript =
+          entry.formatMetadata?.kind === "node-sea-entry" &&
+          entry.formatMetadata.role === "main-script";
+        occurrence.artifact_kind = seaMainScript
+          ? "javascript"
+          : digested.classification.kind;
+        occurrence.artifact_format = seaMainScript
+          ? "javascript-bundle"
+          : digested.classification.format;
         occurrence.hash_status = digested.mismatched
           ? "mismatched"
           : "verified";
@@ -248,7 +255,12 @@ const visitArtifactEntries = async (
         digested.classification.format === "asar" &&
         !digested.mismatched
       ) {
-        const nested = new AsarArtifactReader(entry.adapterKey);
+        const nested = new AsarArtifactReader(
+          entry.adapterKey,
+          context.asarHeaderAdmission === undefined
+            ? {}
+            : { headerAdmission: context.asarHeaderAdmission },
+        );
         context.ownedReaders.push(nested);
         await nested.prepareContainer(digested.node.sha256, context.signal);
         // Only traversed containers can own members, not opaque ASAR-named files.
@@ -304,6 +316,7 @@ const digestArtifactEntry = async (
     await currentReader.open(entry, context.signal),
     context.signal,
     entry.declaredIntegrity?.algorithm,
+    context.asarHeaderAdmission,
   );
   const claim = entry.declaredIntegrity;
   const observed = claim?.algorithm === "md5" ? digest.md5 : digest.sha256;
@@ -330,13 +343,17 @@ const digestArtifactEntry = async (
   }
   const classified =
     entry.kind === "slice"
-      ? ({ kind: "universal-slice", format: "mach-o" } as const)
+      ? {
+          kind: "universal-slice" as const,
+          format: "mach-o" as const,
+          contentFormat: classifyArtifactBytes(digest, digest.bytes),
+        }
       : classifyArtifactContent(logicalPath, digest, digest.bytes);
   return {
     node: createArtifactNode({
       sha256: digest.sha256,
       size: digest.bytes,
-      format: classifyArtifactBytes(digest.prefix, digest.bytes),
+      format: classified.contentFormat,
       contentState: "embedded",
     }),
     mismatched,

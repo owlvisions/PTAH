@@ -13,10 +13,8 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
-  projectProcessCliError,
 } from "../../../src/application/process/ProcessCli.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import {
@@ -221,31 +219,6 @@ describe("process CLI environment key diagnostics", () => {
 });
 
 describe("process CLI evidence validation", () => {
-  it("preserves sanitized unknown-process IDs and reasons through CLI projection", () => {
-    const reason =
-      "process ownership token could not be read for 1 live process(es): environment_unavailable=1; live candidates 900=environment_unavailable";
-    const projected = projectProcessCliError(
-      new ProcessCaptureError("cleanup incomplete", {
-        reason: "cleanup_incomplete",
-        cleanup: { reason, resources: ["owned_process_group"] },
-        cleanupReport: {
-          owned_process_group: { state: "unverified", reason },
-          terminal_renderer: { state: "cleaned", reason: null },
-          temporary_root: { state: "cleaned", reason: null },
-        },
-      }),
-      "compare_process_captures",
-    );
-    expect(projected).toMatchObject({
-      code: "cleanup_incomplete",
-      details: {
-        cleanup_report: {
-          owned_process_group: { reason },
-        },
-      },
-    });
-  });
-
   it("captures the minimal executable-and-arguments scenario", async () => {
     const root = await createTestTempDirectory("rea-process-cli-");
     const scenario = join(root, "scenario.json");

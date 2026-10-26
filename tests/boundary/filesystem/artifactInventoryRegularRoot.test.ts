@@ -19,7 +19,12 @@ import {
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
-import { MAX_ASAR_HEADER_BYTES } from "../../../src/artifacts/AsarHeader.js";
+import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/config/asarHeaderAdmission.js";
+import {
+  CPU,
+  arArchive,
+  fatImage,
+} from "../../../src/artifacts/apple/MachoImage.fixture.js";
 
 it.skipIf(process.platform === "win32")(
   "rejects a FIFO artifact root without waiting for a writer",
@@ -81,6 +86,40 @@ it("keeps unavailable container traversal distinct from observed root bytes", as
   });
 });
 
+it("retains root identity without asserting absent children for an unclassified FAT archive", async () => {
+  const root = await createTestTempDirectory("rea-fat-archive-root-scope-");
+  const path = join(root, "libfat.a");
+  const archive = arArchive();
+  const bytes = fatImage([
+    { cpu: CPU.x86_64, bytes: archive },
+    { cpu: CPU.arm64, bytes: archive },
+  ]);
+  await writeFile(path, bytes);
+
+  const inventory = await inventoryArtifact(path);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  expect(inventory.manifest).toMatchObject({
+    root_format: "unknown",
+    root_sha256: sha256,
+    node_count: 1,
+    occurrence_count: 1,
+    edge_count: 0,
+  });
+  expect(inventory.nodes).toEqual([
+    expect.objectContaining({ format: "unknown", sha256, size: bytes.length }),
+  ]);
+  expect(inventory.occurrences).toEqual([
+    expect.objectContaining({
+      artifact_format: "unknown",
+      hash_status: "verified",
+    }),
+  ]);
+  expect(inventory.coverage).toEqual({ scope: "root", status: "complete" });
+  expect(inventory.limitations).toEqual([
+    "Inventory covers root bytes only; child container entries were not examined.",
+  ]);
+});
+
 it("admits a FAT root when a valid slice header starts at the prefix boundary", async () => {
   const root = await createTestTempDirectory("rea-fat-root-header-boundary-");
   const path = join(root, "universal");
@@ -136,7 +175,7 @@ it("reports the bounded probe limit for an oversized ASAR candidate without pena
   const candidatePath = join(root, "large.asar");
   const opaquePath = join(root, "opaque.bin");
   const jsonObject = Buffer.from('{"files":{}}');
-  const signatureOffset = MAX_ASAR_HEADER_BYTES + 9;
+  const signatureOffset = DEFAULT_ASAR_MAX_HEADER_BYTES + 9;
   const whitespaceBytes = signatureOffset - 16;
   const jsonBytes = whitespaceBytes + jsonObject.length;
   const headerBytes = 8 + Math.ceil(jsonBytes / 4) * 4;

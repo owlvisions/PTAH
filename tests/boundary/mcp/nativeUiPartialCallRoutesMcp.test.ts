@@ -137,7 +137,7 @@ function publicTrace(plan: Plan, maxNodes = 12, maxEdges = 500) {
               target_sha256: sha256,
               provider: identity,
               analysis_profile_digest: null,
-              result: inspectNativeDispatchMetadata([]),
+              result: inspectNativeDispatchMetadata([], 1),
             },
             identity,
             { subject },

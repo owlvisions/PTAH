@@ -346,11 +346,22 @@ it("represents absent timeline timestamps as unknown and preserves an observed z
           },
         },
         {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "actual-zero-clock-value",
+            type: "Document",
+            frameId: "frame-main",
+            timestamp: 0,
+            request: { url: `${origin}/document`, method: "GET" },
+          },
+        },
+        {
           method: "Network.loadingFailed",
           sessionId: command.sessionId,
           params: {
             requestId: "actual-zero-clock-value",
-            frameId: "frame-main",
+            type: "Document",
             errorText: "net::ERR_CONNECTION_REFUSED",
             timestamp: 0,
           },

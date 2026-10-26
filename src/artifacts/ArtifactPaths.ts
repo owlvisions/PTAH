@@ -4,7 +4,7 @@ import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 
-const DRIVE_PREFIX = /^[A-Za-z]:/u;
+const ABSOLUTE_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 
 // Bound diagnostic JSON expansion to 768 characters before formatting. This is
 // a presentation budget, never a limit on accepted paths or retained facts.
@@ -31,13 +31,29 @@ const ENGLISH_UNICODE_CASE_NOTE =
 /** Inventory limitation when logical names collide under English Unicode case folding. */
 export const ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION = `Logical archive names collide under English (en-US) Unicode case folding; a case-insensitive destination cannot store both spellings. ${ENGLISH_UNICODE_CASE_NOTE}`;
 
-/** User-facing prefix for a destination that cannot keep two logical spellings. */
-export const DESTINATION_CASE_COLLISION_PREFIX =
-  "Destination filesystem cannot store both ";
+/** A rejected destination create whose directory listing identifies another spelling. */
+export class DestinationCaseCollisionFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly requestedPath: string,
+    readonly existingPath: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      "path",
+      `Destination filesystem cannot store both ${requestedPath} and ${existingPath}; inventory retains both logical names.`,
+      options,
+    );
+    this.name = "DestinationCaseCollisionFailure";
+  }
+}
 
 /** Normalize slash-separated logical names; backslashes are literal components. */
 export const normalizeArtifactPath = (input: string): string => {
-  if (input.includes("\0") || input.startsWith("/") || DRIVE_PREFIX.test(input))
+  if (
+    input.includes("\0") ||
+    input.startsWith("/") ||
+    ABSOLUTE_DRIVE_PATH.test(input)
+  )
     throw new ArtifactReaderFailure(
       "path",
       `Artifact path is absolute or unsafe: ${pathDiagnostic(input)}`,
@@ -168,10 +184,11 @@ const caseCollisionLimitation = (
  * Name the directory-listing spelling that differs from the requested segment
  * only by English (en-US) Unicode case. Exact matches are the same logical name.
  */
-export const destinationCaseCollisionMessage = (
+export const destinationCaseCollision = (
   requestedPath: string,
   existingNames: readonly string[],
-): string | undefined => {
+  options?: ErrorOptions,
+): DestinationCaseCollisionFailure | undefined => {
   const slash = requestedPath.lastIndexOf("/");
   const segment = slash < 0 ? requestedPath : requestedPath.slice(slash + 1);
   if (existingNames.includes(segment)) return undefined;
@@ -181,7 +198,11 @@ export const destinationCaseCollisionMessage = (
     .sort(compareUnicodeCodePoints)[0];
   if (existing === undefined) return undefined;
   const parent = slash < 0 ? "" : requestedPath.slice(0, slash + 1);
-  return `${DESTINATION_CASE_COLLISION_PREFIX}${requestedPath} and ${parent}${existing}; inventory retains both logical names.`;
+  return new DestinationCaseCollisionFailure(
+    requestedPath,
+    `${parent}${existing}`,
+    options,
+  );
 };
 
 const englishUnicodeCaseCollisions = (

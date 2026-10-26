@@ -4,7 +4,7 @@ on:
   schedule:
     # GitHub Actions schedules have a 5-minute minimum interval. This checks
     # upstream frequently without claiming a hard real-time delivery SLA.
-    - cron: '*/15 * * * *'
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -30,9 +30,9 @@ jobs:
       - name: Set up supported Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '24.22.1'
+          node-version-file: .nvmrc
 
-      - name: Rebase PTAH changes onto the latest REA main
+      - name: Merge latest REA main into PTAH
         id: sync
         env:
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
@@ -71,27 +71,27 @@ jobs:
           fi
 
           git checkout -B "$SYNC_BRANCH" "$base_ref"
-          if ! git rebase upstream/main; then
-            git rebase --abort || true
+          if ! git merge --no-edit upstream/main; then
+            git merge --abort || true
             {
               echo '### PTAH upstream sync needs manual conflict resolution'
               echo
-              echo "The latest upstream commit is \`${upstream_sha}\`. Rebase stopped because one or more PTAH changes overlap upstream changes. No branch was pushed and the default branch was not modified."
+              echo "The latest upstream commit is \`${upstream_sha}\`. Merge stopped because one or more PTAH changes overlap upstream changes. No branch was pushed and the default branch was not modified."
               echo
-              echo 'Resolve this in a clone with `git fetch upstream && git rebase upstream/main`, then rerun this workflow.'
+              echo 'Resolve this in a clone with `git fetch upstream && git merge --no-edit upstream/main`, then rerun this workflow.'
             } >> "$GITHUB_STEP_SUMMARY"
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if git diff --quiet "$base_ref" HEAD; then
-            echo 'Rebase produced no tree changes; no sync PR needed.'
+            echo 'Merge produced no tree changes; no sync PR needed.'
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo 'changed=true' >> "$GITHUB_OUTPUT"
-          echo "Rebased onto upstream ${upstream_sha}"
+          echo "Merged upstream ${upstream_sha}"
 
       - name: Validate PTAH-specific JavaScript and tests
         if: steps.sync.outputs.changed == 'true'
@@ -113,13 +113,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git push --force origin "HEAD:refs/heads/${SYNC_BRANCH}"
+          git push --force-with-lease origin "HEAD:refs/heads/${SYNC_BRANCH}"
           pr_number="$(gh pr list --base "$BASE_BRANCH" --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number // empty')"
           body="$(printf '%s\n\n%s\n' \
-            "Automated proposal to rebase PTAH changes onto morluto/rea@${UPSTREAM_SHA:0:12}." \
+            "Automated proposal to merge into PTAH from morluto/rea@${UPSTREAM_SHA:0:12}." \
             "This PR is review-only and does not auto-merge upstream code. PTAH-specific syntax checks and tests run first; the full REA monorepo validation matrix must pass before merging. Conflicts stop the sync without rewriting the default branch.")"
           if [[ -n "$pr_number" ]]; then
             gh pr edit "$pr_number" --title "chore: sync latest REA upstream" --body "$body"
           else
-            gh pr create --base "$BASE_BRANCH" --head "$SYNC_BRANCH" --title "chore: sync latest REA upstream" --body "$body"
+            gh pr create --draft --base "$BASE_BRANCH" --head "$SYNC_BRANCH" --title "chore: sync latest REA upstream" --body "$body"
           fi

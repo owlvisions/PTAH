@@ -41,6 +41,37 @@ describe("NativeAOT parser resource budgets", () => {
   });
 });
 
+it.each([8, 1024, 1272])(
+  "retains every eligible section in RTR omission coverage after %s work units",
+  (workUnits) => {
+    const bytes = Buffer.alloc(0xc00);
+    nativeAotPeFixture().copy(bytes);
+    bytes.writeUInt16LE(4, 0x86);
+    bytes.writeUInt32LE(0x5000, 0x98 + 56);
+    bytes.writeUInt32LE(0, 0x600); // Scan every candidate rather than stop at a header.
+    for (let index = 0; index < 2; index += 1) {
+      const row = 0x98 + 0xf0 + (index + 2) * 40;
+      bytes.writeUInt32LE(0x100, row + 8);
+      bytes.writeUInt32LE(0x3000 + index * 0x1000, row + 12);
+      bytes.writeUInt32LE(0x100, row + 16);
+      bytes.writeUInt32LE(0xa00 + index * 0x100, row + 20);
+      bytes.writeUInt32LE(0x40000040, row + 36);
+    }
+    const summary = parseNativeAotPe(
+      bytes,
+      nativeAotPeDigest(bytes),
+      REPORT_BUDGET,
+      undefined,
+      { sourceBytes: bytes.length, workingMemoryBytes: 64 * 1024, workUnits },
+    ).summary;
+    // 127 aligned candidates in .rdata, then 31 in each authored extra section.
+    expect(summary.coverage.rtr_signature_scan_bytes_examined).toBe(workUnits);
+    expect(summary.coverage.rtr_signature_scan_bytes_omitted).toBe(
+      1512 - workUnits,
+    );
+  },
+);
+
 describe("NativeAOT parser report admission", () => {
   it("never returns an over-budget report from early exits", () => {
     const bytes = nativeAotPeFixture();
@@ -188,8 +219,11 @@ describe("NativeAOT detail and summary byte accounting", () => {
           summary = candidate.summary;
           break;
         }
-      } catch {
+      } catch (cause: unknown) {
         // Budgets below the fixed report header cannot carry an honest summary.
+        expect(cause).toMatchObject({
+          message: "NativeAOT metadata summary exceeds its report-byte budget",
+        });
       }
       budget--;
     }

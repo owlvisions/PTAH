@@ -138,9 +138,12 @@ it.each([
 ] as const)(
   "distinguishes wrapper-local child identities and uncertain bindings: %s (%s)",
   (path, declarations, expected) => {
+    const loader = path.endsWith(".mjs")
+      ? 'import {spawn,exec} from "node:child_process";'
+      : 'const {spawn,exec}=require("node:child_process");';
     const file = parseJavaScriptSource(
       `
-      const {spawn,exec}=require("node:child_process");
+      ${loader}
       ${declarations}
       spawn("argv",argv,{stdio:"inherit"}); exec("callback",done);
     `,

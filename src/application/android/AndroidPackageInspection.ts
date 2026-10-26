@@ -21,7 +21,9 @@ export const inspectAndroidPackage = async (
 ): Promise<Result<Evidence, AnalysisError>> => {
   const operation = "inspect_android_package";
   if (options?.signal?.aborted === true)
-    return err(new AnalysisCancelledError(operation));
+    return err(
+      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
+    );
   const parsed = androidPackageInspectionInputSchema.safeParse(rawInput);
   if (!parsed.success)
     return err(

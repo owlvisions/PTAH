@@ -1,3 +1,5 @@
+import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
+import { JadxProvider } from "../../../src/android/JadxProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
@@ -550,3 +552,50 @@ it.each([
       expect(reason.cleanupIncomplete).toBe(true);
   },
 );
+
+it("reports the runtime JADX repair and restores invalid launch availability on reset", async () => {
+  const root = await createTestTempDirectory("rea-jadx-runtime-availability-");
+  const jar = join(root, "jadx-headless-mcp.jar");
+  const javaHome = await createFakeJdk(root);
+  await writeJadxJarInventory(jar);
+  const environment = {
+    REA_JADX_MCP_JAR: jar,
+    JAVA_HOME: javaHome,
+    REA_JADX_OPERATION_TIMEOUT_MS: "0",
+  };
+  const settings = new AnalysisSettings(environment);
+  const provider = new JadxProvider(environment, undefined, settings.read);
+  try {
+    const unavailable = {
+      status: "unavailable",
+      code: "open_options_invalid",
+      diagnostics: { failure_kind: "operation_timeout" },
+    };
+    await expect(
+      settings.run(() => provider.inspectAvailability()),
+    ).resolves.toMatchObject(unavailable);
+    expect(
+      settings.update({
+        changes: [
+          { setting: "jadx.operation_timeout_ms", action: "set", value: 42000 },
+        ],
+      }).ok,
+    ).toBe(true);
+    await expect(
+      settings.run(() => provider.inspectAvailability()),
+    ).resolves.toMatchObject({
+      status: "available",
+      diagnostics: { operation_timeout_ms: 42000 },
+    });
+    expect(
+      settings.update({
+        changes: [{ setting: "jadx.operation_timeout_ms", action: "reset" }],
+      }).ok,
+    ).toBe(true);
+    await expect(
+      settings.run(() => provider.inspectAvailability()),
+    ).resolves.toMatchObject(unavailable);
+  } finally {
+    await provider.close();
+  }
+});

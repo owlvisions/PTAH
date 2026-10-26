@@ -102,8 +102,8 @@ export const nativeInvestigationCoverageSchema = z.strictObject({
   facet: z.string().min(1),
   status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
   reason: z.string().nullable(),
-  examined: z.number().int().nonnegative(),
-  omitted: z.number().int().nonnegative(),
+  examined: z.int().nonnegative(),
+  omitted: z.int().nonnegative(),
 });
 
 export const nativeInvestigationProviderSchema = z.strictObject({
@@ -131,9 +131,9 @@ export type NativeInvestigationGraph = z.infer<
 
 /** Caller-controlled hard limits for a bounded relationship trace. */
 export const nativeInvestigationTraceLimitsSchema = z.strictObject({
-  max_depth: z.number().int().min(0).max(32).default(8),
-  max_nodes: z.number().int().min(1).max(2000).default(250),
-  max_edges: z.number().int().min(1).max(5000).default(500),
+  max_depth: z.int().min(0).max(32).default(8),
+  max_nodes: z.int().min(1).max(2000).default(250),
+  max_edges: z.int().min(1).max(5000).default(500),
 });
 
 export type NativeInvestigationTraceLimits = z.infer<
@@ -152,7 +152,7 @@ export const nativeInvestigationTraceSchema = z.strictObject({
   nodes: z.array(nativeInvestigationNodeSchema),
   edges: z.array(nativeInvestigationEdgeSchema),
   unresolved: z.array(nativeInvestigationEdgeSchema),
-  reached_depth: z.number().int().nonnegative(),
+  reached_depth: z.int().nonnegative(),
   truncated: z.boolean(),
   reason: z.string().nullable(),
   coverage: z.array(nativeInvestigationCoverageSchema),
@@ -306,27 +306,44 @@ export const joinInterfaceBuilderDispatch = (
     if (typeof selector !== "string" || selector.length === 0) continue;
     const selectorNodeId = selectorNodesByAction.get(action.id);
     if (selectorNodeId === undefined) continue;
+    examined += 1;
     const destinationEdge = edges.find(
       (edge) =>
         edge.resolution === "observed" &&
         edge.relation === "target_action" &&
         edge.from === action.id &&
-        ["view_controller", "placeholder", "external_object"].includes(
-          nodes.get(edge.to)?.kind ?? "",
-        ),
+        edge.to !== selectorNodeId &&
+        nodes.has(edge.to),
     );
     if (
       destinationEdge === undefined ||
       destinationEdge.resolution !== "observed"
-    )
+    ) {
+      const edgeId = `dispatch:${selectorNodeId}:${action.id}:receiver`;
+      if (!existingEdgeIds.has(edgeId)) {
+        existingEdgeIds.add(edgeId);
+        edges.push({
+          id: edgeId,
+          from: selectorNodeId,
+          to: null,
+          relation: "objc_dispatch",
+          resolution: "unresolved",
+          reason: "authored_action_receiver_unresolved",
+          evidence: action.evidence,
+          limitations: [
+            "The authored action has no resolved receiver; a selector match alone cannot establish its implementation.",
+          ],
+        });
+      }
       continue;
+    }
     const owner = nodes.get(destinationEdge.to);
-    examined += 1;
     const declaredClass = owner?.attributes.class_name;
     const className =
       typeof declaredClass === "string" &&
       declaredClass.length > 0 &&
-      owner?.kind === "view_controller"
+      owner?.kind !== "placeholder" &&
+      owner?.kind !== "external_object"
         ? declaredClass
         : null;
     const candidates = metadata.objc_dispatch_implementations.filter(

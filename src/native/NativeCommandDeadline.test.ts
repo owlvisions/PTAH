@@ -14,10 +14,8 @@ import type {
   NativeCommandOptions,
   NativeCommandRunner,
 } from "./CommandRunner.js";
-import {
-  NATIVE_COMMAND_TIMEOUT_MS,
-  XcrunCommandRunner,
-} from "./CommandRunner.js";
+import { XcrunCommandRunner } from "./CommandRunner.js";
+import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 
 vi.mock("../process/OwnedCommand.js", async (original) => ({
@@ -59,7 +57,7 @@ describe("native_command_timeout_ms", () => {
     const result = await execute(runner, {});
     expect(result.ok, JSON.stringify(result)).toBe(true);
     expect(runner.timeouts.every((timeout) => timeout === 60_000)).toBe(true);
-    expect(NATIVE_COMMAND_TIMEOUT_MS).toBe(60_000);
+    expect(DEFAULT_NATIVE_COMMAND_TIMEOUT_MS).toBe(60_000);
     expect(runner.timeouts.length).toBeGreaterThan(0);
   });
 
@@ -74,7 +72,7 @@ describe("native_command_timeout_ms", () => {
     const calls: {
       command: string;
       arguments: readonly string[];
-      timeoutMs: number;
+      timeoutMs: number | null;
     }[] = [];
     vi.mocked(runOwnedCommand).mockImplementation(async (spawn, limits) => {
       calls.push({
@@ -101,7 +99,7 @@ describe("native_command_timeout_ms", () => {
   });
 
   it("uses 60000 ms for xcrun resolution when the caller omits the deadline", async () => {
-    const timeouts: number[] = [];
+    const timeouts: (number | null)[] = [];
     vi.mocked(runOwnedCommand).mockImplementation(async (_spawn, limits) => {
       timeouts.push(limits.timeoutMs);
       throw new OwnedCommandFailure("timeout", "Command deadline elapsed.");

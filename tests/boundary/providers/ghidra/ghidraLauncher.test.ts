@@ -146,6 +146,109 @@ describe("Ghidra raw-binary loader", () => {
   });
 });
 
+describe("Ghidra GameCube DOL loader", () => {
+  const dolBase = {
+    platform: "darwin" as const,
+    projectRoot: "/tmp/project",
+    targetPath: "/tmp/main.dol",
+    bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+    descriptorPath: "/tmp/session.json",
+    ghidraLogPath: "/tmp/ghidra.log",
+    scriptLogPath: "/tmp/script.log",
+  };
+
+  it("loads the DOL as a zero-based BinaryLoader block with the stock language", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      ...dolBase,
+      gamecubeDol: {
+        languageId: "PowerPC:BE:32:default",
+        sectionFilePath: "/tmp/gamecube-dol-sections.txt",
+      },
+    });
+    expectOptions(arguments_, [
+      ["-loader", "BinaryLoader"],
+      ["-loader-baseAddr", "0x0"],
+      ["-processor", "PowerPC:BE:32:default"],
+    ]);
+    expect(arguments_).not.toContain("-cspec");
+    expect(arguments_.indexOf("-loader")).toBeGreaterThan(
+      arguments_.indexOf("-import"),
+    );
+  });
+
+  it("passes an optional compiler spec only when the override carries one", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      ...dolBase,
+      gamecubeDol: {
+        languageId: "PowerPC:BE:32:Gekko_Broadway",
+        compilerSpecId: "default",
+        sectionFilePath: "/tmp/gamecube-dol-sections.txt",
+      },
+    });
+    expectOptions(arguments_, [
+      ["-processor", "PowerPC:BE:32:Gekko_Broadway"],
+      ["-cspec", "default"],
+    ]);
+  });
+
+  it("runs the section pre-script with its section file after the loader", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      ...dolBase,
+      gamecubeDol: {
+        languageId: "PowerPC:BE:32:default",
+        sectionFilePath: "/tmp/gamecube-dol-sections.txt",
+      },
+    });
+    const prepare = arguments_.indexOf(
+      "/package/bridge/ReaGhidraPrepareDol.java",
+    );
+    expect(prepare).toBeGreaterThanOrEqual(0);
+    expect(arguments_[prepare - 1]).toBe("-preScript");
+    expect(arguments_[prepare + 1]).toBe("/tmp/gamecube-dol-sections.txt");
+    expect(prepare).toBeLessThan(arguments_.indexOf("-postScript"));
+    expect(arguments_).not.toContain(
+      "/package/bridge/ReaGhidraPrepareRaw.java",
+    );
+    expect(arguments_).not.toContain(
+      "/package/bridge/ReaGhidraPrepareCom.java",
+    );
+    expect(arguments_).toContain("-readOnly");
+    expect(arguments_).toContain("-deleteProject");
+  });
+
+  it.each([
+    ["PSP", { psp: true }],
+    ["DOS MZ", { dosMz: true }],
+    ["DOS COM", { dosCom: true }],
+    ["MIPS soft-float", { mipsSoftFloat: true }],
+    [
+      "raw binary",
+      {
+        rawBinary: {
+          languageId: "ARM:LE:32:v7",
+          compilerSpecId: "default",
+          baseAddr: "0x8000000",
+        },
+      },
+    ],
+    [
+      "language override",
+      { languageOverride: { languageId: "PowerPC:BE:32:Gekko_Broadway" } },
+    ],
+  ] as const)("refuses a DOL import combined with %s", (_label, conflict) => {
+    expect(() =>
+      ghidraHeadlessArguments({
+        ...dolBase,
+        ...conflict,
+        gamecubeDol: {
+          languageId: "PowerPC:BE:32:default",
+          sectionFilePath: "/tmp/gamecube-dol-sections.txt",
+        },
+      }),
+    ).toThrow(/cannot be combined with another loader, language override/u);
+  });
+});
+
 describe("Ghidra headless launcher", () => {
   it("forces the admitted real-mode language and loader for DOS MZ", () => {
     const arguments_ = ghidraHeadlessArguments({
@@ -607,6 +710,58 @@ describe("Ghidra Windows launcher runtime", () => {
           access(join(runtimeRoot, "project")),
         ).resolves.toBeUndefined();
       }
+    },
+  );
+});
+
+describe("Ghidra GameCube DOL section file", () => {
+  // The fixture forces the POSIX launch path (platform "darwin": posix paths,
+  // 0600 files, direct JVM). Windows CI returns a launch error before spawn,
+  // so this runs only where that path is the real host path.
+  it.skipIf(process.platform === "win32")(
+    "writes the canonical section table next to session.json before spawn",
+    async () => {
+      const parent = await createTestTempDirectory("rea-dol-section-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      const sectionFile =
+        "plan 2 1 0\nsection text 0 0x100 0x80003100 0x20\nentry 0x80003100\n";
+      const spawnProcess = vi.fn(async () => {
+        throw new Error("fixture stops before process creation");
+      });
+      const javaHome = "/opt/fixture-jdk";
+      const launcher = new GhidraHeadlessLauncher({
+        environment: process.env,
+        platform: "darwin",
+        configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
+        analyzeHeadlessPath: fixturePath,
+        javaHome,
+        bridgeScriptPath: join(parent, "ReaGhidraBridge.java"),
+        javaLaunch: async () => ({
+          command: join(javaHome, "bin", "java"),
+          arguments: [],
+          environment: {},
+        }),
+        spawnProcess,
+        gamecubeDol: {
+          languageId: "PowerPC:BE:32:default",
+          sectionFile,
+        },
+      });
+      await launcher.launch({
+        runtimeRoot: runtime.path,
+        transport: "unix-socket",
+        endpointPath: join(runtime.path, "bridge.sock"),
+        token: "token-for-section-test",
+        runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+        targetPath: "/tmp/fixture.dol",
+        targetSha256: "c".repeat(64),
+        providerVersion: "12.1.4",
+        profileDigest: "a".repeat(64),
+      });
+      expect(spawnProcess).toHaveBeenCalledOnce();
+      const sectionPath = join(runtime.path, "gamecube-dol-sections.txt");
+      expect(await readFile(sectionPath, "utf8")).toBe(sectionFile);
     },
   );
 });

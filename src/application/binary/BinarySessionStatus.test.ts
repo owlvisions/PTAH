@@ -5,9 +5,12 @@ import type {
   CapabilityDescriptor,
   ProviderIdentity,
 } from "../AnalysisProvider.js";
+import { z } from "zod";
 import {
+  analysisProviderCandidate,
+  analysisProviderCandidateSummary,
   expandProviderCapabilities,
-  sessionProvider,
+  sessionProviderFacts,
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -23,9 +26,13 @@ import {
   nativeMacOSCapabilities,
 } from "../../native/NativeMacOSProviderMetadata.js";
 
-const projectedStatusSchema = sessionProvider.pick({
-  capabilities: true,
-  analysis_provider_candidates: true,
+const projectedStatusSchema = z.object({
+  capabilities: sessionProviderFacts.shape.capabilities,
+  analysis_provider_candidates: z.array(analysisProviderCandidate),
+});
+const summaryStatusSchema = z.object({
+  capabilities: sessionProviderFacts.shape.capabilities,
+  analysis_provider_candidates: z.array(analysisProviderCandidateSummary),
 });
 
 const providerA: ProviderIdentity = {
@@ -126,6 +133,25 @@ const project = async (
     { readonly reason: string }
   > = new Map(),
   target?: BinaryTarget,
+) =>
+  projectedStatusSchema.parse(
+    await projectStatus(routeCapabilities, candidates, {
+      runtimeUnavailability,
+      ...(target === undefined ? {} : { target }),
+    }),
+  );
+
+const projectStatus = async (
+  routeCapabilities: readonly CapabilityDescriptor[],
+  candidates: readonly AnalysisProviderCandidateStatus[],
+  options: {
+    readonly runtimeUnavailability?: ReadonlyMap<
+      string,
+      { readonly reason: string }
+    >;
+    readonly target?: BinaryTarget;
+    readonly detail?: "summary" | "complete";
+  } = {},
 ) => {
   const route: SessionProviderRoute = {
     identity: providerA,
@@ -142,17 +168,16 @@ const project = async (
   const router: Pick<SessionProviderRouter, "candidateStatuses"> = {
     candidateStatuses: async () => candidates,
   };
-  return projectedStatusSchema.parse(
-    await binarySessionStatus({
-      target,
-      route,
-      router,
-      runtimeUnavailability,
-      runId: undefined,
-      runtimeLineageSnapshots: [],
-      requestActivitySnapshots: [],
-    }),
-  );
+  return binarySessionStatus({
+    target: options.target,
+    route,
+    router,
+    runtimeUnavailability: options.runtimeUnavailability ?? new Map(),
+    runId: undefined,
+    runtimeLineageSnapshots: [],
+    requestActivitySnapshots: [],
+    ...(options.detail === undefined ? {} : { detail: options.detail }),
+  });
 };
 
 const expandCanonicalCapabilities = (sets: readonly ProviderCapabilitySet[]) =>
@@ -444,3 +469,87 @@ it.each(["elf", "pe"] as const)(
     ]);
   },
 );
+
+describe("binary session summary projection", () => {
+  it("keeps each candidate's status, code and reason in summary without diagnostics or capability sets", async () => {
+    const unavailable: AnalysisProviderCandidateStatus = {
+      ...candidate(providerB, otherCapabilities),
+      availability: {
+        status: "unavailable",
+        code: "not_configured",
+        reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+        diagnostics: { checks: [{ name: "configuration", ok: false }] },
+      },
+      targetSupport: {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: "Provider B cannot select this slice.",
+        diagnostics: { architecture: "arm64" },
+      },
+      selected: false,
+    };
+    const pending: AnalysisProviderCandidateStatus = {
+      ...candidate(providerA, selectedCapabilities),
+      availability: {
+        status: "unknown",
+        code: null,
+        reason: "Provider A startup is still pending.",
+        diagnostics: { startup: "pending" },
+      },
+    };
+    const candidates = [pending, unavailable];
+    const before = structuredClone(candidates);
+    const runtimeUnavailability = new Map([
+      ["procedure_info", { reason: "Runtime operation failure" }],
+    ]);
+    const complete = projectedStatusSchema.parse(
+      await projectStatus(selectedCapabilities, candidates, {
+        runtimeUnavailability,
+      }),
+    );
+    const raw = await projectStatus(selectedCapabilities, candidates, {
+      runtimeUnavailability,
+      detail: "summary",
+    });
+    const summary = summaryStatusSchema.parse(raw);
+
+    expect(candidates).toEqual(before);
+    expect(summary.capabilities).toEqual(complete.capabilities);
+    expect(summary.analysis_provider_candidates).toEqual([
+      {
+        provider: providerA,
+        availability: {
+          status: "unknown",
+          code: null,
+          reason: "Provider A startup is still pending.",
+        },
+        target_support: {
+          status: "unknown",
+          code: null,
+          reason: "No target is open.",
+        },
+        selected: true,
+      },
+      {
+        provider: providerB,
+        availability: {
+          status: "unavailable",
+          code: "not_configured",
+          reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+        },
+        target_support: {
+          status: "unsupported",
+          code: "architecture_unsupported",
+          reason: "Provider B cannot select this slice.",
+        },
+        selected: false,
+      },
+    ]);
+    expect(JSON.stringify(raw)).not.toContain("diagnostics");
+    expect(
+      analysisProviderCandidate
+        .array()
+        .safeParse(summary.analysis_provider_candidates).success,
+    ).toBe(false);
+  });
+});

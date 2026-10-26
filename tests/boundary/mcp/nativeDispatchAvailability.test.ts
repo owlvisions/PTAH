@@ -35,14 +35,17 @@ const identity = {
   name: "Fixture analysis provider",
   version: "1",
 };
-const dispatchMetadata = inspectNativeDispatchMetadata([
-  {
-    address: "0x1000",
-    name: "-[BuildViewController buildTapped:]",
-  },
-]);
+const dispatchMetadata = inspectNativeDispatchMetadata(
+  [
+    {
+      address: "0x1000",
+      name: "-[BuildViewController buildTapped:]",
+    },
+  ],
+  1,
+);
 const symbolInventory = [
-  { address: "0x1000", name: "-[BuildViewController buildTapped:]" },
+  { address: "0x1000", value: "-[BuildViewController buildTapped:]" },
 ];
 
 type Operation = "inspect_native_dispatch_metadata" | "list_names";

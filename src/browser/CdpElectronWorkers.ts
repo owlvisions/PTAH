@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import type {
   ElectronPageInspection,
   InspectElectronPageInput,
@@ -10,6 +11,7 @@ import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { workerTargetOwnership } from "./CdpWorkerTargetOwnership.js";
 
 /** Inventory local worker targets without attaching to them. */
 export const captureElectronWorkers = async (input: {
@@ -20,6 +22,7 @@ export const captureElectronWorkers = async (input: {
   readonly frameIds: ReadonlySet<string>;
   readonly completeness: CdpCaptureCompleteness;
   readonly limitations: string[];
+  readonly asarHeaderAdmission: AsarHeaderAdmission;
 }): Promise<ElectronPageInspection["workers"]> => {
   const result = await optionalCdpCommand(
     {
@@ -51,19 +54,29 @@ export const captureElectronWorkers = async (input: {
     }
     const type = cdpStringValue(target.type) ?? "";
     if (!type.includes("worker")) continue;
-    const openerTargetId = boundedTargetField(target.openerId);
-    const parentFrameId = boundedTargetField(target.parentFrameId);
-    if (
-      openerTargetId !== input.target.id &&
-      (parentFrameId === null || !input.frameIds.has(parentFrameId))
-    ) {
-      input.completeness.exclude("workers", "out_of_target_scope");
+    const ownership = workerTargetOwnership(
+      target,
+      input.target.id,
+      input.frameIds,
+    );
+    if (!ownership.ok) {
+      input.completeness.exclude("workers", "invalid_protocol_value");
+      continue;
+    }
+    if (ownership.value.scope !== "selected") {
+      input.completeness.exclude(
+        "workers",
+        ownership.value.scope === "unknown"
+          ? "unattributed_target"
+          : "out_of_target_scope",
+      );
       continue;
     }
     const path = await authorizedElectronFile(
       cdpStringValue(target.url) ?? "",
       input.signal,
       "inspect_electron_page",
+      input.asarHeaderAdmission,
     );
     if (path === undefined) {
       input.completeness.exclude("workers", "out_of_target_scope");
@@ -83,8 +96,8 @@ export const captureElectronWorkers = async (input: {
       type,
       file_path: path,
       attached: target.attached,
-      opener_target_id: openerTargetId,
-      parent_frame_id: parentFrameId,
+      opener_target_id: ownership.value.openerTargetId,
+      parent_frame_id: ownership.value.parentFrameId,
     });
   }
   return workers.sort((left, right) =>

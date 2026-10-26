@@ -865,6 +865,56 @@ it("counts requested permissions that the device marks as restricted", async () 
   });
 });
 
+it("counts Unicode requested-permission names and continues through the section", async () => {
+  const { binary } = await writeAdbStub(
+    shellStub({
+      "dumpsys:package": `Packages:
+  Package [com.example] (abcdef):
+    pkg=Package{abcdef com.example}
+    versionCode=45 minSdk=24 targetSdk=34
+    requested permissions:
+      com.example.permission.FIRST
+      com.example.permission.ÉCRIRE WITH SPACE
+      android.permission.CAMERA
+    install permissions:
+      android.permission.CAMERA: granted=true
+`,
+    }),
+  );
+  const result = await evidenceResult(providerOver(binary), {
+    operation: "inspect_adb_package",
+    input: { serial: "emulator-5554", package: "com.example" },
+  });
+  expect(result).toMatchObject({
+    requested_permissions_count: 3,
+    coverage: "complete",
+  });
+});
+
+it("ends requested permissions at a same-indent dumpsys field", async () => {
+  const { binary } = await writeAdbStub(
+    shellStub({
+      "dumpsys:package": `Packages:
+  Package [com.example] (abcdef):
+    pkg=Package{abcdef com.example}
+    versionCode=45 minSdk=24 targetSdk=34
+    requested permissions:
+      android.permission.INTERNET
+    gids=[1000]
+      android.permission.CAMERA
+`,
+    }),
+  );
+  const result = await evidenceResult(providerOver(binary), {
+    operation: "inspect_adb_package",
+    input: { serial: "emulator-5554", package: "com.example" },
+  });
+  expect(result).toMatchObject({
+    requested_permissions_count: 1,
+    coverage: "complete",
+  });
+});
+
 it("reports an uninstalled package from dumpsys refusal output", async () => {
   const { binary } = await writeAdbStub(
     shellStub({ "dumpsys:package": "Unable to find package: com.absent\n" }),
@@ -1183,6 +1233,65 @@ exit 1`,
     sha256: digest,
     device_sha256: null,
     device_digest_source: "unavailable",
+  });
+});
+
+it("preserves executable bits on the private snapshot consumed by adb push", async () => {
+  const { binary, root } = await writeAdbStub(
+    (stubRoot) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$4" = "test" ]; then exit 1; fi
+if [ "$1" = "-s" ] && [ "$3" = "push" ]; then ls -ld "$4" | cut -c1-10 > "${join(stubRoot, "staged-mode")}"; exit 0; fi
+if [ "$1" = "-s" ] && [ "$4" = "sha256sum" ]; then exit 1; fi
+exit 1`,
+  );
+  const localFile = join(root, "executable");
+  await writeFile(localFile, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await chmod(localFile, 0o755);
+  const result = await providerOver(binary).execute({
+    operation: "push_adb_file",
+    input: {
+      serial: "emulator-5554",
+      local_path: localFile,
+      device_path: "/data/local/tmp/executable",
+      overwrite: false,
+    },
+  });
+  expect(result.ok).toBe(true);
+  expect(await readFile(join(root, "staged-mode"), "utf8")).toBe(
+    "-r-x--x--x\n",
+  );
+});
+
+it("reports and verifies the effective file path when adb targets a directory", async () => {
+  const { binary, root } = await writeAdbStub(
+    (stubRoot) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$4" = "test" ]; then
+  if [ "$5" = "-d" ] && [ "$6" = "/data/local/tmp/drop/" ]; then exit 0; fi
+  if [ "$5" = "-e" ] && [ "$6" = "/data/local/tmp/drop/payload.bin" ]; then exit 1; fi
+fi
+if [ "$1" = "-s" ] && [ "$3" = "push" ]; then printf '%s' "$5" > "${join(stubRoot, "pushed-destination")}"; exit 0; fi
+if [ "$1" = "-s" ] && [ "$4" = "sha256sum" ]; then printf '%s  %s\\n' '${PUSHED_DIGEST}' "$5"; exit 0; fi
+exit 1`,
+  );
+  const localFile = join(root, "payload.bin");
+  await writeFile(localFile, "push-payload");
+  const result = await providerOver(binary).execute({
+    operation: "push_adb_file",
+    input: {
+      serial: "emulator-5554",
+      local_path: localFile,
+      device_path: "/data/local/tmp/drop/",
+      overwrite: false,
+    },
+  });
+  if (!result.ok) throw new Error(result.error.message);
+  expect(await readFile(join(root, "pushed-destination"), "utf8")).toBe(
+    "/data/local/tmp/drop/",
+  );
+  expect(result.value.result).toMatchObject({
+    device_path: "/data/local/tmp/drop/payload.bin",
+    overwritten: false,
+    device_sha256: PUSHED_DIGEST,
   });
 });
 
@@ -1904,12 +2013,20 @@ ${shellStub({ "am:start": "Starting: Intent { act=android.intent.action.VIEW dat
       action: "android.intent.action.VIEW",
       data_uri: "https://example.com/",
       extras: [
-        { key: "level", type: "int", value: "3" },
+        { key: "level", type: "int", value: "010" },
+        { key: "negative", type: "int", value: "-010" },
+        { key: "eight", type: "int", value: "08" },
         { key: "label", type: "string", value: "probe" },
       ],
     },
   });
   expect(started.action).toBe("android.intent.action.VIEW");
+  expect(started.extras).toEqual([
+    { key: "level", type: "int", value: "010" },
+    { key: "negative", type: "int", value: "-010" },
+    { key: "eight", type: "int", value: "08" },
+    { key: "label", type: "string", value: "probe" },
+  ]);
   const logged = (await readFile(join(root, "argv.log"), "utf8"))
     .trim()
     .split("\n");
@@ -1927,12 +2044,58 @@ ${shellStub({ "am:start": "Starting: Intent { act=android.intent.action.VIEW dat
     "https://example.com/",
     "--ei",
     "level",
-    "3",
+    "10",
+    "--ei",
+    "negative",
+    "-10",
+    "--ei",
+    "eight",
+    "8",
     "--es",
     "label",
     "probe",
   ]);
 });
+
+it.each([
+  { value: "10", operand: "10" },
+  { value: "010", operand: "10" },
+  { value: "-010", operand: "-10" },
+  { value: "08", operand: "8" },
+  { value: "000", operand: "0" },
+])(
+  "passes int extra $value to am as decimal $operand",
+  async ({ value, operand }) => {
+    const { binary, root } = await writeAdbStub(
+      (root) => `printf '%s\\n' "$@" >> ${join(root, "argv.log")}
+${shellStub({ "am:start": "Starting: Intent { act=android.intent.action.VIEW }\n" })(root)}`,
+    );
+    await evidenceResult(providerOver(binary), {
+      operation: "start_adb_activity",
+      input: {
+        serial: "emulator-5554",
+        action: "android.intent.action.VIEW",
+        extras: [
+          { key: "count", type: "int", value },
+          // `--el` is read with Long.valueOf, which is always decimal.
+          { key: "total", type: "long", value },
+        ],
+      },
+    });
+    const logged = (await readFile(join(root, "argv.log"), "utf8"))
+      .trim()
+      .split("\n");
+    // am reads `--ei` with Integer.decode, where a leading zero means octal.
+    expect(logged.slice(-6)).toEqual([
+      "--ei",
+      "count",
+      operand,
+      "--el",
+      "total",
+      value,
+    ]);
+  },
+);
 
 it("collects a device bugreport archive with its digest", async () => {
   const { binary, root } = await writeAdbStub(
@@ -2012,4 +2175,80 @@ it("reports cancellation arriving during the version probe", async () => {
   } finally {
     clearTimeout(timer);
   }
+});
+
+it("preserves the typed offline failure and failed paths when every package pull fails", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$3" = "shell" ]; then printf 'package:/data/app/base.apk\\n'; exit 0; fi
+if [ "$3" = "pull" ]; then printf 'error: device offline\\n' >&2; exit 1; fi
+exit 1`,
+  );
+  const result = await providerOver(binary).execute({
+    operation: "pull_adb_package",
+    input: {
+      serial: "emulator-5554",
+      package: "com.example",
+      output_directory: join(root, "pulls"),
+    },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "unsupported_target",
+    details: { reason: "error: device offline" },
+  });
+  expect(result.error.partialObservation).toMatchObject({
+    result: {
+      artifacts: [],
+      failures: [{ device_path: "/data/app/base.apk", stage: "pull" }],
+      coverage: "partial",
+    },
+  });
+});
+
+it("retains a completed push when checksum capture exceeds its budget", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$3" = "push" ]; then exit 0; fi
+if [ "$4" = "sha256sum" ]; then head -c 2048 /dev/zero | tr '\\000' a; exit 0; fi
+exit 1`,
+  );
+  const local = join(root, "payload.bin");
+  await writeFile(local, "payload");
+  const result = await providerOver(binary).execute({
+    operation: "push_adb_file",
+    input: {
+      serial: "emulator-5554",
+      local_path: local,
+      device_path: "/data/local/tmp/payload.bin",
+      overwrite: true,
+    },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    details: { operation: "push_adb_file" },
+  });
+  expect(result.error.partialObservation).toBeDefined();
+});
+
+it("attributes version capture failures to the public operation and retains the prerequisite", async () => {
+  const { binary } = await writeAdbStub(
+    () => "head -c 70000 /dev/zero | tr '\\000' a",
+  );
+  const result = await providerOver(binary).execute({
+    operation: "list_adb_devices",
+    input: {},
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      operation: "list_adb_devices",
+      diagnostics: { prerequisite_operation: "inspect_adb_client" },
+    },
+  });
 });

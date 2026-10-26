@@ -210,7 +210,10 @@ const fakeProvider = (): FlutterBuildAnalysisPort => ({
 
 it("advertises and enforces the same Unicode selector grammar through MCP", async () => {
   const harness = await createApplicationMcpHarness({
-    serverOptions: { flutterAnalysis: fakeProvider() },
+    serverOptions: {
+      flutterAnalysis: fakeProvider(),
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+    },
   });
   onTestFinished(harness.close);
   const tool = (await harness.client.listTools()).tools.find(

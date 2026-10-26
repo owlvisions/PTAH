@@ -72,6 +72,7 @@ jobs:
       browser: ${{ steps.plan.outputs.browser }}
       binary_layout: ${{ steps.plan.outputs.binary_layout }}
       evm: ${{ steps.plan.outputs.evm }}
+      apk_signature: ${{ steps.plan.outputs.apk_signature }}
       javascript_recovery: ${{ steps.plan.outputs.javascript_recovery }}
       recorded_crash: ${{ steps.plan.outputs.recorded_crash }}
       web_network: ${{ steps.plan.outputs.web_network }}
@@ -384,6 +385,7 @@ jobs:
       needs.changes.outputs.browser == 'true' ||
       needs.changes.outputs.binary_layout == 'true' ||
       needs.changes.outputs.evm == 'true' ||
+      needs.changes.outputs.apk_signature == 'true' ||
       needs.changes.outputs.javascript_recovery == 'true' ||
       needs.changes.outputs.recorded_crash == 'true' ||
       needs.changes.outputs.web_network == 'true' ||
@@ -762,6 +764,7 @@ jobs:
           tests/boundary/mcp/nativeDemangleMcp.test.ts
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
+          tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
@@ -786,7 +789,7 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
-      - name: Run the public CLI/MCP reconstruction journey
+      - name: Verify static CLI/MCP journeys and synthetic report conformance
         env:
           REA_READINESS_REPORT_PATH: readiness-report.json
         run: |
@@ -855,6 +858,7 @@ jobs:
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
           tests/boundary/filesystem/typescriptCompiler.test.ts
+          tests/boundary/filesystem/releaseProposal.test.ts
           tests/boundary/filesystem/binaryTarget.test.ts
           src/contracts/sessionPathInputs.test.ts
           tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts
@@ -930,7 +934,7 @@ jobs:
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.19.0
+          node-version: 22.23.4
       - name: Verify native path boundaries on Node 22
         run: >-
           npx vitest run --coverage.enabled=false
@@ -946,7 +950,7 @@ jobs:
           retention-days: 30
 
   docs:
-    name: Docs Generation
+    name: Documentation
     needs: changes
     if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
@@ -961,6 +965,8 @@ jobs:
         uses: ./.github/actions/npm-cache
       - run: npm ci
       - run: npm run docs:check
+      - name: Render documentation and validate page links
+        run: npm run docs:build
       - name: Generation leaves authored files unchanged
         run: git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -999,6 +1005,16 @@ jobs:
     secrets:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-evm-interface.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
+  apk_signature:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.apk_signature == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+    uses: ./.github/workflows/real-apk-signature.yml
     with:
       build_cache_artifact: rea-build-cache
       remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
@@ -1103,6 +1119,7 @@ jobs:
         browser,
         binary_layout,
         evm,
+        apk_signature,
         javascript_recovery,
         recorded_crash,
         web_network,

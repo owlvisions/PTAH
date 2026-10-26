@@ -8,7 +8,7 @@ import {
   type LoadRegion,
   type ZeroFillMapping,
 } from "./BinaryContainer.js";
-import { machoLoadCommandAlignment } from "../../domain/apple/machoContainer.js";
+import { MachoLoadCommandCursor } from "../../domain/apple/machoLoadCommands.js";
 
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
 export const readMachoImage = (bytes: Buffer): BinaryContainer => {
@@ -26,31 +26,23 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
     1,
     "Mach-O load commands",
   );
-  if (count > Math.floor(commandBytes / 8))
-    throw new BinaryFormatFailure(
-      "malformed",
-      "Mach-O command count exceeds its load-command range",
-    );
   const mappings: FileMapping[] = [];
   const loadRegions: LoadRegion[] = [];
   const executableMappings: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
   const sections: ImageSection[] = [];
   let chainedFixups = false;
-  let offset = commandStart;
-  const end = commandStart + commandBytes;
-  for (let index = 0; index < count; index++) {
-    const command = reader.u32(offset);
-    const size = reader.u32(offset + 4);
-    if (
-      size < 8 ||
-      size % machoLoadCommandAlignment(bits === 64) !== 0 ||
-      size > end - offset
-    )
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Mach-O load command size is invalid or truncated",
-      );
+  const commands = new MachoLoadCommandCursor({
+    wide: bits === 64,
+    littleEndian: little,
+    commandCount: count,
+    commandBytes,
+  });
+  while (commands.nextOffset !== null) {
+    const offset = commandStart + commands.nextOffset;
+    const frame = commands.read(bytes.subarray(offset, offset + 8));
+    if (!frame.ok) throw new BinaryFormatFailure("malformed", frame.error);
+    const { command, size } = frame.value;
     if (command === 0x80000034) chainedFixups = true;
     if (command === 1 || command === 0x19) {
       const wide = command === 0x19;
@@ -143,19 +135,16 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
         );
       }
     }
-    offset += size;
   }
-  if (offset !== end)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "Mach-O load-command byte count does not match its commands",
-    );
+  const complete = commands.finish();
+  if (!complete.ok) throw new BinaryFormatFailure("malformed", complete.error);
   const cpu = reader.u32(4);
   const names = new Map([
     [7, "386"],
     [0x01000007, "amd64"],
     [12, "arm"],
     [0x0100000c, "arm64"],
+    [0x0200000c, "arm64_32"],
     [18, "ppc"],
     [0x01000012, "ppc64"],
   ]);

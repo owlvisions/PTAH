@@ -279,10 +279,18 @@ const emitSessionTimeline = (
       redirectResponse: { status: 302 },
       timestamp: 13,
     });
-    event(socket, "Network.loadingFailed", command.sessionId, {
+    event(socket, "Network.requestWillBeSent", command.sessionId, {
       requestId: "failed-request",
+      type: "Document",
       frameId: "frame-main",
       loaderId: "loader-reload",
+      request: { url: allowed, method: "GET" },
+      initiator: { type: "other" },
+      timestamp: 13.5,
+    });
+    event(socket, "Network.loadingFailed", command.sessionId, {
+      requestId: "failed-request",
+      type: "Document",
       errorText: "net::ERR_CONNECTION_REFUSED",
       timestamp: 14,
     });

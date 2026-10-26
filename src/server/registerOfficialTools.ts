@@ -1,3 +1,4 @@
+import { NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS } from "../domain/native/nativeObservation.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { NATIVE_INVENTORY_OPERATIONS } from "../domain/native/nativeInventory.js";
@@ -8,9 +9,11 @@ import {
   type EvidenceToolFamilyOptions,
 } from "./retainedSummaryDelivery.js";
 
-const SUMMARY_OPERATIONS: ReadonlySet<string> = new Set(
-  NATIVE_INVENTORY_OPERATIONS,
-);
+const SUMMARY_OPERATIONS: ReadonlySet<string> = new Set([
+  ...NATIVE_INVENTORY_OPERATIONS,
+  ...NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS,
+  "inspect_native_load_image",
+]);
 const withoutDetail = withoutDeliveryDetail(SUMMARY_OPERATIONS);
 
 /** Direct tools share Evidence recording/projection with the other provider-backed tools. */

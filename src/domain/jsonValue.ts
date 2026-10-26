@@ -90,7 +90,7 @@ export function* jsonValueValidationSteps(
           kind: "array",
           value,
           depth,
-          index: value.length - 1,
+          index: 0,
         });
         inspect = false;
       } else if (isRecord(value)) {
@@ -114,11 +114,11 @@ export function* jsonValueValidationSteps(
     const frame = pending[pending.length - 1];
     if (frame === undefined) return finish(undefined);
     if (frame.kind === "array") {
-      if (frame.index < 0) {
+      if (frame.index >= frame.value.length) {
         pending.pop();
         continue;
       }
-      const index = frame.index--;
+      const index = frame.index++;
       const descriptor = Object.getOwnPropertyDescriptor(frame.value, index);
       if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
         return finish(

@@ -4,16 +4,16 @@
 
 ## Checks performed
 
-| Check | Result | Notes |
-|---|---|---|
-| `node --check scripts/ptah.mjs` | PASS | Current Node runtime parses the PTAH CLI |
-| `node --check scripts/ptah-engine.mjs` | PASS | Current Node runtime parses the investigation engine |
-| `node --check scripts/ptah-mcp.mjs` | PASS | Current Node runtime parses the MCP server |
-| `node --check scripts/ptah-ui.mjs` | PASS | Current Node runtime parses the UI launcher |
-| `node --check scripts/ptah-ui-server.mjs` | PASS | Current Node runtime parses the local UI server |
-| `npm run test:ptah` | PASS: 32 tests | All dependency-free PTAH tests passed in the current workspace |
-| `npm run build` | BLOCKED | `node_modules/.package-lock.json` is missing; `npm run deps:check` requests `npm ci` |
-| Full TypeScript/Vitest suite | NOT RUN | Project dependencies are absent; current Node is v22.16.0, below declared Node 22.19.0 minimum |
+| Check                                     | Result         | Notes                                                                                          |
+| ----------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------- |
+| `node --check scripts/ptah.mjs`           | PASS           | Current Node runtime parses the PTAH CLI                                                       |
+| `node --check scripts/ptah-engine.mjs`    | PASS           | Current Node runtime parses the investigation engine                                           |
+| `node --check scripts/ptah-mcp.mjs`       | PASS           | Current Node runtime parses the MCP server                                                     |
+| `node --check scripts/ptah-ui.mjs`        | PASS           | Current Node runtime parses the UI launcher                                                    |
+| `node --check scripts/ptah-ui-server.mjs` | PASS           | Current Node runtime parses the local UI server                                                |
+| `npm run test:ptah`                       | PASS: 32 tests | All dependency-free PTAH tests passed in the current workspace                                 |
+| `npm run build`                           | BLOCKED        | `node_modules/.package-lock.json` is missing; `npm run deps:check` requests `npm ci`           |
+| Full TypeScript/Vitest suite              | NOT RUN        | Project dependencies are absent; current Node is v22.16.0, below declared Node 22.19.0 minimum |
 
 ## Scope of the 32 passing tests
 

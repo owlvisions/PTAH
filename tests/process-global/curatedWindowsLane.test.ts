@@ -83,6 +83,12 @@ describe("curated Windows test lane", () => {
     );
   });
 
+  it("keeps real Git dependency-patch admission in the Windows lane", async () => {
+    expect(await explicitPaths("windows")).toContain(
+      "tests/boundary/filesystem/releaseProposal.test.ts",
+    );
+  });
+
   it("keeps Windows environment identity and layered setup regressions in the lane", async () => {
     expect(await explicitPaths("windows")).toEqual(
       expect.arrayContaining([

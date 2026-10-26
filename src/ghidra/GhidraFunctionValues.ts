@@ -1,3 +1,4 @@
+import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import {
@@ -38,7 +39,6 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import {
   ghidraIdentifierSchema,
   ghidraInputAddressSchema,
-  ghidraCanonicalAddressSchema,
   ghidraFunctionClassificationSchema as classification,
   ghidraFunctionBodySchema as ghidraFunctionBody,
   ghidraProcedureIdentitySchema as procedureIdentity,
@@ -146,8 +146,8 @@ const referenceKind = availableReferenceKindSchema.safeExtend({
 });
 const referenceEdge = z
   .object({
-    source_address: ghidraCanonicalAddressSchema,
-    target_address: ghidraCanonicalAddressSchema,
+    source_address: nativeAddressObservationSchema,
+    target_address: nativeAddressObservationSchema,
     source_procedure: procedureIdentity.nullable(),
     target_procedure: procedureIdentity.nullable(),
     kind: referenceKind,
@@ -161,7 +161,7 @@ const procedureReferences = z
     reference_kinds_available: z.boolean(),
     unresolved_calls: z.array(
       z.strictObject({
-        address: ghidraCanonicalAddressSchema,
+        address: nativeAddressObservationSchema,
         reason: z.string(),
       }),
     ),
@@ -170,8 +170,8 @@ const procedureReferences = z
 const procedureInfo = procedureInfoSchema
   .safeExtend({
     name: z.string().min(1),
-    entrypoint: ghidraCanonicalAddressSchema,
-    length: z.number().int().min(0),
+    entrypoint: nativeAddressObservationSchema,
+    length: z.int().min(0),
     locals: z.array(localVariable),
     classification,
     body: ghidraFunctionBody,
@@ -207,7 +207,7 @@ const ghidraNativeApiBoundary = nativeApiBoundarySchema.superRefine(
     ]);
     if (
       addresses.some(
-        (address) => !ghidraCanonicalAddressSchema.safeParse(address).success,
+        (address) => !nativeAddressObservationSchema.safeParse(address).success,
       )
     )
       context.addIssue({
@@ -233,7 +233,7 @@ const ghidraNativeValueFlow = nativeValueFlowSchema.superRefine(
     ]);
     if (
       addresses.some(
-        (address) => !ghidraCanonicalAddressSchema.safeParse(address).success,
+        (address) => !nativeAddressObservationSchema.safeParse(address).success,
       )
     )
       context.addIssue({
@@ -322,7 +322,7 @@ const ghidraFunctionDossier = functionDossierSchema
     ];
     if (
       addresses.some(
-        (address) => !ghidraCanonicalAddressSchema.safeParse(address).success,
+        (address) => !nativeAddressObservationSchema.safeParse(address).success,
       )
     )
       context.addIssue({
@@ -382,8 +382,8 @@ const resultSchemas = {
   }),
   analyze_function: ghidraFunctionDossier,
   procedure_assembly: z.string(),
-  procedure_callees: z.array(ghidraCanonicalAddressSchema),
-  procedure_callers: z.array(ghidraCanonicalAddressSchema),
+  procedure_callees: z.array(nativeAddressObservationSchema),
+  procedure_callers: z.array(nativeAddressObservationSchema),
   procedure_info: procedureInfo,
   procedure_pseudo_code: z.string().nullable(),
   read_function_instructions: ghidraFunctionInstructionWindow,
@@ -391,7 +391,7 @@ const resultSchemas = {
   inspect_native_data_type: nativeDataTypeSchema,
   resolve_native_call_targets: nativeCallTargetsSchema,
   procedure_references: procedureReferences,
-  xrefs: z.array(ghidraCanonicalAddressSchema),
+  xrefs: z.array(nativeAddressObservationSchema),
 } satisfies Readonly<Record<GhidraFunctionOperation, z.ZodType>>;
 
 const functionBoundaryObservationOperations: ReadonlySet<GhidraFunctionOperation> =
@@ -413,9 +413,9 @@ const functionObservationEnvelope = z.strictObject({
   relationship_coverage: relationshipCoverageSchema.exactOptional(),
   selection: z
     .strictObject({
-      file_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-      mapped_address: ghidraCanonicalAddressSchema,
-      procedure_address: ghidraCanonicalAddressSchema,
+      file_offset: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+      mapped_address: nativeAddressObservationSchema,
+      procedure_address: nativeAddressObservationSchema,
     })
     .exactOptional(),
 });

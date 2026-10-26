@@ -24,6 +24,7 @@ import {
 import {
   OwnedCommandFailure,
   ownedCommandResources,
+  runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import {
   AnalysisError,
@@ -37,7 +38,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { evmInterfaceEvidence } from "../application/evm/EvmInterfaceEvidence.js";
+import { evmInterfaceEvidence } from "../domain/evm/evmInterfaceEvidence.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
   type InspectEvmInterfaceInput,
@@ -47,17 +48,17 @@ import { solidityMetadataSchema } from "../domain/evm/solidityMetadata.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { runOwnedCommand } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   evmInterfaceFailure,
   capturedEvmOutput,
+  evmReplyBudgetFailure,
   type EvmFileSizeFailureEvidence,
 } from "./EvmoleFailures.js";
 import {
   evmoleInterfaceReplySchema,
-  projectEvmoleInterface,
+  projectEvmoleFunctions,
 } from "./EvmoleInterfaceAdapter.js";
 import {
   EVMOLE_PROVIDER_IDENTITY,
@@ -74,6 +75,12 @@ import {
 const OPERATION = "inspect_evm_interface";
 const HOST_REQUIREMENT =
   "Initial real-verified offline EVM interface profile supports Linux x64 only.";
+
+/** The EVM interface profile runs only on Linux x64; discovery and execution share this check. */
+export const evmHostSupported = (
+  platform: NodeJS.Platform,
+  arch: string,
+): boolean => platform === "linux" && arch === "x64";
 export const EVM_PRLIMIT_COMMAND_DEFAULT = "/usr/bin/prlimit";
 
 export interface EvmLimiterProbeFileSystem {
@@ -115,7 +122,7 @@ const selectEvmLimiter = async (
   throwIfAborted();
   const platform = probes?.platform ?? process.platform;
   const arch = probes?.arch ?? process.arch;
-  if (platform !== "linux" || arch !== "x64") return undefined;
+  if (!evmHostSupported(platform, arch)) return undefined;
 
   const path =
     environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT;
@@ -174,7 +181,7 @@ const replySchema = z.discriminatedUnion("ok", [
     version: z.literal("0.9.3"),
     bytecode: z.strictObject({
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
-      bytes: z.number().int().nonnegative(),
+      bytes: z.int().nonnegative(),
       hex: z.string().regex(/^(?:[a-f0-9]{2})*$/),
       metadata: solidityMetadataSchema.optional(),
     }),
@@ -424,7 +431,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         throw new AnalysisCancelledError(OPERATION, {
           cause: options.signal.reason,
         });
-      if (process.platform !== "linux" || process.arch !== "x64")
+      if (!evmHostSupported(process.platform, process.arch))
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
           OPERATION,
@@ -576,15 +583,24 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             bindArtifactFileCleanup(cause, failure);
           throw failure;
         }
-        const failure = new AnalysisOutputError(
-          OPERATION,
-          `Owned interface worker reply failed for ${input.path}: ${cause instanceof Error ? cause.message : String(cause)}`,
-          {
-            cause,
-            capturedOutput,
-            ...(cleanup === undefined ? {} : { cleanup }),
-          },
-        );
+        const failure =
+          cause instanceof ArtifactReaderFailure &&
+          cause.reason === "limit" &&
+          cause.boundary === "file-size"
+            ? evmReplyBudgetFailure(cause.message, {
+                cause,
+                capturedOutput,
+                ...(cleanup === undefined ? {} : { cleanup }),
+              })
+            : new AnalysisOutputError(
+                OPERATION,
+                `Owned interface worker reply failed for ${input.path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                {
+                  cause,
+                  capturedOutput,
+                  ...(cleanup === undefined ? {} : { cleanup }),
+                },
+              );
         if (cause instanceof ArtifactReaderFailure)
           bindArtifactFileCleanup(cause, failure);
         throw failure;
@@ -606,10 +622,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             },
           ]);
         if (reply.reason === "output-limit")
-          throw new AnalysisOutputError(OPERATION, reply.message, {
+          throw evmReplyBudgetFailure(reply.message, {
             capturedOutput,
-            userMessage: `${reply.message} The reply allowance is ${String(EVM_INTERFACE_LIMITS.outputBytes)} bytes. This release has no runtime override.`,
-            remediationAction: `The EVMole reply allowance is ${String(EVM_INTERFACE_LIMITS.outputBytes)} bytes. This release has no runtime override. timeout_ms does not raise it. Repeating the unchanged request fails the same way.`,
           });
         throw new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
           diagnostics: {
@@ -647,7 +661,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         "Bytecode kind, hardfork and deployed-contract authenticity are unknown. This inspection performs no target runtime execution, chain/RPC lookup or network request.",
         "Original carrier and decoded bytecode SHA-256 are distinct identities; SHA-256 is not the Ethereum Keccak code hash.",
         "Terminal CBOR metadata is an independently decoded candidate, not proof of Solidity origin, source identity or deployment. Nested or unsupported values retain explicit unavailable interpretation and original byte ranges.",
-        `The owned worker has a 256 MiB JavaScript heap, an address-space ceiling of ${String(EVM_INTERFACE_LIMITS.addressSpaceBytes)} bytes, and a CPU ceiling of ${String(EVM_CPU_SECONDS)} seconds. The command deadline is timeout_ms at ${String(timeoutMs)} ms (default ${String(DEFAULT_EVM_TIMEOUT_MS)}). Those byte, address-space, and CPU ceilings have no runtime override, and timeout_ms does not raise them. Virtual address space is distinct from resident memory; limits fail without partial success.`,
+        `The owned worker has a 256 MiB JavaScript heap. The profile maxima are ${String(EVM_INTERFACE_LIMITS.addressSpaceBytes)} address-space bytes and ${String(EVM_CPU_SECONDS)} CPU seconds; the configured soft limits above retain tighter inherited limits. The command deadline is timeout_ms at ${String(timeoutMs)} ms (default ${String(DEFAULT_EVM_TIMEOUT_MS)}). Those byte, address-space, and CPU maxima have no runtime override, and timeout_ms does not raise them. Virtual address space is distinct from resident memory; limits fail without partial success.`,
       ];
       const validated = evmInterfaceSchema.safeParse({
         artifact: {
@@ -664,7 +678,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           hardfork: "unknown",
         },
         evidence_kind: "inferred",
-        functions: projectEvmoleInterface(reply.raw).functions,
+        functions: projectEvmoleFunctions(reply.raw),
         discovery_completeness: "unknown",
         runtime_execution: "not-performed",
         diagnostics: {

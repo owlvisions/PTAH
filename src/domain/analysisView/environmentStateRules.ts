@@ -1,6 +1,14 @@
+import type { ListQuery } from "./environmentStateListQuery.js";
 import { canonicalJson } from "../comparisonSemantics.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JsonValue } from "../jsonValue.js";
+import type { StateWritePlan } from "./environmentStateWriteRules.js";
+import {
+  respellClock,
+  type ClockFormat,
+} from "./environmentStateWriteValues.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
+import { counterAt, withCounter } from "./environmentStateCounters.js";
 
 /** How records are ordered: by recorded start time, or by record order when any start time is missing. */
 export type StateTimeline = "recorded-start-time" | "record-order";
@@ -30,10 +38,25 @@ export type ParsedBody =
   | { readonly kind: "json"; readonly value: JsonValue }
   | { readonly kind: "unusable" };
 
+/** A request distinguishes confirmed absence from content the state cannot interpret. */
+export type ParsedRequestBody = ParsedBody | { readonly kind: "absent" };
+
+export const requestJson = (body: ParsedRequestBody): JsonValue | undefined =>
+  body.kind === "json" ? body.value : undefined;
+
 /** Budgeted access the accumulator lends extraction; null and false mean the budget is exhausted. */
 export interface StateBudget {
   readonly body: (ordinal: number) => ParsedBody | null;
+  /** Keep the request's parsing reservation until its consumer finishes. */
+  readonly withRequestBody: <T>(
+    ordinal: number,
+    use: (body: ParsedRequestBody) => T,
+  ) => T | null;
+  /** Whether a record's response had no body. */
+  readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => boolean;
+  /** Mark the retained bytes; the returned call releases what was retained since, once none of it is held. */
+  readonly checkpoint: () => () => void;
   /** Drop the temporary work of the body just read. */
   readonly release: () => void;
 }
@@ -93,18 +116,81 @@ interface EntityViewPlan {
   readonly fields: string[];
   readonly required_fields: string[];
   readonly checked_record_ordinals: number[];
+  /** How the view spells the clock fields it always spells otherwise than the entities' stored values. */
+  readonly clock_formats?: Readonly<Record<string, ClockFormat>> | undefined;
+  /** Fields whose string arrays the view lists in code-point order, whatever order they were written in. */
+  readonly sorted_arrays?: string[] | undefined;
+  /** The keys the view shows of object fields it shows with fewer keys than stored. */
+  readonly nested_fields?: Readonly<Record<string, string[]>> | undefined;
+  /** Envelope members each response there mints, which checks leave out and serving keeps as recorded. */
+  readonly per_response_members?: string[] | undefined;
 }
 
-export type StateItemView = EntityViewPlan & {
-  readonly shape: "item";
-  readonly envelope_ordinal: number;
+/** A query key that picks out replayed reads: a parameter, a parameter with one value, or a parameter left out. */
+export interface ReplayKey {
+  readonly name: string;
+  readonly value?: string | undefined;
+  readonly absent?: true | undefined;
+}
+
+/** Recorded reads a view leaves to replay, and the query keys that pick calls of them out. */
+interface ReplayedReads {
+  /** Reads that asked for some fields only, or show entities in another representation than the checked lines. */
+  readonly projected_record_ordinals?: number[] | undefined;
+  /** A call whose query matches one of these replays, a field selection by its values; absent on views that only left out projections. */
+  readonly projected_query_keys?: ReplayKey[] | undefined;
+}
+
+export type StateItemView = EntityViewPlan &
+  ReplayedReads & {
+    readonly shape: "item";
+    readonly envelope_ordinal: number;
+  };
+
+/** A query parameter that asks for some fields only (`fields`, `fields[...]`, `select`, `$select`). */
+export const isProjectionParameter = (name: string): boolean => {
+  const lower = name.toLowerCase();
+  return (
+    lower === "fields" ||
+    lower.startsWith("fields[") ||
+    lower === "select" ||
+    lower === "$select"
+  );
 };
 
-export type StateListView = EntityViewPlan & {
-  readonly shape: "list";
-  readonly membership: "all" | "recorded";
-  readonly counters: string[];
-};
+/** Whether a recorded query string names a projection parameter. */
+export const projectsFields = (query: string | undefined): boolean =>
+  query !== undefined &&
+  [...new URLSearchParams(query).keys()].some(isProjectionParameter);
+
+/** Whether a recorded query asks for some fields only: a projection parameter with a value other than `*`, which asks for all. */
+export const selectsSomeFields = (query: string | undefined): boolean =>
+  query !== undefined &&
+  [...new URLSearchParams(query)].some(
+    ([name, value]) => isProjectionParameter(name) && value !== "*",
+  );
+
+export type StateListView = EntityViewPlan &
+  ReplayedReads & {
+    readonly shape: "list";
+    readonly membership: "all" | "recorded";
+    /** With recorded membership, the checked lines that each list their whole collection. */
+    readonly all_record_ordinals?: number[] | undefined;
+    readonly counters: string[];
+    /** The query the view's other lines follow, when one explains any of them. */
+    readonly query?: ListQuery | undefined;
+  };
+
+/** Whether a list view answers on a checked line with every entity of the collection. */
+export const listsAll = (view: StateListView, ordinal: number): boolean =>
+  view.membership === "all" ||
+  (view.all_record_ordinals?.includes(ordinal) ?? false);
+
+/** The checked lines a list view answers with every entity of the collection. */
+export const allLines = (view: StateListView): readonly number[] =>
+  view.membership === "all"
+    ? view.checked_record_ordinals
+    : (view.all_record_ordinals ?? []);
 
 export type StateView =
   | StateItemView
@@ -113,6 +199,7 @@ export type StateView =
       readonly tool: string;
       readonly shape: "document";
       readonly checked_record_ordinals: number[];
+      readonly per_response_members?: string[] | undefined;
     }
   | {
       readonly tool: string;
@@ -125,11 +212,14 @@ export interface ExtractedState {
   readonly entities: StateEntity[];
   readonly documents: StateDocument[];
   readonly views: StateView[];
+  readonly writes: StateWritePlan[];
+  /** The instant a served clock starts from: the end of the capture's last timed record, or null without times. */
+  readonly write_clock: string | null;
 }
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** A POST whose path names one of these segments queries state rather than changing it. */
-const QUERY_SEGMENTS = new Set([
+export const QUERY_SEGMENTS = new Set([
   "search",
   "query",
   "list",
@@ -159,8 +249,12 @@ export const IDENTITY_NAMES = [
 ];
 const VERSION_SEGMENT = /^v\d+(?:\.\d+)*$/u;
 
-export const segmentsOf = (path: string): string[] =>
-  path.split("/").filter((segment) => segment.length > 0);
+export const segmentsOf = (path: string): string[] => {
+  const segments = path.split("/");
+  if (segments[0] === "") segments.shift();
+  if (segments.at(-1) === "") segments.pop();
+  return segments;
+};
 export const isParam = (segment: string): boolean =>
   segment.startsWith("{") && segment.endsWith("}");
 export const isObject = (value: JsonValue | undefined): value is JsonObject =>
@@ -181,9 +275,8 @@ export const same = (
     : canonicalJson(left, "Environment state") ===
       canonicalJson(right, "Environment state");
 
-/** The decoded final path segment, which an item request names its entity by. */
-export const lastSegmentValue = (path: string): string => {
-  const segment = segmentsOf(path).at(-1) ?? "";
+/** A path segment percent-decoded, or as written when it does not decode. */
+export const decodedSegment = (segment: string): string => {
   try {
     return decodeURIComponent(segment);
   } catch {
@@ -191,7 +284,65 @@ export const lastSegmentValue = (path: string): string => {
   }
 };
 
-/** A path's non-empty segments, so a trailing slash names the same collection. */
+/**
+ * Whether two path spellings name one segment: they are equal, or either decodes once to the other.
+ * Decoding both would make `book%2531` match `book1`.
+ */
+export const pathSegmentMatches = (segment: string, value: string): boolean =>
+  segment === value ||
+  decodedSegment(segment) === value ||
+  decodedSegment(value) === segment;
+
+/** One segment of a call: a template literal, or a supplied path value. */
+export interface SuppliedSegment {
+  readonly text: string;
+  readonly supplied: boolean;
+}
+
+/** How many supplied segments a held collection matches verbatim, when it matches the call under the path rule. */
+export const collectionMatch = (
+  collection: string,
+  segments: readonly SuppliedSegment[],
+): number | undefined => {
+  const held = segmentsOf(collection);
+  if (held.length !== segments.length) return undefined;
+  let verbatim = 0;
+  for (const [index, { text, supplied }] of segments.entries()) {
+    const segment = held[index]!;
+    if (supplied ? !pathSegmentMatches(segment, text) : segment !== text)
+      return undefined;
+    if (supplied && segment === text) verbatim += 1;
+  }
+  return verbatim;
+};
+
+/** The collection a create writes: the candidate with the most verbatim supplied segments, the earliest on a tie, else the call with each supplied segment encoded. */
+export const selectedCollection = (
+  segments: readonly SuppliedSegment[],
+  candidates: readonly string[],
+): string => {
+  let chosen: string | undefined;
+  let verbatim = -1;
+  for (const collection of candidates) {
+    const matched = collectionMatch(collection, segments);
+    if (matched !== undefined && matched > verbatim) {
+      chosen = collection;
+      verbatim = matched;
+    }
+  }
+  return (
+    chosen ??
+    `/${segments
+      .map(({ text, supplied }) => (supplied ? encodeURIComponent(text) : text))
+      .join("/")}`
+  );
+};
+
+/** The decoded final path segment, which an item request names its entity by. */
+export const lastSegmentValue = (path: string): string =>
+  decodedSegment(segmentsOf(path).at(-1) ?? "");
+
+/** A path's segments, preserving repeated separators; one trailing slash names the same collection. */
 export const normalizedPath = (path: string): string =>
   `/${segmentsOf(path).join("/")}`;
 
@@ -278,16 +429,17 @@ export const rootOf = (
 };
 
 /** Value bytes as retained state, charged before a value is kept. */
-export const jsonBytes = (value: JsonValue): number => {
+export const stateValueRetentionBytes = (value: JsonValue): number => {
   if (typeof value === "string") return textBytes(value.length);
   if (Array.isArray(value))
     return value.reduce<number>(
-      (sum, item) => sum + jsonBytes(item),
+      (sum, item) => sum + stateValueRetentionBytes(item),
       ENTRY_BYTES,
     );
   if (isObject(value))
     return Object.entries(value).reduce<number>(
-      (sum, [name, item]) => sum + textBytes(name.length) + jsonBytes(item),
+      (sum, [name, item]) =>
+        sum + textBytes(name.length) + stateValueRetentionBytes(item),
       ENTRY_BYTES,
     );
   return ENTRY_BYTES;
@@ -486,16 +638,41 @@ export const listItems = (
   return Array.isArray(items) && items.every(isObject) ? items : undefined;
 };
 
+/** An observed item count, retaining the original value separately for rendering. */
+export const recordedItemCount = (
+  value: JsonValue | undefined,
+): number | undefined =>
+  typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d+$/u.test(value)
+      ? Number(value)
+      : undefined;
+
+/** Spell a changed count with the recorded numeric/string type and digit width. */
+export const formatItemCount = (
+  count: number,
+  observed: JsonValue,
+): JsonValue =>
+  typeof observed === "string"
+    ? String(count).padStart(observed.length, "0")
+    : count;
+
 /** One entity as a view shows it: the view's fields it has, view-specific values first; volatile fields take `observed` values when given. */
 export const renderStateEntity = (
   entity: StateEntity,
-  view: Pick<EntityViewPlan, "tool" | "fields">,
+  view: Pick<
+    EntityViewPlan,
+    "tool" | "fields" | "clock_formats" | "sorted_arrays" | "nested_fields"
+  >,
   volatileFields: ReadonlySet<string>,
   observed?: JsonObject,
 ): JsonObject => {
   const own =
     entity.view_fields.find((candidate) => candidate.tool === view.tool)
       ?.fields ?? {};
+  const formats = view.clock_formats ?? {};
+  const nested = view.nested_fields ?? {};
+  const sorted = new Set(view.sorted_arrays);
   return Object.fromEntries(
     view.fields.flatMap((name): [string, JsonValue][] => {
       const source =
@@ -504,18 +681,66 @@ export const renderStateEntity = (
           : Object.hasOwn(own, name)
             ? own
             : entity.fields;
-      return Object.hasOwn(source, name) ? [[name, source[name]!]] : [];
+      if (!Object.hasOwn(source, name)) return [];
+      // A stored value the view never recorded, such as a written one, takes the view's spelling and keys.
+      const value =
+        source !== entity.fields
+          ? source[name]!
+          : Object.hasOwn(formats, name)
+            ? respellClock(source[name]!, formats[name]!)
+            : Object.hasOwn(nested, name)
+              ? shownKeys(source[name]!, nested[name]!)
+              : source[name]!;
+      return [[name, sorted.has(name) ? inSetOrder(value) : value]];
     }),
   );
 };
 
-/** A list response rendered from `base`: its array replaced by `items` and its counters set to their number. */
+/** An object with only the keys a view shows of it, in the view's order; any other value as it is. */
+const shownKeys = (value: JsonValue, keys: readonly string[]): JsonValue =>
+  isObject(value)
+    ? Object.fromEntries(
+        keys.flatMap((key) =>
+          Object.hasOwn(value, key) ? [[key, value[key]!]] : [],
+        ),
+      )
+    : value;
+
+/** Whether a value is an array of strings. */
+export const isStringArray = (value: JsonValue): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/** A string array in code-point order, as a view that keeps the field as a set lists it; any other value as it is. */
+const inSetOrder = (value: JsonValue): JsonValue =>
+  isStringArray(value) ? value.toSorted(compareUnicodeCodePoints) : value;
+
+/** The fields every recording of a view carried that the entity, as serving renders it, lacks; serving refuses to answer with such an entity. */
+export const missingRequiredFields = (
+  entity: StateEntity,
+  view: Pick<EntityViewPlan, "tool" | "fields" | "required_fields">,
+  volatileFields: ReadonlySet<string>,
+): string[] => {
+  const shown = renderStateEntity(entity, view, volatileFields);
+  return view.required_fields.filter((name) => !Object.hasOwn(shown, name));
+};
+
+/**
+ * A list response rendered from `base`: its array replaced by `items`, and set to their number each counter that
+ * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value.
+ */
 export const renderStateList = (
   view: Pick<StateListView, "pointer" | "counters">,
   base: JsonValue,
   items: readonly JsonObject[],
-): JsonValue =>
-  view.counters.reduce(
-    (body, name) => replaceAt(body, pointerTo(name), items.length),
+): JsonValue => {
+  const listed = listItems(base, view.pointer)?.length;
+  return view.counters.reduce(
+    (body, name) => {
+      const observed = counterAt(base, name);
+      if (listed === undefined || recordedItemCount(observed) !== listed)
+        return body;
+      return withCounter(body, name, formatItemCount(items.length, observed!));
+    },
     replaceAt(base, view.pointer, [...items]),
   );
+};

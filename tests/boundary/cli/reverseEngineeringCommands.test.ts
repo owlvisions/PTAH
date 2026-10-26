@@ -383,117 +383,132 @@ it("returns cancellation with the completed observation when the caller interrup
   expect(process.exitCode).toBe(130);
 });
 
-it("parses the Rizin inferior TTY as an option and passes it to the manager", async () => {
-  const commands = new Map<
-    string,
-    {
-      run(input: {
-        args: Record<string, unknown>;
-        options: Record<string, unknown>;
-      }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (
-      name: string,
-      definition: {
+it.each([false, true])(
+  "passes the Rizin TTY and uses final cleanup outcome (retry=%s)",
+  async (retryClose) => {
+    process.exitCode = 0;
+    const commands = new Map<
+      string,
+      {
         run(input: {
           args: Record<string, unknown>;
           options: Record<string, unknown>;
         }): Promise<unknown>;
-      },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as CliInstance;
-  const evidence = createEvidence(
-    undefined,
-    { id: "rizin.debugger", name: "Rizin debugger", version: null },
-    {
-      predicateType: "rea.debugger.command-observation",
-      operation: "rizin_debug_command",
-      parameters: {
-        session_id: "session-1",
-        command: "dr",
-        inferior_tty: "/dev/pts/7",
-      },
-      result: { output: "registers" },
-      rawResult: { output: "registers" },
-    },
-  );
-  const start = vi
-    .spyOn(RizinDebugSessionManager.prototype, "start")
-    .mockResolvedValue(ok({ session_id: "session-1", backend: null }));
-  const execute = vi
-    .spyOn(RizinDebugSessionManager.prototype, "execute")
-    .mockResolvedValue(
-      ok({
-        evidence,
-        result: {
-          command: "dr",
-          output: "registers",
-          output_scope: "command_and_interleaved_session_output",
-          output_truncated: false,
-          completion_status: "complete",
-          backend: null,
+      }
+    >();
+    const cli = {
+      command: (
+        name: string,
+        definition: {
+          run(input: {
+            args: Record<string, unknown>;
+            options: Record<string, unknown>;
+          }): Promise<unknown>;
         },
-      }),
+      ) => {
+        commands.set(name, definition);
+        return cli;
+      },
+    } as unknown as CliInstance;
+    const evidence = createEvidence(
+      undefined,
+      { id: "rizin.debugger", name: "Rizin debugger", version: null },
+      {
+        predicateType: "rea.debugger.command-observation",
+        operation: "rizin_debug_command",
+        parameters: {
+          session_id: "session-1",
+          command: "dr",
+          inferior_tty: "/dev/pts/7",
+        },
+        result: { output: "registers" },
+        rawResult: { output: "registers" },
+      },
     );
-  vi.spyOn(RizinDebugSessionManager.prototype, "close").mockResolvedValue(
-    ok({ target_state: "unknown" }),
-  );
-  vi.spyOn(RizinDebugSessionManager.prototype, "closeAll").mockResolvedValue(
-    undefined,
-  );
-  registerReverseEngineeringCommands(cli, pino({ enabled: false }), {});
-  const command = commands.get(CLI_COMMANDS.debugWithRizin);
-  if (command === undefined)
-    throw new Error("Rizin CLI command was not registered");
+    const start = vi
+      .spyOn(RizinDebugSessionManager.prototype, "start")
+      .mockResolvedValue(ok({ session_id: "session-1", backend: null }));
+    const execute = vi
+      .spyOn(RizinDebugSessionManager.prototype, "execute")
+      .mockResolvedValue(
+        ok({
+          evidence,
+          result: {
+            command: "dr",
+            output: "registers",
+            output_scope: "command_and_interleaved_session_output",
+            output_truncated: false,
+            completion_status: "complete",
+            backend: null,
+          },
+        }),
+      );
+    vi.spyOn(RizinDebugSessionManager.prototype, "close").mockResolvedValue(
+      retryClose
+        ? err(
+            new AnalysisOutputError(
+              "close_rizin_debug_session",
+              "first close incomplete",
+              {
+                cleanup: { reason: "retry pending", resources: ["session-1"] },
+              },
+            ),
+          )
+        : ok({ target_state: "unknown" }),
+    );
+    vi.spyOn(RizinDebugSessionManager.prototype, "closeAll").mockResolvedValue(
+      undefined,
+    );
+    registerReverseEngineeringCommands(cli, pino({ enabled: false }), {});
+    const command = commands.get(CLI_COMMANDS.debugWithRizin);
+    if (command === undefined)
+      throw new Error("Rizin CLI command was not registered");
 
-  await command.run({
-    args: { path: "./sample.bin", command: "dr" },
-    options: { inferiorTty: "/dev/pts/7" },
-  });
+    await command.run({
+      args: { path: "./sample.bin", command: "dr" },
+      options: { inferiorTty: "/dev/pts/7" },
+    });
 
-  expect(start).toHaveBeenCalledWith(
-    { path: "./sample.bin", command: "dr", inferior_tty: "/dev/pts/7" },
-    expect.any(AbortSignal),
-  );
-  expect(execute).toHaveBeenCalledWith(
-    "session-1",
-    "dr",
-    expect.any(AbortSignal),
-  );
+    expect(process.exitCode).toBe(0);
+    expect(start).toHaveBeenCalledWith(
+      { path: "./sample.bin", command: "dr", inferior_tty: "/dev/pts/7" },
+      expect.any(AbortSignal),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      "session-1",
+      "dr",
+      expect.any(AbortSignal),
+    );
 
-  const parserCli = Cli.create("rea-test", { version: "1.0.0", sync: false });
-  registerReverseEngineeringCommands(
-    parserCli as unknown as CliInstance,
-    pino({ enabled: false }),
-    {},
-  );
-  const commandContract = Cli.toCommands
-    .get(parserCli)
-    ?.get(CLI_COMMANDS.debugWithRizin);
-  expect(commandContract).toBeDefined();
-  const argsSchema =
-    commandContract === undefined
-      ? undefined
-      : Reflect.get(commandContract, "args");
-  const optionsSchema =
-    commandContract === undefined
-      ? undefined
-      : Reflect.get(commandContract, "options");
-  if (
-    !(argsSchema instanceof z.ZodObject) ||
-    !(optionsSchema instanceof z.ZodObject)
-  )
-    throw new Error("Rizin CLI args/options schemas were not registered");
-  expect(argsSchema.parse({ path: "./sample.bin", command: "dr" })).toEqual({
-    path: "./sample.bin",
-    command: "dr",
-  });
-  expect(optionsSchema.parse({ inferiorTty: "/dev/pts/7" })).toMatchObject({
-    inferiorTty: "/dev/pts/7",
-  });
-});
+    const parserCli = Cli.create("rea-test", { version: "1.0.0", sync: false });
+    registerReverseEngineeringCommands(
+      parserCli as unknown as CliInstance,
+      pino({ enabled: false }),
+      {},
+    );
+    const commandContract = Cli.toCommands
+      .get(parserCli)
+      ?.get(CLI_COMMANDS.debugWithRizin);
+    expect(commandContract).toBeDefined();
+    const argsSchema =
+      commandContract === undefined
+        ? undefined
+        : Reflect.get(commandContract, "args");
+    const optionsSchema =
+      commandContract === undefined
+        ? undefined
+        : Reflect.get(commandContract, "options");
+    if (
+      !(argsSchema instanceof z.ZodObject) ||
+      !(optionsSchema instanceof z.ZodObject)
+    )
+      throw new Error("Rizin CLI args/options schemas were not registered");
+    expect(argsSchema.parse({ path: "./sample.bin", command: "dr" })).toEqual({
+      path: "./sample.bin",
+      command: "dr",
+    });
+    expect(optionsSchema.parse({ inferiorTty: "/dev/pts/7" })).toMatchObject({
+      inferiorTty: "/dev/pts/7",
+    });
+  },
+);

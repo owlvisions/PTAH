@@ -181,7 +181,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
         "The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specific pseudocode and assembly are not cross-provider text invariants.",
         "Resolved reference metadata identifies computed, indirect, external, call, jump, and data edges; unresolved targetless flows remain unknown, and function classifications distinguish thunks and externals.",
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
-        "The Java bridge serializes one function request per Program and lets each decompilation run until it completes or the caller cancels.",
+        "The Java bridge serializes one function request per Program. Decompilation runs until completion or caller cancellation unless REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS sets a per-function limit. That limit stops the requested decompile without requesting session closure; caller cancellation requests session closure.",
       ];
     default:
       return common;

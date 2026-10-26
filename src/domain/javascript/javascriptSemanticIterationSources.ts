@@ -29,6 +29,13 @@ export interface SemanticIterationSource extends IterationSourceValue {
   readonly requiredSources?: readonly IterationSourceValue[];
 }
 
+/** A property value obtained by destructuring or an own-enumerable copy. */
+export interface SemanticPropertyReadSource
+  extends IterationSourceValue, SourceGuards {
+  readonly mutation: t.Node;
+  readonly lookup: "prototype" | "own";
+}
+
 interface PatternSource extends IterationSourceValue {
   // A rest binding is a fresh array whose children retain their source indices.
   readonly restStartIndex?: number;
@@ -112,6 +119,7 @@ const project = (
 interface PatternCollection {
   readonly sources: SemanticIterationSource[];
   readonly mutation: t.Node;
+  readonly propertyReads: SemanticPropertyReadSource[];
 }
 
 const visit = (
@@ -191,11 +199,7 @@ const visit = (
   if (t.isObjectPattern(pattern)) {
     for (const property of pattern.properties) {
       if (t.isRestElement(property)) {
-        // A rest copy owns its scalar slots; only selected child references
-        // escape when that fresh copy is stored through a member target.
-        visit(
-          context,
-          property.argument,
+        const rest =
           source === undefined
             ? undefined
             : {
@@ -208,20 +212,31 @@ const visit = (
                     ].sort(compareUnicodeCodePoints),
                   },
                 ],
-              },
-          guards,
-        );
+              };
+        if (rest !== undefined)
+          context.propertyReads.push({
+            ...rest,
+            ...guards,
+            mutation,
+            lookup: "own",
+          });
+        // A rest copy owns its scalar slots; only selected child references
+        // escape when that fresh copy is stored through a member target.
+        visit(context, property.argument, rest, guards);
         continue;
       }
-      visit(
-        context,
-        property.value,
-        project(
-          source,
-          semanticStaticPropertyKey(property.key, property.computed),
-        ),
-        guards,
+      const selected = project(
+        source,
+        semanticStaticPropertyKey(property.key, property.computed),
       );
+      if (selected !== undefined)
+        context.propertyReads.push({
+          ...selected,
+          ...guards,
+          mutation,
+          lookup: "prototype",
+        });
+      visit(context, property.value, selected, guards);
     }
     return;
   }
@@ -258,13 +273,40 @@ const visit = (
     visit(context, pattern.argument, undefined, guards);
 };
 
-/** Describe iterator receivers and property reference stores without evaluation. */
-export const semanticIterationSources = (
+interface SemanticSourceFacts {
+  readonly iterations: readonly SemanticIterationSource[];
+  readonly propertyReads: readonly SemanticPropertyReadSource[];
+}
+const emptySourceFacts: SemanticSourceFacts = {
+  iterations: [],
+  propertyReads: [],
+};
+const sourceFacts = new WeakMap<
+  t.Node,
+  { readonly parent: t.Node | null; readonly facts: SemanticSourceFacts }
+>();
+
+/** One owner for pattern projections, guards, iteration and copy-read sources. */
+const semanticSourceFacts = (
   node: t.Node,
   parent: t.Node | null,
-): readonly SemanticIterationSource[] => {
+): SemanticSourceFacts => {
+  if (
+    !(
+      t.isVariableDeclarator(node) ||
+      t.isAssignmentExpression(node) ||
+      t.isForOfStatement(node) ||
+      t.isSpreadElement(node) ||
+      t.isYieldExpression(node) ||
+      t.isFunction(node)
+    )
+  )
+    return emptySourceFacts;
+  const cached = sourceFacts.get(node);
+  if (cached?.parent === parent) return cached.facts;
   const sources: SemanticIterationSource[] = [];
-  const context = { sources, mutation: node };
+  const propertyReads: SemanticPropertyReadSource[] = [];
+  const context = { sources, propertyReads, mutation: node };
   if (t.isVariableDeclarator(node) && node.init != null)
     visit(context, node.id, { node: node.init, projection: [] });
   else if (
@@ -279,13 +321,38 @@ export const semanticIterationSources = (
       for (const declaration of node.left.declarations)
         visit(context, declaration.id, source);
     } else visit(context, node.left, source);
-  } else if (t.isSpreadElement(node) && t.isArrayExpression(parent))
-    add(sources, { node: node.argument, projection: [] }, node, {});
-  else if (t.isYieldExpression(node) && node.delegate && node.argument != null)
+  } else if (t.isSpreadElement(node)) {
+    if (t.isArrayExpression(parent))
+      add(sources, { node: node.argument, projection: [] }, node, {});
+    else if (t.isObjectExpression(parent))
+      propertyReads.push({
+        node: node.argument,
+        projection: [{ excludedKeys: [] }],
+        mutation: node,
+        lookup: "own",
+      });
+  } else if (
+    t.isYieldExpression(node) &&
+    node.delegate &&
+    node.argument != null
+  )
     add(sources, { node: node.argument, projection: [] }, node, {});
   else if (t.isFunction(node))
     for (const parameter of runtimeFunctionParameters(node))
       visit(context, parameter, undefined);
-
-  return sources;
+  const facts = { iterations: sources, propertyReads };
+  sourceFacts.set(node, { parent, facts });
+  return facts;
 };
+
+export const semanticIterationSources = (
+  node: t.Node,
+  parent: t.Node | null,
+): readonly SemanticIterationSource[] =>
+  semanticSourceFacts(node, parent).iterations;
+
+export const semanticPropertyReadSources = (
+  node: t.Node,
+  parent: t.Node | null,
+): readonly SemanticPropertyReadSource[] =>
+  semanticSourceFacts(node, parent).propertyReads;

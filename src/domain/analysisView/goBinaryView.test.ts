@@ -110,8 +110,12 @@ it.each([
   "checks report architecture %j against subject %j for every Go view",
   (architecture, subjectArchitecture, accepted) => {
     const input = parent();
-    if (input.subject == null) throw new Error("Expected artifact subject");
-    const subject = { ...input.subject, architecture: subjectArchitecture };
+    if (input.subject?.format !== "elf")
+      throw new Error("Expected ELF subject");
+    const subject = {
+      ...input.subject,
+      architecture: subjectArchitecture,
+    };
     const normalizedResult = { ...report, architecture };
     for (const view of [
       { kind: "summary" },

@@ -24,6 +24,11 @@ import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
 type Shape = "array" | "callback" | "unknown";
+
+/** Bounded argument-shape queries shared by call-signature owners. */
+export type JavaScriptExpressionShapeResolver = ReturnType<
+  typeof createSemanticExpressionShapeResolver
+>;
 const commonJsWrapperParameterNames = new Set([
   "exports",
   "require",
@@ -48,7 +53,6 @@ export const createSemanticExpressionShapeResolver = (
   // Most modules have no named child arguments. Collect source-wide blockers
   // only when a query actually needs a named binding or ambient undefined.
   let blocked: boolean | undefined;
-  const blockFunctionNames = new Set<string>();
   const namedProofBlocked = (): boolean => {
     if (blocked !== undefined) return blocked;
     blocked = false;
@@ -57,13 +61,6 @@ export const createSemanticExpressionShapeResolver = (
         blocked ||=
           isErasedJavaScriptDeclaration(node) ||
           isUnmodeledJavaScriptRuntimeScope(node);
-        if (
-          javaScriptRuntimeContext(state.program) !== "module" &&
-          t.isFunctionDeclaration(node) &&
-          node.id != null &&
-          !hoistedFunction(node)
-        )
-          blockFunctionNames.add(node.id.name);
       },
     });
     return blocked;
@@ -100,13 +97,9 @@ export const createSemanticExpressionShapeResolver = (
         )
           return "unknown";
       }
-      // Annex B may copy a block function into an outer var without an indexed
-      // assignment. Keep same-named vars unknown rather than model that copy.
       if (
         namedProofBlocked() ||
-        semanticOpaqueBindingReadMayHaveChanged(binding, node, state) ||
-        (binding.declarationKinds.has("var") &&
-          blockFunctionNames.has(binding.name))
+        semanticOpaqueBindingReadMayHaveChanged(binding, node, state)
       )
         return "unknown";
       const initializer = semanticStableInitializer(binding, state);
@@ -136,4 +129,27 @@ export const createSemanticExpressionShapeResolver = (
       );
     },
   };
+};
+
+/**
+ * Select the options argument of a `(target[, argv][, options])` signature,
+ * such as Node child_process spawn/execFile/fork or Electron
+ * utilityProcess.fork. Only a proven argv array or nullish placeholder admits
+ * third-slot options; any other second argument may itself be the options
+ * object, which makes the runtime ignore the third. Spread arguments are
+ * returned unchanged so callers keep their unknown positions unknown. The
+ * returned node is unwrapped; `undefined` means no options were supplied.
+ */
+export const optionsAfterOptionalArgv = (
+  args: readonly t.CallExpression["arguments"][number][],
+  shapes: JavaScriptExpressionShapeResolver,
+): t.Node | undefined => {
+  const [first, second, third] = args;
+  if (t.isSpreadElement(first)) return first;
+  if (second === undefined) return undefined;
+  const options =
+    shapes.isArray(second) || shapes.isNullish(second) ? third : second;
+  return options === undefined
+    ? undefined
+    : unwrapJavaScriptExpression(options).node;
 };

@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import type {
   ElectronPageInspection,
   InspectElectronPageInput,
@@ -7,7 +8,12 @@ import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { requiredScriptSource } from "./CdpCaptureValues.js";
-import type { ElectronScriptDraft } from "./CdpElectronScriptEvents.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { CDP_CAPTURE_SCRIPT_METADATA_LIMITS } from "./CdpCaptureEventTypes.js";
+import type {
+  ElectronScriptDraft,
+  ElectronScriptFrameScope,
+} from "./CdpElectronScriptEvents.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -24,8 +30,11 @@ interface ElectronScriptCaptureInput {
   readonly signal?: AbortSignal;
   readonly request: InspectElectronPageInput;
   readonly scripts: readonly ElectronScriptDraft[];
-  readonly frameIds: ReadonlySet<string>;
+  readonly frameScopeForScript: (
+    script: ElectronScriptDraft,
+  ) => ElectronScriptFrameScope;
   readonly completeness: CdpCaptureCompleteness;
+  readonly asarHeaderAdmission: AsarHeaderAdmission;
 }
 
 /** Normalize local script metadata and optionally approved source. */
@@ -35,6 +44,7 @@ export const captureElectronScripts = async (
   let total = 0;
   const items: ElectronPageInspection["scripts"]["items"] = [];
   const seen = new Set<string>();
+  let metadataBytes = 2;
   const commandTimeoutMs = selectedCdpCommandTimeoutMs(
     input.request.command_timeout_ms,
   );
@@ -47,29 +57,52 @@ export const captureElectronScripts = async (
   try {
     for (const script of input.scripts) {
       throwIfCallerCancelled(input.signal);
+      const frame = input.frameScopeForScript(script);
+      if (frame.state === "excluded") {
+        input.completeness.exclude("scripts", "out_of_target_scope");
+        continue;
+      }
       const path = await authorizedElectronFile(
         script.rawUrl,
         input.signal,
         "inspect_electron_page",
+        input.asarHeaderAdmission,
       );
       if (path === undefined) {
         input.completeness.exclude("scripts", "out_of_target_scope");
         continue;
       }
+      if (frame.state === "unknown")
+        input.completeness.attachLimited("scripts");
       const identity = {
-        frame_id:
-          script.frameId !== null && input.frameIds.has(script.frameId)
-            ? script.frameId
-            : null,
+        frame_id: frame.frameId,
+        frame_scope: frame.state,
+        frame_claims: script.frameClaims,
         file_path: path,
+        reported_url: script.rawUrl,
+        has_source_url: script.hasSourceUrl,
         cdp_hash: script.hash,
         length: script.length,
         is_module: script.isModule,
         language: script.language,
       };
+      // Digest text has fixed ASCII width; count the final metadata shape
+      // before canonical hashing or retaining the expanded public projection.
+      const remaining =
+        CDP_CAPTURE_SCRIPT_METADATA_LIMITS.retainedBytes - metadataBytes;
+      const retainedBytes =
+        jsonValueByteLength(
+          { script_key: `electron_script_${"0".repeat(64)}`, ...identity },
+          remaining,
+        ) + (items.length > 0 ? 1 : 0);
+      if (retainedBytes > remaining) {
+        input.completeness.exclude("scripts", "resource_budget_exhausted");
+        continue;
+      }
       const scriptKey = `electron_script_${digestCanonicalValue(identity, "CDP capture")}`;
       if (seen.has(scriptKey)) continue;
       seen.add(scriptKey);
+      metadataBytes += retainedBytes;
       total += 1;
       let source: ElectronScriptSource = input.request.include_script_sources
         ? {

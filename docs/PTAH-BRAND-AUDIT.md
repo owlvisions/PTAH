@@ -4,18 +4,18 @@
 
 ## Original vs current state
 
-| Area | Original REA base | Current PTAH state | Remaining work |
-|---|---|---|---|
-| Root product messaging | REA: Reverse Engineer Anything | Root README now presents PTAH and clearly labels this a migration preview | Review the site, social links, docs landing pages, screenshots, and localized READMEs |
-| Package metadata | `rea-agents`, REA description and keywords | Description and keywords mention PTAH; package name remains `rea-agents` intentionally | Choose an available, owner-controlled npm name and migrate publishing, lockfiles, release automation, and install docs together |
-| CLI | `rea` / `rea-agents` dispatch | PTAH-native `ptah` CLI is additive; legacy dispatch is preserved | Prove command parity and deprecation/alias policy before removing old entry points |
-| Investigation model | Existing REA workflows and evidence contracts | PTAH schema, fingerprinting, evidence graph/report, bounded planner and verification | Wire the adapter into production workflows and run its TypeScript tests under the supported toolchain |
-| MCP | Existing REA MCP runtime | Separate `ptah-mcp` stdio server for PTAH-native operations | Decide official MCP registry namespace and test full client interoperability/release metadata |
-| GUI | Existing REA surfaces | Early loopback-only PTAH workbench | Accessibility, usability, session/CSRF review as applicable, packaging, and broader end-to-end tests |
-| Analysis | Many inherited REA providers | Bounded static adapters for `objdump`, `llvm-objdump`, and `wasm-tools` | Provider-by-provider parity, resource limits, OS isolation, accuracy corpus, and unsupported-format reporting |
-| Documentation | REA docs and translations | PTAH architecture, engine, audit, roadmap, MCP and UI docs; original README snapshot retained | Review every translated/generated page and remove stale links only after confirming replacement destinations |
-| Licensing/provenance | Upstream REA license and third-party notices | Existing license/notices retained; snapshot preserved | Recheck SBOM, third-party notices, generated assets, copyright, and release provenance before publication |
-| Validation | Upstream monorepo build/test system | PTAH dependency-free Node tests can run independently | Full build, TypeScript/Vitest tests, Python tests, website/docs checks and CI on supported Node/npm |
+| Area                   | Original REA base                             | Current PTAH state                                                                            | Remaining work                                                                                                                  |
+| ---------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Root product messaging | REA: Reverse Engineer Anything                | Root README now presents PTAH and clearly labels this a migration preview                     | Review the site, social links, docs landing pages, screenshots, and localized READMEs                                           |
+| Package metadata       | `rea-agents`, REA description and keywords    | Description and keywords mention PTAH; package name remains `rea-agents` intentionally        | Choose an available, owner-controlled npm name and migrate publishing, lockfiles, release automation, and install docs together |
+| CLI                    | `rea` / `rea-agents` dispatch                 | PTAH-native `ptah` CLI is additive; legacy dispatch is preserved                              | Prove command parity and deprecation/alias policy before removing old entry points                                              |
+| Investigation model    | Existing REA workflows and evidence contracts | PTAH schema, fingerprinting, evidence graph/report, bounded planner and verification          | Wire the adapter into production workflows and run its TypeScript tests under the supported toolchain                           |
+| MCP                    | Existing REA MCP runtime                      | Separate `ptah-mcp` stdio server for PTAH-native operations                                   | Decide official MCP registry namespace and test full client interoperability/release metadata                                   |
+| GUI                    | Existing REA surfaces                         | Early loopback-only PTAH workbench                                                            | Accessibility, usability, session/CSRF review as applicable, packaging, and broader end-to-end tests                            |
+| Analysis               | Many inherited REA providers                  | Bounded static adapters for `objdump`, `llvm-objdump`, and `wasm-tools`                       | Provider-by-provider parity, resource limits, OS isolation, accuracy corpus, and unsupported-format reporting                   |
+| Documentation          | REA docs and translations                     | PTAH architecture, engine, audit, roadmap, MCP and UI docs; original README snapshot retained | Review every translated/generated page and remove stale links only after confirming replacement destinations                    |
+| Licensing/provenance   | Upstream REA license and third-party notices  | Existing license/notices retained; snapshot preserved                                         | Recheck SBOM, third-party notices, generated assets, copyright, and release provenance before publication                       |
+| Validation             | Upstream monorepo build/test system           | PTAH dependency-free Node tests can run independently                                         | Full build, TypeScript/Vitest tests, Python tests, website/docs checks and CI on supported Node/npm                             |
 
 ## Upstream synchronization
 

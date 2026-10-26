@@ -422,6 +422,51 @@ describe("analysis snapshot canonical ordering and scope", () => {
   });
 });
 
+it("does not select arbitrary provenance when multiple authenticated records match one replay entry", () => {
+  const { current, snapshot } = snapshotWithHistoricalEvidence();
+  const source = snapshot.evidence_bundle.records.find(
+    (record) => record.operation === "unprofiled_query",
+  )!;
+  const alternative = createEvidence(
+    ANALYSIS_SNAPSHOT_TARGET,
+    ANALYSIS_SNAPSHOT_PROVIDER,
+    {
+      operation: current.operation,
+      parameters: current.parameters,
+      result: current.normalized_result,
+      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      evidenceLinks: [source.evidence_id],
+    },
+  );
+  expect(alternative.evidence_id).not.toBe(current.evidence_id);
+  const ambiguous = parseAnalysisSnapshot({
+    ...snapshot,
+    evidence_bundle: createEvidenceBundle([
+      ...snapshot.evidence_bundle.records,
+      alternative,
+    ]),
+  });
+  expect(ambiguous.entries).toEqual(snapshot.entries);
+  const reversedInsertion = parseAnalysisSnapshot({
+    ...ambiguous,
+    evidence_bundle: createEvidenceBundle(
+      [...ambiguous.evidence_bundle.records].reverse(),
+    ),
+  });
+  expect(reversedInsertion).toEqual(ambiguous);
+  for (const candidate of [ambiguous, reversedInsertion])
+    expect(
+      snapshotEvidenceForQuery(candidate, {
+        target: ANALYSIS_SNAPSHOT_TARGET,
+        bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
+        operation: current.operation,
+        parameters: current.parameters,
+        provider: ANALYSIS_SNAPSHOT_PROVIDER,
+        evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      }),
+    ).toBeUndefined();
+});
+
 describe("analysis snapshot Evidence binding", () => {
   it("finds only Evidence committed to the exact binding and profile", () => {
     const { current, snapshot } = snapshotWithHistoricalEvidence();

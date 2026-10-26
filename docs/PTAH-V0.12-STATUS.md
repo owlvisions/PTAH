@@ -1,6 +1,6 @@
 # PTAH v0.12 status and upstream checkpoint
 
-**Checkpoint date:** 2026-10-25  
+**Checkpoint date:** 2026-10-25
 **Package label:** engineering preview; not a standalone production release.
 
 ## Upstream checkpoint identified

@@ -19,6 +19,11 @@ export const readElfSymbol = (
   };
 };
 export const readElfString = (bytes: Buffer, offset: number): string => {
+  return readElfStringBytes(bytes, offset).toString("latin1");
+};
+
+/** Read exact string-table bytes; ELF does not prescribe a character encoding. */
+export const readElfStringBytes = (bytes: Buffer, offset: number): Buffer => {
   if (offset >= bytes.length)
     throw new BinaryFormatFailure(
       "malformed",
@@ -32,5 +37,5 @@ export const readElfString = (bytes: Buffer, offset: number): string => {
       "malformed",
       "ELF string is unterminated or exceeds the string budget",
     );
-  return bytes.toString("latin1", offset, offset + end);
+  return bytes.subarray(offset, offset + end);
 };

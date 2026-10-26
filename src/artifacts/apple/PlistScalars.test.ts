@@ -7,9 +7,13 @@ import { projectPlistValue } from "../../domain/apple/plistValue.js";
 import {
   binaryDateRequiresExactSeconds,
   decodeBinaryPlistScalars,
+  decodeBinaryPlistUids,
   scanBinaryPlistScalars,
 } from "./PlistScalars.js";
-import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import {
+  estimateBinaryPlistExpansion,
+  PropertyListDecodeBudgetFailure,
+} from "./PropertyListDecodeBudget.js";
 
 const dataObjectWithUnusedOverlappingInteger = (): Buffer => {
   const bytes = Buffer.alloc(66);
@@ -84,11 +88,11 @@ const unreachableOverlappingIntegerAndReal = (): Buffer => {
 };
 
 const dateInsideDataWithLargeOffsetTable = (): Buffer => {
-  const bytes = Buffer.alloc(295);
+  const bytes = Buffer.alloc(285);
   bytes.set([0xa2, 1, 2, 0x4a, 0], 8);
   bytes[13] = 0x33;
   bytes.writeDoubleBE(0.1005, 14);
-  return binaryPlistObjectTable(bytes, [8, 11, 13], 260);
+  return binaryPlistObjectTable(bytes, [8, 11, 13], 250);
 };
 
 const scalarCrossingOffsetTable = (marker: number, payload: Buffer): Buffer => {
@@ -177,6 +181,7 @@ describe("binary plist scalar bounds", () => {
       reachableWideIntegerOffsets: [],
       overlappingWideIntegerOffsets: [],
       reachableNumericOffsets: [],
+      uidOffsetsToNormalize: [],
     });
     expect(
       estimateBinaryPlistExpansion(bytes, plan.estimatedBytes).estimatedBytes,
@@ -227,6 +232,78 @@ describe("binary plist scalar bounds", () => {
   );
 });
 
+const binaryPlistWithUid = (width: number, inputValue: bigint): Buffer => {
+  let value = inputValue;
+  const record = Buffer.alloc(width + 1);
+  record[0] = 0x80 | (width - 1);
+  for (let byte = width - 1; byte >= 0; byte -= 1) {
+    record[byte + 1] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  const offsetTable = 8 + record.length;
+  const bytes = Buffer.alloc(offsetTable + 1 + 32);
+  record.copy(bytes, 8);
+  return binaryPlistObjectTable(bytes, [8], offsetTable);
+};
+
+describe("binary plist UID widths", () => {
+  it.each([
+    { width: 3, value: 0xabcdefn, normalizedWidth: 4 },
+    { width: 9, value: 1n, normalizedWidth: 1 },
+    { width: 16, value: 0x1234n, normalizedWidth: 2 },
+    { width: 4, value: 0x1234n, normalizedWidth: undefined },
+  ])(
+    "preserves the full $width-byte UID value and only normalizes unsupported widths",
+    ({ width, value, normalizedWidth }) => {
+      const bytes = binaryPlistWithUid(width, value);
+      const plan = estimateBinaryPlistExpansion(bytes, 1024 * 1024);
+      expect(plan.uidOffsetsToNormalize).toEqual(
+        normalizedWidth === undefined
+          ? []
+          : [{ offset: 8, width: normalizedWidth }],
+      );
+      const compatible = decodeBinaryPlistUids(
+        bytes,
+        plan.uidOffsetsToNormalize,
+      );
+      if (normalizedWidth === undefined) expect(compatible).toBe(bytes);
+      else expect(compatible[8 + width + 1]).toBe(0x80 | (normalizedWidth - 1));
+      expect(parseBinary(compatible)).toEqual({
+        UID: Number(value),
+      });
+    },
+  );
+
+  it("accounts for appended UID records before admitting the decode copy", () => {
+    const bytes = binaryPlistWithUid(3, 0xabcdefn);
+    for (const options of [{}, { numberProjection: true }]) {
+      const plan = estimateBinaryPlistExpansion(bytes, 1024 * 1024, options);
+      expect(() =>
+        estimateBinaryPlistExpansion(bytes, plan.estimatedBytes - 1, options),
+      ).toThrow(PropertyListDecodeBudgetFailure);
+    }
+  });
+
+  it("rejects a truncated UID payload and values outside exact numeric range", () => {
+    const truncated = Buffer.alloc(50);
+    truncated[8] = 0x82;
+    truncated[9] = 1;
+    binaryPlistObjectTable(truncated, [8], 10);
+    expect(() => estimateBinaryPlistExpansion(truncated, 1024)).toThrow(
+      "binary plist UID object is truncated",
+    );
+
+    const inexact = binaryPlistWithUid(8, BigInt(Number.MAX_SAFE_INTEGER) + 1n);
+    expect(() => estimateBinaryPlistExpansion(inexact, 1024)).toThrow(
+      "binary plist UID value 9007199254740992",
+    );
+    const nonzeroHighByte = binaryPlistWithUid(9, 0x1_0000_0000_0000_0000n);
+    expect(() => estimateBinaryPlistExpansion(nonzeroHighByte, 1024)).toThrow(
+      "binary plist UID value 18446744073709551616",
+    );
+  });
+});
+
 describe("binary plist number rewriting", () => {
   it("does not rewrite an integer marker inside another object's data", () => {
     const bytes = dataObjectWithUnusedOverlappingInteger();
@@ -241,11 +318,15 @@ describe("binary plist number rewriting", () => {
         reachableWideIntegerOffsets: [],
         overlappingWideIntegerOffsets: [],
         reachableNumericOffsets: [],
+        uidOffsetsToNormalize: [],
       }),
     ).toBe(bytes);
-    expect(bytes.subarray(13, 30)).toEqual(
-      Buffer.from([0x14, ...Array<number>(16).fill(0xff)]),
-    );
+    expect(
+      Buffer.compare(
+        bytes.subarray(13, 30),
+        Buffer.from([0x14, ...Array<number>(16).fill(0xff)]),
+      ),
+    ).toBe(0);
   });
 
   it("does not rewrite a wide integer when a date aliases its payload", () => {
@@ -284,7 +365,7 @@ describe("binary plist number rewriting", () => {
       },
       { $plist_type: "date", iso8601: null },
     ]);
-    expect(bytes).toEqual(original);
+    expect(Buffer.compare(bytes, original)).toBe(0);
     expect(bytes[11]).toBe(0x14);
     expect(bytes[18]).toBe(0x33);
   });
@@ -346,7 +427,7 @@ describe("binary plist shared object-table entries", () => {
     expect(numbers.limitations().join("\n")).not.toContain(
       "could not be completely observed",
     );
-    expect(bytes).toEqual(original);
+    expect(Buffer.compare(bytes, original)).toBe(0);
   });
 
   it("rewrites a shared 16-byte integer once for every entry", () => {
@@ -372,7 +453,7 @@ describe("binary plist shared object-table entries", () => {
       { $plist_type: "integer", decimal: "18446744073709551618" },
       { $plist_type: "integer", decimal: "1152921504606846979" },
     ]);
-    expect(bytes).toEqual(original);
+    expect(Buffer.compare(bytes, original)).toBe(0);
   });
 
   it("records a shared date once and keeps its sibling exact", () => {

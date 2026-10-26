@@ -69,19 +69,13 @@ export const locateGodotPck = async (
   if (trailer.readUInt32LE(8) !== GODOT_PCK_MAGIC) return undefined;
   const end = size - 12;
   const bytes = trailer.readBigUInt64LE(0);
-  if (bytes < 4n || bytes > BigInt(end))
-    throw new ArtifactReaderFailure(
-      "format",
-      "Godot PCK trailer declares an invalid pack range",
-    );
+  // The terminal marker is only a candidate until its range resolves to a PCK header.
+  if (bytes < 4n || bytes > BigInt(end)) return undefined;
   const start = end - Number(bytes);
   if (
     (await readPckBytes(handle, start, 4, end, signal)).readUInt32LE(0) !==
     GODOT_PCK_MAGIC
   )
-    throw new ArtifactReaderFailure(
-      "format",
-      "Godot PCK trailer does not point at a pack header",
-    );
+    return undefined;
   return { start, end, embedded: true };
 };

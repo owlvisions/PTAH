@@ -7,8 +7,6 @@ import {
   isNativeInventoryOperation,
   nativeInventoryRowsSchemas,
 } from "../native/nativeInventory.js";
-import { digestSchema } from "../digests.js";
-import { providerSchema } from "../evidence.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type {
@@ -52,12 +50,6 @@ export const nativeInventoryViewRowSchema = z.strictObject({
   source_index: z.number().int().nonnegative(),
   record: inventoryRecordSchema.partial().required({ address: true }),
 });
-
-export const nativeInventoryViewContext = {
-  source_provider: providerSchema.nullable(),
-  source_analysis_profile_digest: digestSchema.nullable(),
-  source_parameters: jsonValueSchema,
-};
 
 export const nativeInventorySummarySchema = z.strictObject({
   collection: z.enum(["procedures", "strings", "names"]),
@@ -124,7 +116,7 @@ export const projectNativeInventoryView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     source_provider: parent.provider ?? null,
-    source_analysis_profile_digest: parent.analysisProfileDigest ?? null,
+    source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: jsonValueSchema.parse(parent.parameters ?? null),
     limitations: boundedViewMessages(
       parent.limitations,

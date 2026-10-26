@@ -123,6 +123,19 @@ export class Il2cppMetadataService {
           },
         ]),
       );
+    if (
+      input.data.generic_instances === true &&
+      input.data.binary_path === undefined
+    )
+      return err(
+        new AnalysisInputError(OPERATION, undefined, [
+          {
+            path: ["generic_instances"],
+            reason: "invalid_value",
+            message: "generic_instances links generic methods in binary_path.",
+          },
+        ]),
+      );
     if (output !== undefined) {
       if (input.data.binary_path === undefined)
         return err(
@@ -213,7 +226,7 @@ export class Il2cppMetadataService {
             Object.entries(providerInput).filter(
               ([, value]) => value !== undefined,
             ),
-          ) as Record<string, string>),
+          ) as Record<string, string | boolean>),
           ...(output === undefined
             ? {}
             : {
@@ -227,7 +240,8 @@ export class Il2cppMetadataService {
         confidence:
           value.binary === null
             ? "observed"
-            : value.binary.code_gen_modules_field === null
+            : value.binary.code_gen_modules_field === null ||
+                value.binary.types_field === null
               ? "inferred"
               : "derived",
         limitations: value.limitations,

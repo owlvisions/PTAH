@@ -63,6 +63,7 @@ export class EvidenceFileError extends AnalysisError {
       | "wrong-kind"
       | "invalid-json"
       | "missing"
+      | "path-limit"
       | "io",
     options?: AnalysisErrorOptions & {
       readonly path?: string;

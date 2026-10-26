@@ -34,6 +34,7 @@ const report: RustBinary = {
         source: "local",
         kind: null,
         dependencies: [],
+        features: null,
         root: true,
       },
     ],

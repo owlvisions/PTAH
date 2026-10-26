@@ -1,19 +1,12 @@
 import { z } from "zod";
+import { nativeSymbolMetadataSchema } from "./nativeSymbol.js";
 import { analysisStringSchema } from "../hopperValues.js";
 
 /** Canonical named native observations; same-address alternatives stay separate. */
 export const addressedValueSchema = z.object({
   address: z.string(),
   value: z.string(),
-  symbol: z
-    .object({
-      primary: z.boolean(),
-      dynamic: z.boolean(),
-      external: z.boolean(),
-      type: z.string(),
-      source: z.enum(["default", "analysis", "ai", "imported", "user_defined"]),
-    })
-    .exactOptional(),
+  symbol: nativeSymbolMetadataSchema.exactOptional(),
   objc_class_label: z.literal("hopper_legacy_class_object").exactOptional(),
   procedure: z
     .object({

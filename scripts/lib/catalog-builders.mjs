@@ -38,7 +38,10 @@ export const toolFamilyCatalog = (sources) => {
         ...sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
         ...sources.modelContracts.MODEL_TOOL_CONTRACTS,
         ...sources.rustContracts.RUST_TOOL_CONTRACTS,
+        ...sources.pythonPycContracts.PYTHON_PYC_TOOL_CONTRACTS,
+        ...sources.erlangContracts.ERLANG_BEAM_TOOL_CONTRACTS,
         ...sources.wasmContracts.WASM_TOOL_CONTRACTS,
+        ...sources.apkSignatureContracts.APK_SIGNATURE_TOOL_CONTRACTS,
         ...sources.sqliteContracts.SQLITE_TOOL_CONTRACTS,
         ...sources.captureContracts.CAPTURE_TOOL_CONTRACTS,
         ...sources.signalContracts.SIGNAL_TOOL_CONTRACTS,
@@ -120,10 +123,12 @@ export const toolFamilyCatalog = (sources) => {
       surface: "application-workflow",
       contracts: [
         ...sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
+        ...sources.analysisSettingsContracts.ANALYSIS_SETTINGS_TOOL_CONTRACTS,
         ...sources.analysisViewContracts.ANALYSIS_VIEW_TOOL_CONTRACTS,
         ...sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
         ...sources.javascriptRecoveryContracts
           .JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+        ...sources.environmentContracts.ENVIRONMENT_TOOL_CONTRACTS,
       ],
     },
     {
@@ -238,7 +243,9 @@ export const providerCatalog = (sources) => {
       identity: sources.pwntoolsProvider.PWNTOOLS_PROVIDER_IDENTITY,
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
-          ({ name }) => name !== "inspect_pe_resources",
+          ({ name }) =>
+            name === "inspect_binary_layout" ||
+            name === "inspect_recorded_crash",
         ),
     },
     {
@@ -246,6 +253,69 @@ export const providerCatalog = (sources) => {
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
           ({ name }) => name === "inspect_pe_resources",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_CERTIFICATES_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_certificates",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_IMPORTS_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_imports",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.DEVICETREE_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_devicetree",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_LOAD_CONFIG_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_load_config",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.ELF_NOTES_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_elf_notes",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.APPLE_IPS_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_apple_ips",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.KERNEL_MODULE_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_kernel_module",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.BYTE_ENTROPY_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_byte_entropy",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.NATIVE_EXPORTS_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_native_exports",
         ),
     },
     {
@@ -261,6 +331,10 @@ export const providerCatalog = (sources) => {
       contracts: sources.wasmContracts.WASM_TOOL_CONTRACTS.filter(
         ({ kind }) => kind === "artifact-provider",
       ),
+    },
+    {
+      identity: sources.apkSignatureProvider.APK_SIGNATURE_PROVIDER_IDENTITY,
+      contracts: sources.apkSignatureContracts.APK_SIGNATURE_TOOL_CONTRACTS,
     },
     {
       identity: sources.evmProvider.EVMOLE_PROVIDER_IDENTITY,
@@ -285,6 +359,14 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.rustProvider.RUST_BINARY_PROVIDER_IDENTITY,
       contracts: sources.rustContracts.RUST_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.pythonPycProvider.PYTHON_PYC_PROVIDER_IDENTITY,
+      contracts: sources.pythonPycContracts.PYTHON_PYC_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.erlangProvider.ERLANG_BEAM_PROVIDER_IDENTITY,
+      contracts: sources.erlangContracts.ERLANG_BEAM_TOOL_CONTRACTS,
     },
     {
       identity: sources.electronFuseProvider.ELECTRON_FUSE_PROVIDER_IDENTITY,

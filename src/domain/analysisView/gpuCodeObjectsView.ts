@@ -344,17 +344,19 @@ export const projectGpuCodeObjectsView = (
       : view.collection === "targets"
         ? targetRows
         : report.kernels;
+  const matchesTarget = (row: (typeof rows)[number]): boolean => {
+    if (targets === undefined) return true;
+    const target =
+      "target" in row ? row.target : byId.get(row.object_id)?.target;
+    return target !== null && target !== undefined && targets.has(target);
+  };
   const matches = rows.filter(
     (row) =>
       (ids === undefined || ids.has(row.id)) &&
       (objectIds === undefined ||
         ("object_id" in row && objectIds.has(row.object_id))) &&
       (names === undefined || ("name" in row && names.has(row.name))) &&
-      (targets === undefined ||
-        targets.has(
-          ("target" in row ? row.target : byId.get(row.object_id)?.target) ??
-            "",
-        )),
+      matchesTarget(row),
   );
   const defaults =
     view.collection === "kernels"

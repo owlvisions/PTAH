@@ -1,5 +1,5 @@
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { ok as resultOk } from "../../../src/domain/result.js";
+import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { rm, symlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -31,7 +31,6 @@ import { toolAvailabilityInventory } from "../../../src/contracts/toolOutputSche
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { emptyElectronPageCoverage } from "../../../src/domain/javascript/electronPageInspection.fixture.js";
 import type { ElectronPageInspection } from "../../../src/domain/javascript/electronObservation.js";
-import { err } from "../../../src/domain/result.js";
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -249,7 +248,7 @@ it("advertises owned JavaScript analysis effects without foreign target executio
 
   const status = await client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(status.isError).not.toBe(true);
   const { result } = z
@@ -286,7 +285,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   );
   await writeFile(join(root, "worker.js"), "self.onmessage = () => {};\n");
   const browser = await startFakeCdpBrowser({
-    electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+    electronFileUrl: `${pathToFileURL(join(root, "index.html")).href}?next=%2Fsettings#%5Csettings`,
     commandEvents: ({ method }) =>
       method === "Debugger.enable"
         ? [
@@ -332,6 +331,15 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   });
   expect(listed.isError).not.toBe(true);
   expect(listed.structuredContent).toMatchObject({
+    environment: {
+      id: expect.any(String),
+      platform: "unknown",
+      architecture: "unknown",
+      isolation: "none",
+    },
+    limitations: expect.arrayContaining([
+      "Browser host platform and architecture were not observed.",
+    ]),
     normalized_result: {
       targets: [{ target_id: "electron-page" }],
     },
@@ -345,6 +353,10 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       include_script_sources: true,
     },
   });
+  expect(inspected.isError).not.toBe(true);
+  expect(parseEvidence(inspected.structuredContent).environment).toEqual(
+    parseEvidence(listed.structuredContent).environment,
+  );
   const analyzed = await client.callTool({
     name: "analyze_javascript_application",
     arguments: { input_path: root },

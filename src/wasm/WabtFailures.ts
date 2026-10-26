@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   artifactFileCancellationCause,
@@ -19,7 +20,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../process/RuntimeControlUnavailableError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   MAX_WASM_COMMAND_TIMEOUT_MS,
@@ -43,6 +47,7 @@ export type WabtVersionProbe = {
 type WabtFailureContext = {
   readonly commandTimeoutMs: number;
   readonly versionProbe?: WabtVersionProbe;
+  readonly inputField?: readonly (string | number)[];
 };
 
 /** Configuration is captured by the server; fixing files and changing its environment are distinct repairs. */
@@ -130,6 +135,11 @@ const classifyWabtFailure = (
     const timeout =
       cause.reason === "timeout"
         ? new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
+            limit: analysisSettingLimit(
+              "wasm.command_timeout_ms",
+              timeoutMs,
+              undefined,
+            ),
             ...options,
             // The cleanup wrapper retains output once; its nested primary needs only recovery facts.
             capturedOutput:
@@ -166,7 +176,11 @@ const classifyWabtFailure = (
         { operation: "inspect_wasm_artifact", cause },
       );
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError("inspect_wasm_artifact", options);
+      return new AnalysisCancelledError("inspect_wasm_artifact", {
+        ...options,
+        cause:
+          cause.cancellation === undefined ? cause : cause.cancellation.reason,
+      });
     if (timeout !== undefined) return timeout;
     if (phase !== "configuration" && cause.reason === "output-limit")
       return new AnalysisResourceConstraintError(
@@ -192,12 +206,11 @@ const classifyWabtFailure = (
       );
     return new AnalysisOutputError("inspect_wasm_artifact", reason, options);
   }
-  if (cause instanceof PrivateRuntimeRootUnavailableError)
-    return new AnalysisCapabilityUnavailableError(
+  if (cause instanceof RuntimeControlUnavailableError)
+    return runtimeControlCapabilityError(
       WABT_PROVIDER_IDENTITY.id,
       "inspect_wasm_artifact",
-      reason,
-      { cause, retryable: cause.retryable },
+      cause,
     );
   if (
     phase === "configuration" &&
@@ -273,7 +286,13 @@ const classifyWabtFailure = (
     return new AnalysisInputError(
       "inspect_wasm_artifact",
       { cause, ...cleanupOptions },
-      [{ path: ["path"], reason: "invalid_value", message: reason }],
+      [
+        {
+          path: [...(execution?.inputField ?? ["path"])],
+          reason: "invalid_value",
+          message: reason,
+        },
+      ],
     );
   return new AnalysisOutputError("inspect_wasm_artifact", reason, {
     cause,

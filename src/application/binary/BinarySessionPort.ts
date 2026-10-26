@@ -8,6 +8,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
@@ -93,8 +94,17 @@ export interface BinarySessionPort
     overwrite: boolean,
     options?: Pick<ExecutionOptions, "progress">,
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
-  status(options?: { readonly signal?: AbortSignal }): Promise<JsonValue>;
+  /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
+  status(options?: {
+    readonly signal?: AbortSignal;
+    readonly detail?: BinarySessionDetail;
+  }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
+  /** Read a snapshot with failed descriptors retained for session cleanup retry. */
+  readAnalysisSnapshot(
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<Result<AnalysisSnapshot, AnalysisError>>;
   exportAnalysisSnapshot(): Result<AnalysisSnapshot, AnalysisError>;
   importAnalysisSnapshot(
     snapshot: AnalysisSnapshot,

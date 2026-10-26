@@ -419,20 +419,32 @@ export const registerReverseEngineeringCommands = (
               ? executed.value.evidence
               : projectAnalysisError(executed.error);
           } finally {
-            const closed =
-              sessionId === undefined
-                ? undefined
-                : await manager.close(sessionId);
-            if (closed !== undefined && !closed.ok) {
+            try {
+              if (sessionId !== undefined) {
+                const closed = await manager.close(sessionId);
+                if (!closed.ok)
+                  logger.error(
+                    {
+                      command: CLI_COMMANDS.debugWithRizin,
+                      cleanup: projectAnalysisError(closed.error),
+                    },
+                    "Rizin cleanup failed after collecting command output",
+                  );
+              }
+            } catch (cause) {
               logger.error(
                 {
                   command: CLI_COMMANDS.debugWithRizin,
-                  cleanup: projectAnalysisError(closed.error),
+                  cleanup:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Unknown cleanup failure",
                 },
                 "Rizin cleanup failed after collecting command output",
               );
-              process.exitCode = 1;
             }
+            // The retained owner retries all sessions. Only its final outcome
+            // establishes whether command cleanup remains incomplete.
             await manager.closeAll().catch((cause: unknown) => {
               process.exitCode = 1;
               logger.error(

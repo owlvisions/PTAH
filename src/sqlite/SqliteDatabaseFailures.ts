@@ -120,10 +120,7 @@ export const sqliteDatabaseFailure = (
           undefined,
           workerTimeoutMs,
         );
-      else if (signal?.aborted)
-        previous = new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-        });
+
       const error = createSqliteCleanupError(
         cause.cleanup.resources,
         {
@@ -169,7 +166,7 @@ export const sqliteDatabaseFailure = (
           : cause,
     });
   if (cause instanceof OwnedCommandFailure) {
-    const projected = ownedCommandFailure(cause, workerTimeoutMs);
+    const projected = ownedCommandFailure(cause, path, workerTimeoutMs);
     if (projected !== undefined) return projected;
   }
   if (phase === "artifact-read" && cause instanceof Error && "code" in cause) {
@@ -226,6 +223,7 @@ export const sqliteDatabaseFailure = (
 
 const ownedCommandFailure = (
   cause: OwnedCommandFailure,
+  selectedPath: string,
   workerTimeoutMs: number,
 ): AnalysisError | undefined => {
   const operation = "inspect_sqlite_database";
@@ -291,7 +289,7 @@ const ownedCommandFailure = (
       {
         javascript_heap_bytes: 256 * 1024 * 1024,
       },
-      options,
+      { ...options, diagnostics: { selected_path: selectedPath } },
     );
   return undefined;
 };

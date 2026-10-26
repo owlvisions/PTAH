@@ -73,7 +73,11 @@ export const traceNativeValues = async (
   };
   while (pending.length > 0) {
     if (signal?.aborted)
-      return err(new AnalysisCancelledError("trace_native_values"));
+      return err(
+        new AnalysisCancelledError("trace_native_values", {
+          cause: signal.reason,
+        }),
+      );
     const next = pending.shift();
     if (
       next === undefined ||
@@ -103,7 +107,9 @@ export const traceNativeValues = async (
     );
     decompilations++;
     if (!execution.ok) {
-      if (execution.error._tag === "AnalysisCancelledError")
+      // A seed failure has no trace to qualify. Preserve the provider's typed
+      // refusal; failures after a validated seed remain partial observations.
+      if (next.depth === 0 || execution.error._tag === "AnalysisCancelledError")
         return err(execution.error);
       unknowns.push({
         procedure: next.procedure,

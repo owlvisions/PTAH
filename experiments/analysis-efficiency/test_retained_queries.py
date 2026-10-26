@@ -181,3 +181,23 @@ assert.equal(report.retained_workspace,account);assert.equal(serverLog.writableE
 assert.equal((await stat(account)).isDirectory(),true);
 assert.deepEqual(await saved(),report);assert.deepEqual(JSON.parse(chunks.join('')),report);
 ''')
+
+    def test_setup_failure_without_acquired_resources_still_publishes_receipts(self):
+        self.run_finalization('''
+assert.equal(await finalizeRetainedQueryReceipt({report,output,stdout,transcript:[]}),true);
+assert.deepEqual(report.cleanup_failures,[]);
+assert.deepEqual((await saved()).failure,originalFailure);
+assert.deepEqual(JSON.parse(await readFile(join(output,'transcript.json'),'utf8')),[]);
+assert.ok((await stat(account)).isDirectory());
+''')
+
+    def test_partial_setup_closes_acquired_transport_and_releases_its_workspace(self):
+        self.run_finalization('''
+let closed=0;
+assert.equal(await finalizeRetainedQueryReceipt({report,output,stdout,account,
+  transport:{close:async()=>{closed++;}}}),true);
+assert.equal(closed,1);
+await assert.rejects(stat(account),{code:'ENOENT'});
+assert.deepEqual((await saved()).failure,originalFailure);
+assert.deepEqual(report.cleanup_failures,[]);
+''')

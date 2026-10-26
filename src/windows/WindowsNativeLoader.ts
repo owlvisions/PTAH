@@ -20,7 +20,7 @@ export const windowsFileIdentitySchema = z.strictObject({
   filesystem: z.literal("NTFS"),
   volumeSerial: z.string().regex(/^[a-f0-9]{16}$/u),
   fileId: z.string().regex(/^[a-f0-9]{32}$/u),
-  size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  size: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   directory: z.boolean(),
 });
 
@@ -71,7 +71,12 @@ export type WindowsNativeLoadResult =
   | {
       readonly available: false;
       readonly reason: string;
-      readonly failureStage: "host" | "artifact" | "self-test" | "inspection";
+      readonly failureStage:
+        | "host"
+        | "artifact"
+        | "load"
+        | "self-test"
+        | "inspection";
       /** Only a failed native invocation can recover on a later query. */
       readonly retryable?: true;
     };
@@ -89,6 +94,10 @@ export interface WindowsNativeLoadHost {
 
 const missingWindowsNativeFileReason = (file: string): string =>
   `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the rea-agents@${PACKAGE_METADATA.version} tarball or build them with native/windows/README.md; no native artifact was loaded.`;
+
+/** Recovery when Windows refuses to load the verified artifact, for example by code-integrity policy. */
+export const WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION =
+  "The file matched the package manifest, so restoring or reinstalling it will not help. If Windows reports that an Application Control policy blocked the file, Smart App Control or an App Control for Business policy refused it. Windows native controls, which Ghidra and JADX need on Windows, stay unavailable; rea setup can still register clients. Run REA on a host whose policy allows this file, or ask the REA maintainers about a signed build.";
 
 const readPackagedWindowsNativeFile = <T>(file: string, read: () => T): T => {
   try {
@@ -139,7 +148,17 @@ export const loadWindowsNativeAuthority = (
         "Windows native artifact SHA-256 does not match package metadata",
       );
     assertWindowsX64Artifact(artifact);
-    const binding = bindingSchema.parse(host.loadArtifact());
+    let loadedModule: unknown;
+    try {
+      loadedModule = host.loadArtifact();
+    } catch (cause: unknown) {
+      return {
+        available: false,
+        failureStage: "load",
+        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${cause instanceof Error ? cause.message : String(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
+      };
+    }
+    const binding = bindingSchema.parse(loadedModule);
     let observed: unknown;
     try {
       observed = binding.call("inspect", []);

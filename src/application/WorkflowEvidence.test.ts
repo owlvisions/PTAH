@@ -213,6 +213,159 @@ it("deduplicates exact source caveats without merging providers or operations", 
   );
 });
 
+it("bounds per-item caveat retention while preserving inventory caveats", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async (operation, parameters) =>
+        ok(
+          createAnalysisExecution(null, provider, {
+            limitations:
+              operation === "list_procedures"
+                ? ["inventory caveat"]
+                : [
+                    "shared caveat",
+                    `caveat at ${String(parameters.procedure)}`,
+                  ],
+          }),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("list_procedures", {});
+      for (const procedure of ["0x1", "0x2", "0x3"])
+        await observed.execute("procedure_pseudo_code", { procedure });
+      return ok({ count: 3 });
+    },
+    {
+      perItemOperations: new Set(["procedure_pseudo_code"]),
+      maxDistinct: 2,
+      retainedIn: "the files keep them",
+    },
+  );
+  expect(result).toEqual(
+    ok({
+      result: { count: 3 },
+      limitations: [
+        "Fixture (fixture 1) list_procedures: inventory caveat",
+        "Fixture (fixture 1) procedure_pseudo_code: caveat at 0x1",
+        "Fixture (fixture 1) procedure_pseudo_code: shared caveat",
+        "2 per-item provider limitation observations were omitted from this answer; the files keep them.",
+      ],
+    }),
+  );
+});
+
+it("spends one budget slot on a caveat that two per-item operations share", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async (operation, parameters) =>
+        ok(
+          createAnalysisExecution(null, provider, {
+            limitations: [
+              "shared caveat",
+              `${operation} at ${String(parameters.procedure)}`,
+            ],
+          }),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("procedure_info", { procedure: "0x1" });
+      await observed.execute("procedure_pseudo_code", { procedure: "0x1" });
+      return ok(null);
+    },
+    {
+      perItemOperations: new Set(["procedure_info", "procedure_pseudo_code"]),
+      maxDistinct: 2,
+      retainedIn: "the files keep them",
+    },
+  );
+  expect(result).toEqual(
+    ok({
+      result: null,
+      limitations: [
+        "Fixture (fixture 1) procedure_info, procedure_pseudo_code: shared caveat",
+        "Fixture (fixture 1) procedure_info: procedure_info at 0x1",
+        "1 per-item provider limitation observation was omitted from this answer; the files keep them.",
+      ],
+    }),
+  );
+});
+
+it("counts repeated omitted observations without retaining their text for ranking", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async (_operation, parameters) =>
+        ok(
+          createAnalysisExecution(null, provider, {
+            limitations: [
+              parameters.procedure === "first"
+                ? "first caveat"
+                : "later caveat",
+            ],
+          }),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("procedure_pseudo_code", { procedure: "first" });
+      for (let index = 0; index < 30; index += 1)
+        await observed.execute("procedure_pseudo_code", { procedure: "later" });
+      return ok(null);
+    },
+    {
+      perItemOperations: new Set(["procedure_pseudo_code"]),
+      maxDistinct: 1,
+      retainedIn: "the index keeps them",
+    },
+  );
+  expect(result).toEqual(
+    ok({
+      result: null,
+      limitations: [
+        "Fixture (fixture 1) procedure_pseudo_code: first caveat",
+        "30 per-item provider limitation observations were omitted from this answer; the index keeps them.",
+      ],
+    }),
+  );
+});
+
+it("bounds retained caveat text while preserving smaller later observations", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () =>
+        ok(
+          createAnalysisExecution(null, provider, {
+            limitations: [
+              "x".repeat(9_000),
+              "first",
+              "second",
+              "x".repeat(9_000),
+              "ok",
+            ],
+          }),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("procedure_pseudo_code", {});
+      return ok(null);
+    },
+    {
+      perItemOperations: new Set(["procedure_pseudo_code"]),
+      maxDistinct: 8,
+      maxBytes: 12,
+      retainedIn: "the index keeps them",
+    },
+  );
+  expect(result).toEqual(
+    ok({
+      result: null,
+      limitations: [
+        "Fixture (fixture 1) procedure_pseudo_code: first",
+        "Fixture (fixture 1) procedure_pseudo_code: ok",
+        "3 per-item provider limitation observations were omitted from this answer; the index keeps them.",
+      ],
+    }),
+  );
+});
+
 it("preserves a failed composed operation without an extra provider read", async () => {
   const failure = err(new AnalysisCancelledError("list_strings"));
   let calls = 0;

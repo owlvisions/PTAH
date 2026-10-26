@@ -95,7 +95,6 @@ PTAH is intended to become a multi-format program understanding and reverse-engi
 
 No “hundreds of times better” claim should be made until a benchmark defines the dimension, baseline, and reproducible measurement.
 
-
 ## Delivery status update — v0.4
 
 Completed and dependency-free tested: target fingerprinting, investigation initialization, evidence append with validation and atomic save, provider PATH discovery, report, graph, and bounded deterministic planning. See [PTAH-V0.3.md](./PTAH-V0.3.md) for exact commands and validation.
@@ -106,11 +105,9 @@ Still open: execute the TypeScript adapter Vitest tests in the supported build e
 
 The dependency-free CLI now supports authoring evidence, claims, questions, and candidate actions into a versioned investigation file. A tested integration path runs `init -> add-evidence -> add-claim -> add-question -> add-action -> plan -> report`. These records are PTAH's portable schema. The new `PtahEvidenceAdapter.ts` provides an explicit, loss-aware conversion to the existing REA `EvidenceBundle` contract and preserves a PTAH-ID → REA semantic-ID crosswalk; it is not yet exposed by the dependency-free CLI, and its TypeScript tests still need to run in the supported build environment.
 
-
 ## Delivery status update — v0.6
 
 Added `src/application/investigation/PtahEvidenceAdapter.ts` and `PtahEvidenceAdapter.test.ts`. The adapter uses REA's own `createEvidence`/`createEvidenceBundle` APIs, rejects stale target digests, duplicate PTAH evidence IDs, and dangling claim references, and clearly marks imported summaries as `analyst-inference` with limitations because the PTAH v1 schema does not preserve original raw provider output. Claims remain separate from evidence records. Dependency-free PTAH tests were green (19/19 at the v0.6 checkpoint); the adapter TypeScript/Vitest tests and the monorepo build are not claimed as run because this environment lacks installed project dependencies and uses Node 22.16.0 while the project requires Node 22.19.0 or newer supported lines.
-
 
 ### v0.6 — target drift verification
 
@@ -123,7 +120,6 @@ ptah init --target ./sample.wasm --output ./sample.investigation.json
 ptah verify --input ./sample.investigation.json --target ./sample.wasm
 ```
 
-
 ## Delivery status update — v0.7
 
 Added `scripts/ptah-mcp.mjs`, a dependency-free stdio MCP server exposing `ptah_fingerprint`, `ptah_verify`, `ptah_report`, `ptah_graph`, `ptah_plan`, `ptah_providers`, and the allow-listed `ptah_static_analyze`. It implements JSON-RPC initialization, tools/list, tools/call, ping, notifications, and structured tool errors. Added `ptah-mcp` package bin and included PTAH scripts in the npm package allowlist and lockfile bin metadata.
@@ -132,11 +128,9 @@ Added opt-in `ptah providers --probe` checks. Each provider uses a fixed version
 
 Validation on the current environment: `node --check` passed for `ptah.mjs`, `ptah-engine.mjs`, `ptah-mcp.mjs`, `ptah-ui.mjs`, and `ptah-ui-server.mjs`; 31 dependency-free Node tests passed, including timeout handling, MCP stdio calls, static analyzer adapter behavior, evidence recording, and loopback GUI API integration. A real `objdump` run against `/bin/true` completed successfully and confirmed the target was not executed or modified. The full monorepo build, the TypeScript EvidenceLedger adapter tests, a production-grade integrated GUI, and OS-level sandboxing are not claimed as complete.
 
-
 ## Static analyzer adapter — v0.7 follow-up
 
 Added `ptah analyze --target FILE --provider objdump|llvm-objdump|wasm-tools` and the `ptah_static_analyze` MCP tool. The adapter uses fixed argv (`-f -h -- TARGET`), no shell, a bounded wall-clock timeout, capped stdout/stderr, and pre/post target SHA-256 checks. It rejects unlisted providers and reports a nonzero tool exit as failure. A successful run can be recorded into an existing PTAH investigation using `--investigation FILE --save-investigation FILE --evidence-id ID`; cross-target or failed analysis is rejected. Tests cover paths with spaces, provider allowlisting, missing tools, timeout handling, evidence provenance, and the fact that the target is not launched as a process. The objdump adapters extract object/file metadata and section headers; the wasm-tools adapter validates only files with a confirmed WebAssembly magic signature. These are focused adapters, not a complete reverse-engineering pipeline, and are not OS-sandboxed yet.
-
 
 ## Local workbench — v0.7 follow-up
 
@@ -146,11 +140,10 @@ Added `ptah ui` / `ptah-ui`, a dependency-free loopback-only browser workbench a
 
 The root README and package description/keywords now identify PTAH while explicitly labeling the codebase a migration preview. The previous README snapshot is retained at `docs/legacy/REA-README-upstream-snapshot.md`, and `docs/PTAH-BRAND-AUDIT.md` records what changed, what remains upstream-bound, and the release gates. The npm package name, `mcpName`, repository URLs, legacy executable names, translated docs, and upstream license references have deliberately not been renamed without an owner-controlled namespace and a coordinated compatibility plan. This is an intentional safety boundary, not a claim that all visible REA references have been migrated.
 
-
 ## Upstream freshness and integration
 
 - [x] Add an opt-in scheduled upstream sync workflow that proposes review PRs every 15 minutes.
 - [x] Run PTAH-specific syntax checks and dependency-free tests before publishing an upstream-sync branch.
 - [ ] Push this work to a maintainer-controlled GitHub fork and enable Actions PR permissions.
-- [ ] Successfully rebase against a live upstream commit and review the resulting diff. The v0.12 checkpoint records upstream commit `97194c4b4808b2a9b79277c436ba9042c58b1b70` in [PTAH-V0.12-STATUS.md](./PTAH-V0.12-STATUS.md), but the commit has not been merged into this archive because the current execution environment could not resolve `github.com`.
+- [ ] Successfully rebase against a live upstream commit and review the resulting diff. The current execution environment could not resolve `github.com`, so this archive does not claim to contain the newest upstream source snapshot.
 - [ ] Require full upstream CI/build/provider/platform checks before merging each sync PR.

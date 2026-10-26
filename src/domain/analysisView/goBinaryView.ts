@@ -1,7 +1,8 @@
+import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
+import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import {
-  goArchitectureForSubject,
   goBinarySchema,
   goBuildInfoSchema,
   goModuleMetadataSchema,
@@ -75,6 +76,7 @@ export const goBinarySummarySchema = z.strictObject({
   architecture: goBinarySchema.shape.architecture,
   bits: goBinarySchema.shape.bits,
   byte_order: goBinarySchema.shape.byte_order,
+  selected_slice: goBinarySchema.shape.selected_slice,
   build_info: goBuildInfoSchema
     .omit({
       go_version_bytes_base64: true,
@@ -145,10 +147,9 @@ export const projectGoBinaryView = (
   if (
     parent.subject?.local_path !== report.artifact.path ||
     parent.subject.digest.sha256 !== report.artifact.sha256 ||
-    parent.subject.format !==
-      (report.format === "macho" ? "mach-o" : report.format) ||
+    parent.subject.format !== metadataReportSubjectFormat(report) ||
     parent.subject.architecture !==
-      (goArchitectureForSubject(report.architecture) ?? null)
+      (binaryMetadataArchitecture(report.architecture) ?? null)
   )
     return err(
       analysisViewInputError([
@@ -212,6 +213,9 @@ export const projectGoBinaryView = (
         architecture: report.architecture,
         bits: report.bits,
         byte_order: report.byte_order,
+        ...(report.selected_slice === undefined
+          ? {}
+          : { selected_slice: report.selected_slice }),
         build_info:
           info === null
             ? null

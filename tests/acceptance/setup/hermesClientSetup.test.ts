@@ -105,6 +105,96 @@ for (const [version, keyStyle] of [
 }
 
 cliTest(
+  "Hermes setup preserves an existing tool allowlist and client-owned policy",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-hermes-tool-policy-");
+    const profile = join(home, "hermes");
+    const config = join(profile, "config.yaml");
+    const original = [
+      "# Caller configuration",
+      "mcp_servers:",
+      "  rea:",
+      "    command: rea-old",
+      "    args: [mcp]",
+      "    env:",
+      "      CALLER_SETTING: keep exactly",
+      "    # Curated for this client.",
+      "    tools:",
+      "      include: [open_binary, binary_overview]",
+      "      future_option:",
+      "        selected: caller choice",
+      "    future_policy:",
+      "      review: required",
+      "",
+    ].join("\n");
+    await mkdir(profile);
+    await writeFile(config, original);
+    const run = (arguments_: readonly string[]) =>
+      cli.run({
+        arguments: arguments_,
+        cwd: home,
+        environment: { USERPROFILE: home, HERMES_HOME: profile },
+        timeoutMs: 20_000,
+      });
+    const setup = ["setup", "--client", "hermes", "--skill=false", "--json"];
+    const preview = await run([...setup, "--dry-run"]);
+    expect(preview.exitCode, preview.stdout).toBe(0);
+    expect(preview.json).toMatchObject({
+      status: "planned",
+      plannedActions: expect.arrayContaining([
+        expect.objectContaining({ target: config }),
+      ]),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+    await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const applied = await run([...setup, "--yes"]);
+    expect(applied.exitCode, applied.stdout).toBe(0);
+    expect(applied.json).toMatchObject({
+      status: "ready",
+      clients: { hermes: { status: "configured" } },
+    });
+    const configured = await readFile(config, "utf8");
+    expect(parse(configured)).toMatchObject({
+      mcp_servers: {
+        rea: {
+          command: expect.stringMatching(/\S/u),
+          args: expect.arrayContaining(["mcp"]),
+          enabled: true,
+          env: { CALLER_SETTING: "keep exactly" },
+          tools: {
+            include: ["open_binary", "binary_overview"],
+            future_option: { selected: "caller choice" },
+          },
+          future_policy: { review: "required" },
+        },
+      },
+    });
+    expect(parse(configured)).not.toMatchObject({
+      mcp_servers: { rea: { command: "rea-old" } },
+    });
+    expect(configured).toContain("# Curated for this client.");
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    expect(
+      (await run(["doctor", "--client", "hermes", "--skill=false", "--json"]))
+        .json,
+    ).toMatchObject({
+      identity: { registrations: [{ client: "hermes", state: "aligned" }] },
+    });
+    const repeated = await run([...setup, "--yes"]);
+    expect(repeated.exitCode, repeated.stdout).toBe(0);
+    expect(repeated.json).toMatchObject({
+      status: "ready",
+      appliedActions: [],
+    });
+    expect(await readFile(config, "utf8")).toBe(configured);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+  },
+);
+
+cliTest(
   "Hermes setup, doctor and uninstall use the expanded profile and its personal skill",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-hermes-cli-");
@@ -133,7 +223,7 @@ cliTest(
       "--dry-run",
       "--json",
     ]);
-    expect(planned.exitCode).toBe(0);
+    expect(planned.exitCode, planned.stdout).toBe(0);
     expect(planned.json).toMatchObject({
       status: "planned",
       plannedActions: expect.arrayContaining([
@@ -152,7 +242,7 @@ cliTest(
       "--yes",
       "--json",
     ]);
-    expect(applied.exitCode).toBe(0);
+    expect(applied.exitCode, applied.stdout).toBe(0);
     expect(applied.json).toMatchObject({ status: "ready" });
     expect(parse(await readFile(config, "utf8"))).toMatchObject({
       model: "custom",
@@ -175,7 +265,7 @@ cliTest(
       "--skill",
       "--json",
     ]);
-    expect(doctor.exitCode).toBe(0);
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
     expect(doctor.json).toMatchObject({
       healthy: true,
       identity: { skill: { state: "aligned" } },
@@ -189,7 +279,7 @@ cliTest(
     ]);
     expect(repeat.json).toMatchObject({ status: "ready", appliedActions: [] });
     const uninstall = await run(["uninstall", "--json"]);
-    expect(uninstall.exitCode).toBe(0);
+    expect(uninstall.exitCode, uninstall.stdout).toBe(0);
     expect(parse(await readFile(config, "utf8"))).toEqual(parse(original));
     await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
   },
@@ -243,7 +333,7 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
         "--dry-run",
         "--json",
       ]);
-      expect(plan.exitCode).toBe(0);
+      expect(plan.exitCode, plan.stdout).toBe(0);
       expect(plan.json).toMatchObject({
         status: "planned",
         plannedActions: expect.arrayContaining([
@@ -253,10 +343,14 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
           }),
         ]),
       });
-      expect(
-        (await run(["setup", "--client", "hermes", "--yes", "--json"]))
-          .exitCode,
-      ).toBe(0);
+      const applied = await run([
+        "setup",
+        "--client",
+        "hermes",
+        "--yes",
+        "--json",
+      ]);
+      expect(applied.exitCode, applied.stdout).toBe(0);
       expect(parse(await readFile(config, "utf8"))).toMatchObject({
         mcp_servers: {
           rea: { enabled: true },
@@ -281,7 +375,7 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
           "--skill",
           "--json",
         ]);
-        expect(doctor.exitCode).toBe(0);
+        expect(doctor.exitCode, doctor.stdout).toBe(0);
         expect(doctor.json).toMatchObject({
           healthy: true,
           identity: {
@@ -382,7 +476,7 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
         "--yes",
         "--json",
       ]);
-      expect(unrelated.exitCode).toBe(0);
+      expect(unrelated.exitCode, unrelated.stdout).toBe(0);
     },
   );
 }
@@ -418,7 +512,7 @@ cliTest.skipIf(process.platform === "win32")(
       "--dry-run",
       "--json",
     ]);
-    expect(planned.exitCode).toBe(0);
+    expect(planned.exitCode, planned.stdout).toBe(0);
     expect(planned.json).toMatchObject({
       status: "planned",
       plannedActions: expect.arrayContaining([

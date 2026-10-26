@@ -10,6 +10,7 @@ import {
   browserScenarioSecretSchema,
   browserScenarioStorageSchema,
   browserScenarioUrlSchema,
+  HEADER_FIELD_VALUE,
   type BrowserScenarioAction,
   type BrowserScenarioUrl,
   type BrowserScenarioValue,
@@ -72,7 +73,67 @@ const actionSecretReferences = (
     return secretReferencesInValue(action.value);
   if (action.action === "goto")
     return destinationSecretReferences(action.destination);
+  if (action.action === "request")
+    return [
+      ...action.query.flatMap(({ value }) => secretReferencesInValue(value)),
+      ...action.headers.flatMap(({ value }) =>
+        value.source === "secret" ? [value.secret_id] : [],
+      ),
+    ];
   return [];
+};
+
+/** Request steps stay on the start origin and send a body only with methods that carry one. */
+const validateRequestSteps = (
+  scenario: ScenarioShape,
+  context: z.RefinementCtx,
+): void => {
+  const origin = new URL(scenario.start_url.url).origin;
+  scenario.actions.forEach((action, index) => {
+    if (action.action !== "request") return;
+    const resolved = URL.parse(action.path, origin);
+    if (resolved === null)
+      addIssue(
+        context,
+        ["actions", index, "path"],
+        "The request step path is not a URL path the browser can resolve",
+      );
+    else if (resolved.origin !== origin)
+      addIssue(
+        context,
+        ["actions", index, "path"],
+        `Request steps must stay on the start URL's origin ${origin}`,
+      );
+    if (
+      action.json !== undefined &&
+      (action.method === "GET" || action.method === "HEAD")
+    )
+      addIssue(
+        context,
+        ["actions", index, "json"],
+        `A ${action.method} request step cannot send a body`,
+      );
+    const names = new Set<string>();
+    action.headers.forEach((header, position) => {
+      const name = header.name.toLowerCase();
+      if (names.has(name))
+        addIssue(
+          context,
+          ["actions", index, "headers", position, "name"],
+          `Request step headers name ${header.name} more than once`,
+        );
+      names.add(name);
+      if (
+        header.value.source === "literal" &&
+        !HEADER_FIELD_VALUE.test(header.value.value)
+      )
+        addIssue(
+          context,
+          ["actions", index, "headers", position, "value", "value"],
+          "A header value cannot carry line breaks or control characters",
+        );
+    });
+  });
 };
 
 const validateStorage = (scenario: ScenarioShape): readonly string[] => {
@@ -136,6 +197,7 @@ const validateBrowserScenario = (
     context,
   );
 
+  validateRequestSteps(scenario, context);
   const references = scenario.actions.flatMap(actionSecretReferences);
   references.push(...destinationSecretReferences(scenario.start_url));
   references.push(...validateStorage(scenario));

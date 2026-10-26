@@ -179,7 +179,11 @@ export const readMipsElfMetadata = async (
         gnuAttributes = parsed.value;
         continue;
       }
-      if (metadata.type === 3 && table.optional && (type === 4 || type === 9))
+      if (
+        metadata.type === 3 &&
+        table.optional &&
+        (type === 4 || type === 9 || type === 19)
+      )
         relocationSections.push({
           type,
           offset: u32(contents.value, position + 16),

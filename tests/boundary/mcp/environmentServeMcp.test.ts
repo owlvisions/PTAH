@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
 
 import {
   Client,
@@ -11,6 +12,7 @@ import {
   environmentServeSource,
   environmentStateServeFixture,
   writeEnvironmentServeFiles,
+  type EnvironmentServeFixture,
 } from "../../fixtures/environmentServe.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
 import {
@@ -20,17 +22,18 @@ import {
 
 const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 const CARD_PATH = "/.well-known/agent-env.json";
-/** SHA-256 of the 12,818-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
+/** SHA-256 of the 13,882-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
 const REPLAY_CARD_SHA256 =
-  "7c65ab63f0c00ce79b570024c4611c225729677b44fc49bbde32b2d65f868961";
+  "27370fe0a89556dcd0dd1bc6ddd0439d77b628349829afd56e4af4ee393d0a64";
 
 /** Serve the fixture pair as pure replay through the built CLI. */
 const serveReplayOnly = async (
   processes: TestProcesses,
   environment: Readonly<Record<string, string>> = {},
+  fixture?: EnvironmentServeFixture,
 ) => {
   const root = await createTestTempDirectory("rea-environment-serve-mcp-");
-  const files = await writeEnvironmentServeFiles(root);
+  const files = await writeEnvironmentServeFiles(root, fixture);
   const started = await startListeningProcess(
     processes,
     [
@@ -53,6 +56,50 @@ const connect = async (url: URL) => {
   await client.connect(transport);
   return client;
 };
+
+processTest(
+  "validates repeated query arrays through the advertised MCP contract",
+  async ({ processes }) => {
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence([
+        ["GET", "/api/items?tag=a&tag=b", { selected: "b" }],
+        ["GET", "/api/items?tag=a&tag=c", { selected: "c" }],
+      ]),
+    );
+    const source = environmentServeSource(fixture);
+    const tool = source.manifest.tools.find(
+      ({ path_template }) => path_template === "/api/items",
+    );
+    if (tool === undefined)
+      throw new Error("Missing repeated-query fixture tool");
+    const started = await serveReplayOnly(processes, {}, fixture);
+    const client = await connect(started.url);
+    try {
+      const { tools } = await client.listTools();
+      expect(
+        tools.find(({ name }) => name === tool.name)?.inputSchema.properties
+          ?.tag,
+      ).toMatchObject({
+        oneOf: [
+          { type: "string" },
+          { type: "array", items: { type: "string" } },
+        ],
+      });
+      const response = await client.callTool({
+        name: tool.name,
+        arguments: { tag: ["a", "c"] },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({
+        body: { selected: "c" },
+        replay: { exact_match: true, recorded_query: "?tag=a&tag=c" },
+      });
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);
 
 describe("rea environment-serve --replay-only", () => {
   processTest(
@@ -130,9 +177,10 @@ describe("rea environment-serve --replay-only", () => {
       const card = await fetch(new URL(CARD_PATH, origin));
       expect(card.status).toBe(200);
       const text = await card.text();
-      expect(createHash("sha256").update(text).digest("hex")).toBe(
-        REPLAY_CARD_SHA256,
-      );
+      expect(
+        createHash("sha256").update(text).digest("hex"),
+        `${Buffer.byteLength(text)}-byte card`,
+      ).toBe(REPLAY_CARD_SHA256);
       const body: unknown = JSON.parse(text);
       expect(body).toMatchObject({
         name: "renamed",

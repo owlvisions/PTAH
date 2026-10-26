@@ -1,4 +1,5 @@
 import { writeOrderedZip } from "../../tests/fixtures/artifactEntryOrder.js";
+import { zipSymlinkMetadataFixture } from "../../tests/fixtures/zipSymlinkMetadata.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -61,7 +62,9 @@ const admittedZip = async () => {
   const writer = new ZipWriter(new Uint8ArrayWriter());
   await writer.add("member.txt", new TextReader(content));
   await writeFile(path, await writer.close());
-  const handle = await openRegularFile(path, { symlinks: "reject" });
+  const { handle, initial } = await openRegularFile(path, {
+    symlinks: "reject",
+  });
   // Keep the actual descriptor, but select the positional overload used by
   // the ZIP adapter so the spy does not infer FileHandle.read's options form.
   const positional: {
@@ -72,7 +75,7 @@ const admittedZip = async () => {
       position: number,
     ): Promise<{ bytesRead: number; buffer: Buffer }>;
   } = handle;
-  return { path, content, handle, positional, initial: await handle.stat() };
+  return { path, content, handle, positional, initial };
 };
 
 describe("ZipArtifactReader positional reads", () => {
@@ -100,7 +103,9 @@ describe("ZipArtifactReader positional reads", () => {
       const chunks: Buffer[] = [];
       for await (const chunk of await reader.open(entry))
         chunks.push(Buffer.from(chunk));
-      expect(Buffer.concat(chunks)).toEqual(Buffer.from(fixture.content));
+      expect(
+        Buffer.compare(Buffer.concat(chunks), Buffer.from(fixture.content)),
+      ).toBe(0);
       expect(reads.mock.calls.length).toBeGreaterThan(3);
     } finally {
       reads.mockRestore();
@@ -211,6 +216,29 @@ describe("ZipArtifactReader positional reads", () => {
       await fixture.handle.close();
     }
   });
+});
+
+it("refuses to open ZIP symlink entries even when unixMode is absent", async () => {
+  const directory = await createTestTempDirectory("rea-zip-symlink-open-");
+  const path = join(directory, "symlinks.zip");
+  await writeFile(path, await zipSymlinkMetadataFixture());
+  const reader = new ZipArtifactReader(path, "zip");
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    for (const logicalPath of ["type-only-link", "permissions-link"]) {
+      const entry = entries.find((candidate) => candidate.path === logicalPath);
+      expect(entry).toMatchObject({ kind: "symlink" });
+      if (entry === undefined)
+        throw new Error(`Missing ZIP symlink ${logicalPath}`);
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "format",
+        message: "ZIP entry is not a regular file",
+      });
+    }
+  } finally {
+    await reader.close();
+  }
 });
 
 describe("ZipArtifactReader decompression budget", () => {

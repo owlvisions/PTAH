@@ -10,11 +10,12 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import { z } from "zod";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
 import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
@@ -46,6 +47,7 @@ type MacHopperInstallFailureReason = Extract<
   | "integrity"
   | "launcher_missing"
   | "destination_exists"
+  | "destination_inspection"
   | "mount"
   | "bundle"
   | "publisher_verification_failed"
@@ -119,7 +121,10 @@ export interface MacHopperInstallHost {
   openApplication(path: string): Promise<void>;
   cleanup(path: string): Promise<void>;
   /** Retain the cleanup capability until the owning setup host retries it. */
-  retainCleanup?(cleanup: () => Promise<void>): void;
+  retainCleanup?(
+    cleanup: () => Promise<void>,
+    resources: readonly string[],
+  ): void;
   destination(): string;
 }
 
@@ -153,15 +158,15 @@ export const installMacHopper = async (
       if (!integrityMatches(archive.bytes, release))
         return { status: "failed", reason: "integrity" };
 
-      installStage = "destination_exists";
+      installStage = "destination_inspection";
       const destination = host.destination();
       const destinationExists = await host.destinationExists(destination);
       if (destinationExists && options.replaceExisting !== true)
         return { status: "failed", reason: "destination_exists" };
       installStage = "mount";
       temporary = await host.createTemporaryDirectory();
-      const packagePath = join(temporary, "hopper.dmg");
-      const mountPath = join(temporary, "mounted");
+      const packagePath = posix.join(temporary, "hopper.dmg");
+      const mountPath = posix.join(temporary, "mounted");
       await host.createMountDirectory(mountPath);
       await host.writePackage(packagePath, archive.bytes);
       if (!(await host.mount(packagePath, mountPath)))
@@ -191,7 +196,7 @@ export const installMacHopper = async (
             : { cleanupFailure: installation.cleanupFailure }),
         };
       bundleCleanupFailure = installation.cleanupFailure;
-      const launcherPath = join(destination, "Contents/MacOS/hopper");
+      const launcherPath = posix.join(destination, "Contents/MacOS/hopper");
       let openFailure: string | undefined;
       try {
         await host.openApplication(destination);
@@ -215,7 +220,7 @@ export const installMacHopper = async (
   let cleanupFailure: string | undefined;
   if (temporary !== undefined) {
     const temporaryPath = temporary;
-    const mountPath = join(temporary, "mounted");
+    const mountPath = posix.join(temporary, "mounted");
     const cleanup = async (): Promise<void> => {
       if (mounted) {
         await host.unmount(mountPath);
@@ -227,7 +232,7 @@ export const installMacHopper = async (
       await cleanup();
     } catch (cause: unknown) {
       cleanupFailure = `Hopper DMG cleanup failed: ${failureMessage(cause)}`;
-      host.retainCleanup?.(cleanup);
+      host.retainCleanup?.(cleanup, [temporaryPath]);
     }
   }
 
@@ -249,11 +254,16 @@ export const installMacHopperBundle = async (
   destination: string,
   replaceExisting: boolean,
   operations: MacHopperBundleInstallOperations,
-  retainCleanup: (cleanup: () => Promise<void>) => void,
+  retainCleanup: (
+    cleanup: () => Promise<void>,
+    resources: readonly string[],
+  ) => void,
 ): Promise<MacHopperBundleInstallResult> => {
-  const stagingRoot = await operations.createStagingRoot(dirname(destination));
-  const stagedBundle = join(stagingRoot, "new.app");
-  const previousBundle = join(stagingRoot, "previous.app");
+  const stagingRoot = await operations.createStagingRoot(
+    posix.dirname(destination),
+  );
+  const stagedBundle = posix.join(stagingRoot, "new.app");
+  const previousBundle = posix.join(stagingRoot, "previous.app");
   let originalBackedUp = false;
   let newCommitted = false;
   let failureReason: "copy" | "launcher_missing" = "copy";
@@ -262,7 +272,7 @@ export const installMacHopperBundle = async (
     await operations.copyBundle(source, stagedBundle);
     failureReason = "launcher_missing";
     await operations.requireLauncher(
-      join(stagedBundle, "Contents/MacOS/hopper"),
+      posix.join(stagedBundle, "Contents/MacOS/hopper"),
     );
     failureReason = "copy";
     if (replaceExisting) {
@@ -294,7 +304,7 @@ export const installMacHopperBundle = async (
             originalBackedUp = false;
           }
           await operations.removeStagingRoot(stagingRoot);
-        });
+        }, [stagingRoot]);
         return {
           status: "failed",
           reason: failureReason,
@@ -307,7 +317,10 @@ export const installMacHopperBundle = async (
       await operations.removeStagingRoot(stagingRoot);
     } catch (cleanupCause: unknown) {
       const cleanupFailure = `Hopper staging root cleanup failed: ${failureMessage(cleanupCause)}`;
-      retainCleanup(() => operations.removeStagingRoot(stagingRoot));
+      retainCleanup(
+        () => operations.removeStagingRoot(stagingRoot),
+        [stagingRoot],
+      );
       diagnostics.push(cleanupFailure);
       return {
         status: "failed",
@@ -328,7 +341,10 @@ export const installMacHopperBundle = async (
     return { status: "installed" };
   } catch (cause: unknown) {
     const cleanupFailure = `Hopper staging root cleanup failed after installation committed: ${failureMessage(cause)}`;
-    retainCleanup(() => operations.removeStagingRoot(stagingRoot));
+    retainCleanup(
+      () => operations.removeStagingRoot(stagingRoot),
+      [stagingRoot],
+    );
     return { status: "installed", cleanupFailure };
   }
 };
@@ -337,8 +353,10 @@ export const installMacHopperBundle = async (
 export const systemMacHopperInstallHost = (
   homeDirectory: string,
   environment: Readonly<NodeJS.ProcessEnv>,
-): MacHopperInstallHost & { close(): Promise<string | undefined> } => {
-  const pendingCleanup = new Set<() => Promise<void>>();
+): MacHopperInstallHost & {
+  close(): Promise<AnalysisCleanupObservation | undefined>;
+} => {
+  const pendingCleanup = new Map<() => Promise<void>, readonly string[]>();
   return {
     download: downloadHopperPackage,
     createTemporaryDirectory: () => mkdtemp(join(tmpdir(), "rea-hopper-mac-")),
@@ -369,7 +387,7 @@ export const systemMacHopperInstallHost = (
       const app = entries.find(
         (entry) => entry.isDirectory() && /^Hopper.*\.app$/iu.test(entry.name),
       );
-      return app === undefined ? undefined : join(mountPath, app.name);
+      return app === undefined ? undefined : posix.join(mountPath, app.name);
     },
     async validBundle(appPath) {
       if (
@@ -412,7 +430,7 @@ export const systemMacHopperInstallHost = (
         {
           async createStagingRoot(parent) {
             await mkdir(parent, { recursive: true });
-            return mkdtemp(join(parent, ".rea-hopper-stage-"));
+            return mkdtemp(posix.join(parent, ".rea-hopper-stage-"));
           },
           copyBundle: async (bundle, staged) => {
             await execFileAsync("ditto", [bundle, staged], {
@@ -424,24 +442,30 @@ export const systemMacHopperInstallHost = (
           rename,
           removeStagingRoot: (path) => rm(path, { recursive: true }),
         },
-        (cleanup) => pendingCleanup.add(cleanup),
+        (cleanup, resources) => pendingCleanup.set(cleanup, resources),
       ),
     async openApplication(path) {
       await execFileAsync("open", [path], { env: environment });
     },
     cleanup: (path) => rm(path, { recursive: true, force: true }),
-    retainCleanup: (cleanup) => pendingCleanup.add(cleanup),
+    retainCleanup: (cleanup, resources) =>
+      pendingCleanup.set(cleanup, resources),
     async close() {
-      let failure: string | undefined;
-      for (const cleanup of pendingCleanup) {
+      const failures: string[] = [];
+      for (const cleanup of pendingCleanup.keys()) {
         try {
           await cleanup();
           pendingCleanup.delete(cleanup);
         } catch (cause: unknown) {
-          failure ??= `Hopper installer cleanup remains incomplete: ${failureMessage(cause)}`;
+          failures.push(failureMessage(cause));
         }
       }
-      return failure;
+      return failures.length === 0
+        ? undefined
+        : {
+            reason: `Hopper installer cleanup remains incomplete: ${failures.join("; ")}`,
+            resources: [...new Set([...pendingCleanup.values()].flat())],
+          };
     },
     destination: () => macHopperUserApplicationPath(homeDirectory),
   };

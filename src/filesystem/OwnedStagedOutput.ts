@@ -120,36 +120,38 @@ export class OwnedStagedOutput {
     await this.closeFile();
     await this.#verifiedDirectory();
 
-    const content = `${this.directory}/content`;
-    let stagedFile: Stats | undefined;
-    try {
-      stagedFile = await lstat(content);
-    } catch (cause: unknown) {
-      if (
-        errorCode(cause) === "ENOENT" &&
-        (this.#file === undefined ||
-          this.#fileRemovedByOwner ||
-          this.#publishedRename)
-      ) {
-        stagedFile = undefined;
-      } else if (errorCode(cause) === "ENOENT") {
-        throw new Error(`Owned staged file disappeared: ${content}`, {
-          cause,
-        });
-      } else {
-        throw cause;
+    // No descriptor was acquired when creating /content failed. Enumerate
+    // the owned directory instead of probing a possibly overlong child path.
+    if (this.#file !== undefined) {
+      const content = `${this.directory}/content`;
+      let stagedFile: Stats | undefined;
+      try {
+        stagedFile = await lstat(content);
+      } catch (cause: unknown) {
+        if (
+          errorCode(cause) === "ENOENT" &&
+          (this.#fileRemovedByOwner || this.#publishedRename)
+        ) {
+          stagedFile = undefined;
+        } else if (errorCode(cause) === "ENOENT") {
+          throw new Error(`Owned staged file disappeared: ${content}`, {
+            cause,
+          });
+        } else {
+          throw cause;
+        }
       }
-    }
-    if (stagedFile !== undefined) {
-      if (
-        !stagedFile.isFile() ||
-        stagedFile.isSymbolicLink() ||
-        this.#fileIdentity === undefined ||
-        !sameIdentity(stagedFile, this.#fileIdentity)
-      )
-        throw new Error(`Staged file identity changed: ${content}`);
-      await unlink(content);
-      this.#fileRemovedByOwner = true;
+      if (stagedFile !== undefined) {
+        if (
+          !stagedFile.isFile() ||
+          stagedFile.isSymbolicLink() ||
+          this.#fileIdentity === undefined ||
+          !sameIdentity(stagedFile, this.#fileIdentity)
+        )
+          throw new Error(`Staged file identity changed: ${content}`);
+        await unlink(content);
+        this.#fileRemovedByOwner = true;
+      }
     }
 
     const remaining = await readdir(this.directory);

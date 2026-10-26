@@ -1,3 +1,5 @@
+import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
+import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { GoBinaryPort } from "./GoBinaryPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -7,7 +9,6 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
-  goArchitectureForSubject,
   goBinarySchema,
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
@@ -67,13 +68,13 @@ export class GoBinaryService {
         ),
       );
     const value = report.data;
-    const architecture = goArchitectureForSubject(value.architecture);
+    const architecture = binaryMetadataArchitecture(value.architecture);
     const completed = completeProviderEvidence(
       createEvidence(
         {
           path: value.artifact.path,
           sha256: value.artifact.sha256,
-          format: value.format === "macho" ? "mach-o" : value.format,
+          format: metadataReportSubjectFormat(value),
           ...(architecture === undefined ? {} : { architecture }),
         },
         this.provider.identity,

@@ -35,6 +35,60 @@ it("keeps unknown magic distinct from recognized unsupported Mach-O formats", ()
   expect(failure).not.toBeInstanceOf(UnsupportedMachoMetadataFormatError);
 });
 
+const registerThinCpuFamilyControls = (): void => {
+  it.each([
+    { cpu: CPU.x86_64, architecture: "arm64" },
+    { cpu: CPU.arm64, architecture: "x86_64" },
+    { cpu: CPU.arm64, architecture: "unrecognized" },
+  ])(
+    "rejects a thin image outside the requested $architecture CPU family",
+    ({ cpu, architecture }) => {
+      const bytes = Buffer.from(machoImage({ cpu }));
+      expect(() => parseMachoLayout(bytes, architecture)).toThrow(
+        `Mach-O CPU type does not match requested architecture ${architecture}`,
+      );
+      expect(() =>
+        decodeAppleDispatchMetadata(
+          bytes,
+          10,
+          { path: "/thin", sha256: "fixture" },
+          architecture,
+        ),
+      ).toThrow(
+        `Mach-O CPU type does not match requested architecture ${architecture}`,
+      );
+    },
+  );
+
+  it("accepts a thin x86_64 image for the requested CPU family", () => {
+    const bytes = Buffer.from(machoImage({ cpu: CPU.x86_64 }));
+    expect(parseMachoLayout(bytes, "x86_64").selectedImage).toMatchObject({
+      container: "thin",
+      cpuType: CPU.x86_64.type,
+      cpuSubtype: CPU.x86_64.subtype,
+    });
+  });
+};
+
+it.each([false, true])(
+  "retains the shared FAT declaration without imposing Hopper policy (wide=%s)",
+  (wide) => {
+    const thin = machoImage({ cpu: CPU.arm64e });
+    const fat = Buffer.from(fatImage([{ cpu: CPU.arm64e, bytes: thin }], wide));
+    if (wide) fat.writeUInt32BE(0x89abcdef, 8 + 28);
+    expect(selectMachoSlice(fat, "arm64").fatDeclaration).toEqual({
+      index: 0,
+      offset: 4096,
+      size: thin.byteLength,
+      cpuType: CPU.arm64e.type,
+      cpuSubtype: CPU.arm64e.subtype,
+      alignmentExponent: 12,
+      reserved: wide ? 0x89abcdef : null,
+      tableEnd: 8 + (wide ? 32 : 20),
+    });
+  },
+);
+
 describe("native Mach-O slice selection", () => {
   it("rejects misaligned load commands", () => {
     expect(() =>
@@ -42,7 +96,7 @@ describe("native Mach-O slice selection", () => {
         Buffer.from(machoImageWithUnknownCommand(true, 12)),
         "arm64",
       ),
-    ).toThrow(/Invalid load command size/u);
+    ).toThrow(/invalid cmdsize/u);
   });
 
   it("accepts an aligned load command", () => {
@@ -75,6 +129,8 @@ describe("native Mach-O slice selection", () => {
     const fat = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
     expect(parseMachoLayout(Buffer.from(fat), "arm64").segments).toEqual([]);
   });
+
+  registerThinCpuFamilyControls();
 
   it("retains the selected image range and complete raw CPU identity", () => {
     const thin = Buffer.from(machoImage({ cpu: CPU.arm64e }));
@@ -236,5 +292,35 @@ describe("native Mach-O fixup load command boundaries", () => {
     unterminated.writeUInt32LE(24, 8);
     // machoImage includes zero padding after sizeofcmds; it is outside this command.
     expect(() => decode(unterminated)).toThrow(/Unterminated dylib/u);
+  });
+
+  it("preserves distinct opaque install-name bytes and literal Unicode names", () => {
+    const commands = [0x80, 0x81].map((byte) => {
+      const command = Buffer.from(dylibCommand(LC.LOAD_DYLIB, "/lib?"));
+      command[28] = byte;
+      return command;
+    });
+    commands.push(
+      Buffer.from(dylibCommand(LC.LOAD_DYLIB, "/lib�")),
+      Buffer.from(dylibCommand(LC.LOAD_DYLIB, "\ufeff/libé")),
+    );
+    const layout = parseMachoLayout(
+      Buffer.from(machoImage({ commands })),
+      "arm64",
+    );
+    expect(layout.fixups.dylibs).toEqual([
+      {
+        bytes_base64: Buffer.from([0x2f, 0x6c, 0x69, 0x62, 0x80]).toString(
+          "base64",
+        ),
+      },
+      {
+        bytes_base64: Buffer.from([0x2f, 0x6c, 0x69, 0x62, 0x81]).toString(
+          "base64",
+        ),
+      },
+      "/lib�",
+      "\ufeff/libé",
+    ]);
   });
 });

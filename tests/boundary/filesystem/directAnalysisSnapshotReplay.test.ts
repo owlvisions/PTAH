@@ -1,5 +1,5 @@
 import { parseConfig } from "../../../src/config/parseConfig.js";
-import { symlink, writeFile } from "node:fs/promises";
+import { readFile, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -25,10 +25,8 @@ import {
   type Evidence,
 } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
-import {
-  REA_WORKFLOW_PROVIDER,
-  workflowAnalysisProfile,
-} from "../../../src/application/InvestigationProviders.js";
+import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProviders.js";
+import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalysisProfile.js";
 import {
   analysisQueryId,
   createAnalysisSnapshotWorkflowEntry,
@@ -48,6 +46,7 @@ import {
   CAPABILITIES as GHIDRA_CAPABILITIES,
   GHIDRA_PROVIDER_IDENTITY,
 } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { nativeInventoryRowsSchemas } from "../../../src/domain/native/nativeInventory.js";
 import { APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE } from "../../../src/native/NativeMacOSProviderMetadata.js";
 
 const IDENTITY = {
@@ -131,7 +130,10 @@ const expectWorkflowQuestionsRetained = (
 
 interface SnapshotProviderTrace {
   readonly starts: string[];
-  readonly calls: string[];
+  readonly queries: Array<{
+    readonly operation: string;
+    readonly parameters: Readonly<Record<string, unknown>>;
+  }>;
   readonly resolutions: string[];
 }
 
@@ -179,8 +181,11 @@ const makeProvider = (
     createClient: () => {
       trace.starts.push("start");
       return {
-        execute: async (operation) => {
-          trace.calls.push(operation);
+        execute: async (operation, parameters) => {
+          trace.queries.push({
+            operation,
+            parameters: structuredClone(parameters),
+          });
           const results: Readonly<Record<string, unknown>> = {
             health: null,
             read_binary_inventory_summary: {
@@ -211,7 +216,9 @@ const makeProvider = (
             list_procedures: ["0x1000"],
             list_strings: { "0x1000": "fixture" },
             analyze_function: functionDossier,
-            list_names: [{ address: "0x1000", name: "fixture" }],
+            list_names: [
+              { address: "0x1000", value: "fixture" },
+            ] satisfies z.infer<typeof nativeInventoryRowsSchemas.names>,
             search_strings: [{ address: "0x1000", value: "fixture" }],
             search_procedures: [{ address: "0x1000", value: "fixture" }],
             xrefs: [],
@@ -246,17 +253,20 @@ const createSnapshotReplayFixture = async (
   const snapshotPath = join(directory, snapshotRelativePath);
   await writeFile(path, "fixture");
   const starts: string[] = [];
-  const calls: string[] = [];
+  const queries: SnapshotProviderTrace["queries"] = [];
   const resolutions: string[] = [];
 
   return {
     path,
     snapshotPath,
     starts,
-    calls,
+    get calls() {
+      return queries.map(({ operation }) => operation);
+    },
+    queries,
     resolutions,
     createProvider(options: SnapshotProviderOptions = {}): AnalysisProvider {
-      return makeProvider({ starts, calls, resolutions }, options);
+      return makeProvider({ starts, queries, resolutions }, options);
     },
     dependencies(provider: AnalysisProvider): DirectAnalysisDependencies {
       return {
@@ -661,6 +671,7 @@ describe("direct analysis composed snapshot replay", () => {
         scenario.arguments,
         { snapshotPath: fixture.snapshotPath },
       );
+      expect(first).toMatchObject({ operation: scenario.tool });
       const callsAfterFirst = [...fixture.calls];
       const startsAfterFirst = [...fixture.starts];
       const loaded = await readAnalysisSnapshot(fixture.snapshotPath);
@@ -755,6 +766,7 @@ describe("binary overview snapshot replay", () => {
       {},
       { snapshotPath: fixture.snapshotPath },
     );
+    expect(parseEvidence(first).caller_input_path).toBe(fixture.path);
     expect(fixture.calls.toSorted()).toEqual(operations.toSorted());
     expect(fixture.starts).toHaveLength(1);
 
@@ -800,6 +812,7 @@ describe("binary overview snapshot replay", () => {
     const relocatedEvidence = parseEvidence(relocated);
     expect(relocatedEvidence).toMatchObject({
       evidence_id: firstEvidence.evidence_id,
+      caller_input_path: relocatedPath,
       subject: {
         local_path: relocatedPath,
         name: basename(relocatedPath),
@@ -820,8 +833,136 @@ describe("binary overview snapshot replay", () => {
         (record) => record.evidence_id === firstEvidence.evidence_id,
       )?.subject?.local_path,
     ).toBe(fixture.path);
+    expect(
+      persisted.value.evidence_bundle.records.find(
+        (record) => record.evidence_id === firstEvidence.evidence_id,
+      )?.caller_input_path,
+    ).toBe(fixture.path);
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps a selected alias separate from the canonical snapshot query and refreshes its replay provenance",
+  async () => {
+    const fixture = await createSnapshotReplayFixture(
+      "rea-snapshot-selected-alias-",
+    );
+    const alias = join(dirname(fixture.path), "selected-alias.hop");
+    await symlink(fixture.path, alias);
+    const provider = fixture.createProvider({
+      supportedOperations: ["search_strings"],
+    });
+    const dependencies = fixture.dependencies(provider);
+    const parameters = { pattern: "fixture", document: "fixture" };
+    const options = { snapshotPath: fixture.snapshotPath };
+
+    const first = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        alias,
+        "search_strings",
+        parameters,
+        options,
+      ),
+    );
+    expect(first).toMatchObject({
+      caller_input_path: alias,
+      parameters,
+      subject: { local_path: fixture.path },
+    });
+    expect(
+      fixture.queries.filter(({ operation }) => operation === "search_strings"),
+    ).toEqual([{ operation: "search_strings", parameters }]);
+
+    const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!saved.ok) throw saved.error;
+    expect(saved.value.entries).toEqual([
+      expect.objectContaining({
+        operation: "search_strings",
+        parameters,
+        query_id: analysisQueryId(
+          saved.value.target,
+          saved.value.binding,
+          "search_strings",
+          parameters,
+        ),
+      }),
+    ]);
+    expect(saved.value.evidence_bundle.records).toContainEqual(
+      expect.objectContaining({
+        evidence_id: first.evidence_id,
+        caller_input_path: alias,
+        subject: expect.objectContaining({ local_path: fixture.path }),
+      }),
+    );
+    const originalBytes = await readFile(fixture.snapshotPath);
+    const starts = [...fixture.starts];
+    const queries = [...fixture.queries];
+
+    const replay = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "search_strings",
+        parameters,
+        options,
+      ),
+    );
+    expect(replay).toMatchObject({
+      evidence_id: first.evidence_id,
+      caller_input_path: fixture.path,
+      parameters,
+      subject: { local_path: fixture.path },
+    });
+    expect(fixture.starts).toEqual(starts);
+    expect(fixture.queries).toEqual(queries);
+    expect((await readFile(fixture.snapshotPath)).equals(originalBytes)).toBe(
+      true,
+    );
+
+    // A file saved before caller_input_path existed still authenticates and
+    // supplies the current request's spelling without rewriting history.
+    const legacy = structuredClone(saved.value);
+    for (const record of legacy.evidence_bundle.records)
+      Reflect.deleteProperty(record, "caller_input_path");
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(legacy, fixture.snapshotPath, true, resources),
+    );
+    if (!written.ok) throw written.error;
+    const historicalBytes = await readFile(fixture.snapshotPath);
+    const historical = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!historical.ok) throw historical.error;
+    expect(historical.value.evidence_bundle.records).toContainEqual(
+      expect.objectContaining({ evidence_id: first.evidence_id }),
+    );
+    expect(
+      historical.value.evidence_bundle.records.find(
+        (record) => record.evidence_id === first.evidence_id,
+      ),
+    ).not.toHaveProperty("caller_input_path");
+
+    const historicalReplay = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        alias,
+        "search_strings",
+        parameters,
+        options,
+      ),
+    );
+    expect(historicalReplay).toMatchObject({
+      evidence_id: first.evidence_id,
+      caller_input_path: alias,
+      parameters,
+      subject: { local_path: fixture.path },
+    });
+    expect(fixture.starts).toEqual(starts);
+    expect(fixture.queries).toEqual(queries);
+    expect((await readFile(fixture.snapshotPath)).equals(historicalBytes)).toBe(
+      true,
+    );
+  },
+);
 
 describe("snapshot replay provider identity", () => {
   it("uses the resolved provider version when capability metadata omits it", async () => {

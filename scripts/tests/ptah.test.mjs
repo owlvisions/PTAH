@@ -49,7 +49,9 @@ test("root branding identifies PTAH and documents the remaining compatibility mi
   const { readFile } = await import("node:fs/promises");
   const readme = await readFile(join(root, "README.md"), "utf8");
   const audit = await readFile(join(root, "docs/PTAH-BRAND-AUDIT.md"), "utf8");
-  const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  const packageJson = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  );
   assert.match(readme, /^# PTAH — Program Understanding & Analysis Toolkit/m);
   assert.match(readme, /migration preview/);
   assert.match(readme, /PTAH-BRAND-AUDIT\.md/);
@@ -57,13 +59,19 @@ test("root branding identifies PTAH and documents the remaining compatibility mi
   assert.match(audit, /Release gate checklist/);
   assert.match(packageJson.description, /PTAH/);
   assert.ok(packageJson.keywords.includes("ptah"));
-  assert.equal(packageJson.name, "rea-agents", "keep package identity until coordinated migration is approved");
+  assert.equal(
+    packageJson.name,
+    "rea-agents",
+    "keep package identity until coordinated migration is approved",
+  );
 });
 
-
 test("PTAH validation workflow runs native tests and upstream CI on supported Node", async () => {
-  const workflow = await readFile(join(root, ".github/workflows/ptah-validation.yml"), "utf8");
-  assert.match(workflow, /node-version: ['"]22\.19\.0['"]/);
+  const workflow = await readFile(
+    join(root, ".github/workflows/ptah-validation.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /node-version-file: \.nvmrc/);
   assert.match(workflow, /npm run test:ptah/);
   assert.match(workflow, /npm ci --ignore-scripts/);
   assert.match(workflow, /npm run check:ci/);
@@ -72,14 +80,25 @@ test("PTAH validation workflow runs native tests and upstream CI on supported No
 
 test("upstream sync workflow proposes reviewed updates without auto-merging", async () => {
   const { readFile } = await import("node:fs/promises");
-  const workflow = await readFile(join(root, ".github/workflows/ptah-upstream-sync.yml"), "utf8");
-  const guide = await readFile(join(root, "docs/PTAH-UPSTREAM-SYNC.md"), "utf8");
+  const workflow = await readFile(
+    join(root, ".github/workflows/ptah-upstream-sync.yml"),
+    "utf8",
+  );
+  const guide = await readFile(
+    join(root, "docs/PTAH-UPSTREAM-SYNC.md"),
+    "utf8",
+  );
   assert.match(workflow, /cron: ['"]?\*\/15 \* \* \* \*['"]?/);
   assert.match(workflow, /https:\/\/github\.com\/morluto\/rea\.git/);
-  assert.match(workflow, /git rebase upstream\/main/);
+  assert.match(workflow, /git merge --no-edit upstream\/main/);
+  assert.match(workflow, /git merge --abort/);
+  assert.match(workflow, /git push --force-with-lease origin/);
   assert.match(workflow, /git merge-base upstream\/main/);
   assert.match(workflow, /do not share Git history/);
-  assert.match(workflow, /will not attempt a destructive or conflict-prone rebase/);
+  assert.match(
+    workflow,
+    /will not attempt a destructive or conflict-prone rebase/,
+  );
   assert.match(workflow, /npm run test:ptah/);
   assert.match(workflow, /gh pr create/);
   assert.doesNotMatch(workflow, /gh pr merge/);

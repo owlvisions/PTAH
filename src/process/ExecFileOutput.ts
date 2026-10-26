@@ -1,3 +1,4 @@
+import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import {
   execFile,
   type ExecFileOptionsWithBufferEncoding,
@@ -122,6 +123,23 @@ export const execFileOutputFailure = (
     ...(collectionFailure === true ? { collectionFailure: true } : {}),
   };
 };
+
+/** Project admitted command failure facts without reinterpreting failure policy. */
+export const execFileFailureCapturedOutput = (
+  failure: ExecFileOutputFailure,
+): AnalysisCapturedOutput => ({
+  stdout: failure.stdout,
+  stderr: failure.stderr,
+  ...(failure.stdoutBytes === undefined
+    ? {}
+    : { stdout_bytes: failure.stdoutBytes }),
+  ...(failure.stderrBytes === undefined
+    ? {}
+    : { stderr_bytes: failure.stderrBytes }),
+  exit_code: typeof failure.code === "number" ? failure.code : null,
+  signal: failure.signal,
+  truncated: failure.outputTruncated,
+});
 
 /** Run a shell-free command while capturing its complete output bytes. */
 export const execFileBytes = (

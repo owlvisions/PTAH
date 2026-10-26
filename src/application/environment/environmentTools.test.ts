@@ -39,6 +39,19 @@ const tool = (name: string): EnvironmentManifestTool => {
 };
 
 describe("environmentToolDefinitions", () => {
+  it("distinguishes computed answers from their retained envelope's match metadata", () => {
+    const definitions = environmentToolDefinitions(source, "query-provenance", {
+      dataPlane: "state",
+    });
+    for (const definition of definitions)
+      expect(definition.description).toContain(
+        "state.source, not replay.exact_match, identifies state vs recording",
+      );
+    expect(environmentToolDefinitions(source)[0]?.description).not.toContain(
+      "state.source",
+    );
+  });
+
   it("maps every manifest tool in order with a replay description naming its records and evidence", () => {
     expect(definitions.map(({ name }) => name)).toEqual(
       source.manifest.tools.map(({ name }) => name),
@@ -79,9 +92,9 @@ describe("environmentToolDefinitions", () => {
     expect(search.additionalProperties).toBe(false);
     expect(Object.keys(search.properties).sort()).toEqual(["query", "type"]);
     expect(search.properties.query).toEqual({
-      type: "string",
+      oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
       description:
-        "Query parameter query; optional, matched against the recorded query on replay.",
+        "Query parameter query; optional. Supply one string for one occurrence or an array to preserve repeated values in captured order; repeated values replay their recorded request.",
     });
     expect("body" in search.properties).toBe(false);
   });
@@ -509,9 +522,12 @@ describe("environmentToolInputSchema argument names", () => {
     ]);
     expect(Object.hasOwn(schema.properties, "constructor")).toBe(true);
     expect(schema.properties.query_id?.description).toBe(
-      "Query parameter id; optional, matched against the recorded query on replay.",
+      "Query parameter id; optional. Supply one string for one occurrence or an array to preserve repeated values in captured order; repeated values replay their recorded request.",
     );
-    expect(schema.properties.body?.type).toBe("string");
+    expect(schema.properties.body?.oneOf).toEqual([
+      { type: "string" },
+      { type: "array", items: { type: "string" } },
+    ]);
     expect(schema.properties.request_body?.type).toBe("object");
     expect(schema.required).toEqual(["id"]);
   });

@@ -9,6 +9,10 @@ const range = z.strictObject({ offset: bytes, length: bytes.positive() });
 export const DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS = 120_000;
 /** Largest delay supported without overflowing Node timers. */
 export const MAX_FIRMWARE_TIMEOUT_MS = 2_147_483_647;
+/** Largest staging file-byte budget the schema accepts. */
+export const MAX_FIRMWARE_STAGING_BYTES = 512 * 1024 * 1024;
+/** Largest staging entry budget the schema accepts. */
+export const MAX_FIRMWARE_STAGING_ENTRIES = 100_000;
 const timeout = z.number().int().min(1).max(MAX_FIRMWARE_TIMEOUT_MS);
 const target = {
   path: absoluteLocalPathStringSchema.describe(
@@ -43,7 +47,7 @@ export const firmwareInputSchemas = {
       .number()
       .int()
       .min(1)
-      .max(512 * 1024 * 1024)
+      .max(MAX_FIRMWARE_STAGING_BYTES)
       .default(256 * 1024 * 1024)
       .describe(
         "Staging file-byte budget, checked during extraction; transient overshoot is possible",
@@ -52,7 +56,7 @@ export const firmwareInputSchemas = {
       .number()
       .int()
       .min(1)
-      .max(100_000)
+      .max(MAX_FIRMWARE_STAGING_ENTRIES)
       .default(10_000)
       .describe("Staging entry budget, including directories and links"),
     publication_timeout_ms: timeout
@@ -108,7 +112,7 @@ const chunk = z.strictObject({
   handler: z.string().nullable(),
   encrypted: z.boolean().nullable(),
   root_file_range: range.nullable(),
-  /** The producer reported extraction problems for this chunk. */
+  /** The producer reported an extraction error or missing dependency for this chunk. */
   extraction_failed: z.boolean(),
 });
 /** One unextracted region or failing task/stage, with a supported continuation
@@ -117,6 +121,7 @@ export const extractionGap = z.strictObject({
   kind: z.enum([
     "missing-extractor-dependency",
     "unknown-chunk-handler",
+    "unclassified-range",
     "encrypted-chunk",
     "depth-limited",
     "extractor-failure",
@@ -171,6 +176,8 @@ export const firmwareResultSchemas = {
     coverage: z.enum(["complete", "partial"]),
     files: z.array(
       z.strictObject({
+        // Producer-relative identity retains source spelling; `path` identifies
+        // the actual published file after destination name normalization.
         relative_path: z.string(),
         path: z.string(),
         size: bytes,

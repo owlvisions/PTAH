@@ -1,12 +1,11 @@
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  RegularFileCleanupFailure,
-  readRegularFileText,
-} from "./RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { readRegularFileText } from "./RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
   type ClientConfigurationDocument,
+  type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
@@ -142,6 +141,39 @@ const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** Native OpenCode dialect applies across all selected configuration layers. */
+export const clientWriteDialect = (
+  dialect: ClientRegistrationDialect,
+  sources: readonly ClientConfigurationDocument[],
+): ClientRegistrationDialect =>
+  dialect === "opencode" &&
+  sources.some(({ dialect }) => dialect === "opencode_v2")
+    ? "opencode_v2"
+    : dialect;
+
+/** Interpret the write fragment using the effective client dialect, preserving peers. */
+export const clientConfigurationForWrite = (
+  parsed: ClientConfigurationDocument,
+  sources: readonly ClientConfigurationDocument[],
+): ClientConfigurationDocument => {
+  if (
+    parsed.dialect !== "opencode" ||
+    clientWriteDialect(parsed.dialect, sources) !== "opencode_v2"
+  )
+    return parsed;
+  if (Object.hasOwn(parsed.servers, "servers"))
+    throw new TypeError(
+      "A legacy OpenCode server named servers conflicts with the effective native server table; repair this ambiguity before setup",
+    );
+  return {
+    ...parsed,
+    dialect: "opencode_v2",
+    serversPath: ["mcp", "servers"],
+    servers: {},
+    legacyServers: parsed.servers,
+  };
+};
+
 /** Project a client's effective user registration without modifying its source files. */
 export const effectiveClientConfiguration = (
   sources: readonly ClientConfigurationSource[],
@@ -166,7 +198,7 @@ export const effectiveClientConfiguration = (
   const last = documents.at(-1);
   if (last === undefined) return undefined;
   if (documents.length === 1) return last;
-  const servers: Record<string, unknown> = {};
+  const servers: Record<string, unknown> = Object.create(null);
   for (const document of documents) {
     const names = new Set([
       ...Object.keys(document.legacyServers),
@@ -176,10 +208,7 @@ export const effectiveClientConfiguration = (
       const previous = servers[name];
       const next = effectiveClientServer(document, name);
       const merged = mergeConfigurationValue(previous, next);
-      const key =
-        document.dialect === "opencode" || document.dialect === "opencode_v2"
-          ? "environment"
-          : "env";
+      const key = document.environmentKey;
       if (
         name === PRODUCT_IDENTITY.mcpServerKey &&
         isObject(merged) &&
@@ -195,7 +224,12 @@ export const effectiveClientConfiguration = (
       } else servers[name] = merged;
     }
   }
-  return { ...last, servers, legacyServers: {} };
+  return {
+    ...last,
+    dialect: clientWriteDialect(last.dialect, documents),
+    servers,
+    legacyServers: {},
+  };
 };
 
 /** Read the configuration ZCode will load, preserving its same-scope fallback rule. */

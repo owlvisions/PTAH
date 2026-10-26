@@ -1,5 +1,8 @@
+import { err, ok, type Result } from "../../../domain/result.js";
 import {
   createFileRegistry,
+  createRegistry,
+  equals,
   fromBinary,
   ScalarType,
   type DescField,
@@ -8,6 +11,8 @@ import {
 } from "@bufbuild/protobuf";
 import {
   FileDescriptorSetSchema,
+  FileDescriptorProtoSchema,
+  type FileDescriptorProto,
   type FileDescriptorSet,
 } from "@bufbuild/protobuf/wkt";
 import { BinaryReader } from "@bufbuild/protobuf/wire";
@@ -20,6 +25,18 @@ import {
   type ProtobufBudget,
   type WireSchema,
 } from "./ProtobufWire.js";
+
+export type ProtobufSchemaAdmissionFailure =
+  | {
+      readonly kind: "malformed-descriptor";
+      readonly field: "descriptor_set_path";
+      readonly message: string;
+    }
+  | {
+      readonly kind: "missing-message";
+      readonly field: "message_type";
+      readonly message: string;
+    };
 
 const scalarWire = (scalar: ScalarType): ProtobufField["wire_type"] => {
   if (scalar === ScalarType.STRING || scalar === ScalarType.BYTES) return "len";
@@ -39,44 +56,91 @@ const scalarWire = (scalar: ScalarType): ProtobufField["wire_type"] => {
 const floatingValue = (value: number): string =>
   Object.is(value, -0) ? "-0" : String(value);
 
-/** Qualified names can expand a small descriptor into a much larger registry. */
-const chargeRegistryExpansion = async (
+// Descriptor custom options and future fields remain opaque identity facts.
+const descriptorEquality = { registry: createRegistry(), unknown: true };
+
+/** Admit descriptor identities and bound qualified names before registry construction. */
+const admitRegistryDescriptor = async (
   descriptor: FileDescriptorSet,
   budget: ProtobufBudget,
-): Promise<void> => {
+): Promise<Result<FileDescriptorSet, ProtobufSchemaAdmissionFailure>> => {
+  const files = new Map<string, FileDescriptorProto>();
+  const registryNames = new Set<string>();
+  const duplicateType: ProtobufSchemaAdmissionFailure = {
+    kind: "malformed-descriptor",
+    field: "descriptor_set_path",
+    message: "Duplicate fully qualified type name in FileDescriptorSet",
+  };
+  const chargeQualifiedName = (name: string, prefix: string) =>
+    budget.charge((prefix.length + 1 + name.length) * 8 + 128);
+  const admitTypeName = (name: string, prefix: string): string | null => {
+    chargeQualifiedName(name, prefix);
+    budget.charge(32);
+    const qualified = prefix === "" ? name : `${prefix}.${name}`;
+    if (registryNames.has(qualified)) return null;
+    registryNames.add(qualified);
+    return qualified;
+  };
   for (const file of descriptor.file) {
+    await budget.checkpoint();
     budget.charge(file.name.length * 8 + 128);
+    const previous = files.get(file.name);
+    if (previous !== undefined) {
+      if (
+        !equals(FileDescriptorProtoSchema, previous, file, descriptorEquality)
+      )
+        return err({
+          kind: "malformed-descriptor",
+          field: "descriptor_set_path",
+          message: "Conflicting file identity in FileDescriptorSet",
+        });
+      continue;
+    }
+    files.set(file.name, file);
     const stack = file.messageType.map((message) => ({
       message,
-      prefix: file.package.length,
+      prefix: file.package,
     }));
-    const chargeQualifiedName = (name: string, prefix: number) =>
-      budget.charge((prefix + 1 + name.length) * 8 + 128);
     for (const enumeration of file.enumType)
-      chargeQualifiedName(enumeration.name, file.package.length);
+      if (admitTypeName(enumeration.name, file.package) === null)
+        return err(duplicateType);
     for (const extension of file.extension)
-      chargeQualifiedName(extension.name, file.package.length);
+      if (admitTypeName(extension.name, file.package) === null)
+        return err(duplicateType);
     for (const service of file.service) {
-      const length = file.package.length + 1 + service.name.length;
-      budget.charge(length * 8 + 128);
+      const qualified = admitTypeName(service.name, file.package);
+      if (qualified === null) return err(duplicateType);
       for (const method of service.method)
-        chargeQualifiedName(method.name, length);
+        chargeQualifiedName(method.name, qualified);
     }
     while (stack.length > 0) {
       await budget.checkpoint();
       const { message, prefix } = stack.pop()!;
-      const length = prefix + 1 + message.name.length;
-      budget.charge(length * 8 + 128);
-      for (const field of message.field)
-        chargeQualifiedName(field.name, length);
+      const qualified = admitTypeName(message.name, prefix);
+      if (qualified === null) return err(duplicateType);
+      budget.charge(message.field.length * 32);
+      const fieldNumbers = new Set<number>();
+      for (const field of message.field) {
+        chargeQualifiedName(field.name, qualified);
+        if (fieldNumbers.has(field.number))
+          return err({
+            kind: "malformed-descriptor",
+            field: "descriptor_set_path",
+            message: `Duplicate field number ${field.number} in descriptor message ${message.name}`,
+          });
+        fieldNumbers.add(field.number);
+      }
       for (const extension of message.extension)
-        chargeQualifiedName(extension.name, length);
+        if (admitTypeName(extension.name, qualified) === null)
+          return err(duplicateType);
       for (const enumeration of message.enumType)
-        chargeQualifiedName(enumeration.name, length);
+        if (admitTypeName(enumeration.name, qualified) === null)
+          return err(duplicateType);
       for (const nested of message.nestedType)
-        stack.push({ message: nested, prefix: length });
+        stack.push({ message: nested, prefix: qualified });
     }
   }
+  return ok({ ...descriptor, file: [...files.values()] });
 };
 
 const scalarValue = (reader: BinaryReader, scalar: ScalarType): string => {
@@ -131,7 +195,7 @@ export class ProtobufSchema implements WireSchema {
     typeName: string,
     budget: ProtobufBudget,
     redact: (text: string) => string,
-  ): Promise<ProtobufSchema> {
+  ): Promise<Result<ProtobufSchema, ProtobufSchemaAdmissionFailure>> {
     // Bound the object expansion of the descriptor before the SDK allocates its message tree.
     const checked = await decodeProtobufWire(
       bytes,
@@ -142,24 +206,57 @@ export class ProtobufSchema implements WireSchema {
       redact,
       new ProtobufSchema(FileDescriptorSetSchema, budget, redact),
     );
-    if (
-      checked.error !== undefined ||
-      checked.fields.some((field) => field.schema_status === "invalid-message")
-    )
-      throw new Error("Malformed FileDescriptorSet wire format");
-    const descriptor = fromBinary(FileDescriptorSetSchema, bytes, {
-      readUnknownFields: false,
-      recursionLimit: WEB_NETWORK_CAPTURE_LIMITS.depth,
-    });
-    await chargeRegistryExpansion(descriptor, budget);
-    const message = createFileRegistry(descriptor).getMessage(
-      typeName.replace(/^\./, ""),
+    const invalidField = checked.fields.find(
+      (field) => field.schema_status === "invalid-message",
     );
-    if (message === undefined)
-      throw new Error(
-        "The supplied descriptor set does not define the selected message type",
+    const wireError =
+      checked.error ??
+      (invalidField === undefined
+        ? undefined
+        : (invalidField.schema_error ?? {
+            offset: invalidField.offset,
+            reason: "Invalid descriptor message",
+          }));
+    if (wireError !== undefined)
+      return err({
+        kind: "malformed-descriptor",
+        field: "descriptor_set_path",
+        message: `Malformed FileDescriptorSet wire format at byte ${wireError.offset}: ${wireError.reason}`,
+      });
+    let descriptor: FileDescriptorSet;
+    try {
+      descriptor = fromBinary(FileDescriptorSetSchema, bytes, {
+        readUnknownFields: true,
+        recursionLimit: WEB_NETWORK_CAPTURE_LIMITS.depth,
+      });
+    } catch (cause) {
+      return err({
+        kind: "malformed-descriptor",
+        field: "descriptor_set_path",
+        message: `Malformed FileDescriptorSet: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    }
+    const admitted = await admitRegistryDescriptor(descriptor, budget);
+    if (!admitted.ok) return admitted;
+    let message: DescMessage | undefined;
+    try {
+      message = createFileRegistry(admitted.value).getMessage(
+        typeName.replace(/^\./, ""),
       );
-    return new ProtobufSchema(message, budget, redact);
+    } catch (cause) {
+      return err({
+        kind: "malformed-descriptor",
+        field: "descriptor_set_path",
+        message: `Invalid FileDescriptorSet declaration: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    }
+    if (message === undefined)
+      return err({
+        kind: "missing-message",
+        field: "message_type",
+        message: `The supplied descriptor set does not define the selected message type ${typeName}`,
+      });
+    return ok(new ProtobufSchema(message, budget, redact));
   }
 
   reset(): void {

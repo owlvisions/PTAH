@@ -1,10 +1,13 @@
-import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
+import { readElfTableDeclarations } from "../../domain/elfDeclaredRanges.js";
+import { readPeOptionalHeaderStructure } from "../../domain/peOptionalHeader.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
   declaredFileRange,
+  type ElfDynamicSegment,
 } from "./BinaryContainer.js";
+import { decodeElfSectionNameTable } from "./ElfSectionNameTable.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
@@ -26,6 +29,18 @@ export interface NativeSection {
   readonly entry_size: bigint;
   readonly file_backed: boolean;
 }
+/** Raw relevant program declarations; consumers own load/dynamic admission. */
+export type ElfProgramDeclaration =
+  | {
+      readonly type: 1;
+      readonly flags: number;
+      readonly file_offset: bigint;
+      readonly file_size: bigint;
+      readonly virtual_address: bigint;
+      readonly memory_size: bigint;
+    }
+  | ({ readonly type: 2 } & ElfDynamicSegment);
+
 export interface NativeSectionDirectory {
   readonly format: "elf" | "pe";
   readonly bits: 32 | 64;
@@ -33,9 +48,8 @@ export interface NativeSectionDirectory {
   readonly machine: number;
   readonly elf_os_abi: number | null;
   readonly flags: number;
-  readonly program_offset: bigint;
-  readonly program_count: number;
-  readonly program_width: number;
+  readonly section_names_limitation?: string;
+  readonly programs: readonly ElfProgramDeclaration[];
   readonly sections: readonly NativeSection[];
 }
 const STRUCTURE_BYTES = 16 * 1024 * 1024;
@@ -75,72 +89,59 @@ export function* readElfSectionDirectory(
   const prefix = yield request(fileSize, 0n, 16n);
   const headerSize = prefix[4] === 1 ? 52 : 64;
   const bytes = yield request(fileSize, 0n, BigInt(headerSize));
-  const parsed = readElfFixedHeader(bytes, fileSize);
+  const parsed = yield* readElfTableDeclarations(bytes, fileSize);
   if (!parsed.ok) return reject(parsed.error);
-  const { elfClass: bits, byteOrder, machine } = parsed.value;
+  const { header, programs, sections: sectionTable } = parsed.value;
+  const { elfClass: bits, byteOrder, machine } = header;
   const little = byteOrder === "little";
   const wide = bits === 64;
   const r = new BinaryReader(bytes, little);
-  const program_offset = r.word(wide ? 32 : 28, bits);
-  const sectionOffset = r.word(wide ? 40 : 32, bits);
-  const program_width = r.u16(wide ? 54 : 42);
-  const sectionWidth = r.u16(wide ? 58 : 46);
-  let program_count = r.u16(wide ? 56 : 44);
-  let count = r.u16(wide ? 60 : 48);
-  let namesIndex = r.u16(wide ? 62 : 50);
-  if (
-    (program_count !== 0 && program_offset < BigInt(headerSize)) ||
-    (sectionOffset !== 0n && sectionOffset < BigInt(headerSize))
-  )
-    reject("ELF header table overlaps the native header");
-  if (
-    sectionOffset === 0n &&
-    (count !== 0 || namesIndex !== 0 || program_count === 0xffff)
-  )
-    reject("ELF section table is missing");
-  if (
-    sectionOffset !== 0n &&
-    (count === 0 || namesIndex === 0xffff || program_count === 0xffff)
-  ) {
-    if (sectionWidth < (wide ? 64 : 40))
-      reject("ELF extended section header width is invalid");
-    const first = new BinaryReader(
-      yield request(fileSize, sectionOffset, BigInt(sectionWidth)),
+  const {
+    offset: program_offset,
+    width: program_width,
+    count: program_count,
+  } = programs;
+  const {
+    offset: sectionOffset,
+    width: sectionWidth,
+    count,
+    namesIndex,
+  } = sectionTable;
+  const programDeclarations: ElfProgramDeclaration[] = [];
+  if (program_count !== 0) {
+    const programs = new BinaryReader(
+      yield request(
+        fileSize,
+        program_offset,
+        BigInt(program_count) * BigInt(program_width),
+      ),
       little,
     );
-    if (first.u32(4) !== 0)
-      reject(
-        "ELF initial section for extended numbering must have SHT_NULL type",
-      );
-    if (count === 0) {
-      const declared = first.word(wide ? 32 : 20, bits);
-      if (declared < 0xff00n) reject("ELF extended section count is invalid");
-      count = exact(declared);
+    // At most one record per table entry, bounded before allocation by the
+    // existing 16 MiB table allowance and minimum 32/56-byte ELF record width.
+    for (let index = 0; index < program_count; index++) {
+      const at = index * program_width;
+      const type = programs.u32(at);
+      if (type === 1)
+        programDeclarations.push({
+          type,
+          flags: programs.u32(at + (wide ? 4 : 24)),
+          file_offset: programs.word(at + (wide ? 8 : 4), bits),
+          virtual_address: programs.word(at + (wide ? 16 : 8), bits),
+          file_size: programs.word(at + (wide ? 32 : 16), bits),
+          memory_size: programs.word(at + (wide ? 40 : 20), bits),
+        });
+      else if (type === 2)
+        programDeclarations.push({
+          type,
+          offset: programs.word(at + (wide ? 8 : 4), bits),
+          size: programs.word(at + (wide ? 32 : 16), bits),
+        });
     }
-    if (namesIndex === 0xffff) {
-      namesIndex = first.u32(wide ? 40 : 24);
-      if (namesIndex < 0xff00)
-        reject("ELF extended section name index is below its reserved range");
-    }
-    if (program_count === 0xffff) {
-      program_count = first.u32(wide ? 44 : 28);
-      if (program_count < 0xffff)
-        reject("ELF extended program count is below its reserved range");
-    }
-  }
-  if (program_count !== 0) {
-    if (program_width < (wide ? 56 : 32))
-      reject("ELF program header width is invalid");
-    request(
-      fileSize,
-      program_offset,
-      BigInt(program_count) * BigInt(program_width),
-    );
   }
   const sections: NativeSection[] = [];
+  let section_names_limitation: string | undefined;
   if (count !== 0) {
-    if (sectionWidth < (wide ? 64 : 40) || namesIndex >= count)
-      reject("ELF section width or name-table index is invalid");
     const table = new BinaryReader(
       yield request(
         fileSize,
@@ -154,11 +155,31 @@ export function* readElfSectionDirectory(
       const h = namesIndex * sectionWidth;
       if (table.u32(h + 4) !== 3)
         reject("ELF section name table is not a string table");
-      names = yield request(
+      const rawNames = yield request(
         fileSize,
         table.word(h + (wide ? 24 : 16), bits),
         table.word(h + (wide ? 32 : 20), bits),
       );
+      const decoded = decodeElfSectionNameTable(
+        rawNames,
+        table.word(h + 8, bits),
+        bits,
+        little,
+        Math.max(0, STRUCTURE_BYTES - rawNames.length),
+      );
+      if (decoded.state === "malformed") return reject(decoded.message);
+      if (decoded.state === "limit")
+        throw new BinaryResourceFailure(
+          "structure",
+          STRUCTURE_BYTES,
+          `Decoded ELF section names require ${String(decoded.requiredBytes)} bytes, above the ${String(decoded.maximumBytes)}-byte remaining structural budget`,
+        );
+      if (decoded.state === "unsupported")
+        section_names_limitation = `ELF section names are unavailable because compression type ${String(decoded.compressionType)} is unsupported`;
+      else names = decoded.bytes;
+    } else if (count > 1) {
+      section_names_limitation =
+        "ELF section names are unavailable because no section-name string table is declared";
     }
     const decodedNames = new Map<
       number,
@@ -171,30 +192,36 @@ export function* readElfSectionDirectory(
       let name: string | null = null;
       let name_state: NativeSection["name_state"] = "unavailable";
       if (names !== null) {
-        if (nameOffset >= names.length)
-          reject("ELF section name offset is outside its string table");
-        let decoded = decodedNames.get(nameOffset);
-        if (decoded === undefined) {
-          const window = names.subarray(
-            nameOffset,
-            Math.min(nameOffset + 65536, names.length),
-          );
-          const end = window.indexOf(0);
-          nameBytes += end < 0 ? window.length : end + 1;
-          if (nameBytes > STRUCTURE_BYTES)
-            throw new BinaryResourceFailure(
-              "structure",
-              STRUCTURE_BYTES,
-              "Decoded ELF section names exceed the 16 MiB structural budget",
+        if (nameOffset >= names.length) {
+          section_names_limitation ??=
+            "ELF section names are incomplete because a name offset is outside its string table";
+        } else {
+          let decoded = decodedNames.get(nameOffset);
+          if (decoded === undefined) {
+            const window = names.subarray(
+              nameOffset,
+              Math.min(nameOffset + 65536, names.length),
             );
-          decoded = {
-            name: end < 0 ? null : window.toString("latin1", 0, end),
-            state: end < 0 ? "truncated" : "known",
-          };
-          decodedNames.set(nameOffset, decoded);
+            const end = window.indexOf(0);
+            nameBytes += end < 0 ? window.length : end + 1;
+            if (nameBytes > STRUCTURE_BYTES)
+              throw new BinaryResourceFailure(
+                "structure",
+                STRUCTURE_BYTES,
+                "Decoded ELF section names exceed the 16 MiB structural budget",
+              );
+            decoded = {
+              name: end < 0 ? null : window.toString("latin1", 0, end),
+              state: end < 0 ? "truncated" : "known",
+            };
+            if (end < 0)
+              section_names_limitation ??=
+                "ELF section names are unavailable because a name is not NUL-terminated";
+            decodedNames.set(nameOffset, decoded);
+          }
+          name_state = decoded.state;
+          name = decoded.name;
         }
-        name_state = decoded.state;
-        name = decoded.name;
       }
       const type = table.u32(h + 4);
       const offset = table.word(h + (wide ? 24 : 16), bits);
@@ -219,14 +246,15 @@ export function* readElfSectionDirectory(
   }
   return {
     format: "elf",
-    elf_os_abi: parsed.value.osAbi,
+    elf_os_abi: header.osAbi,
     bits,
     little,
     machine,
     flags: r.u32(wide ? 48 : 36),
-    program_offset,
-    program_count,
-    program_width,
+    ...(section_names_limitation === undefined
+      ? {}
+      : { section_names_limitation }),
+    programs: programDeclarations,
     sections,
   };
 }
@@ -259,23 +287,24 @@ export function* readPeSectionDirectory(
   const coff = new BinaryReader(yield request(fileSize, BigInt(pe), 24n), true);
   if (coff.u32(0) !== 0x4550) reject("PE signature is invalid");
   const optionalSize = coff.u16(20);
-  const optional = new BinaryReader(
+  const optional = readPeOptionalHeaderStructure(
     yield request(fileSize, BigInt(pe + 24), BigInt(optionalSize)),
-    true,
   );
-  const magic = optional.u16(0);
-  const bits = magic === 0x10b ? 32 : magic === 0x20b ? 64 : null;
-  if (bits === null)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      "Only PE32/PE32+ images are supported",
-    );
-  const minimum = bits === 64 ? 112 : 96;
-  if (
-    optionalSize < minimum ||
-    optional.u32(minimum - 4) * 8 > optionalSize - minimum
-  )
-    reject("PE optional header or data directories are truncated");
+  if (!optional.ok) {
+    switch (optional.error.reason) {
+      case "truncated-magic":
+        return reject("16-bit field range is truncated or outside the file");
+      case "unsupported-magic":
+        throw new BinaryFormatFailure(
+          "unsupported",
+          "Only PE32/PE32+ images are supported",
+        );
+      case "truncated-fixed-fields":
+      case "truncated-directory-table":
+        return reject("PE optional header or data directories are truncated");
+    }
+  }
+  const { bits } = optional.value;
   const count = coff.u16(6);
   const start = pe + 24 + optionalSize;
   const table = yield request(fileSize, BigInt(start), BigInt(count) * 40n);
@@ -311,22 +340,16 @@ export function* readPeSectionDirectory(
     little: true,
     machine: coff.u16(4),
     flags: coff.u16(22),
-    program_offset: 0n,
-    program_count: 0,
-    program_width: 0,
+    programs: [],
     sections,
   };
 }
 
-/** Synchronous driver borrows bytes; file drivers satisfy the identical requests without loading payloads. */
-export const readNativeDirectoryFromBuffer = (
+/** Borrow ELF bytes; file drivers satisfy the identical requests without loading payloads. */
+export const readElfDirectoryFromBuffer = (
   bytes: Buffer,
-  format: "elf" | "pe",
 ): NativeSectionDirectory => {
-  const steps =
-    format === "elf"
-      ? readElfSectionDirectory(bytes.length)
-      : readPeSectionDirectory(bytes.length);
+  const steps = readElfSectionDirectory(bytes.length);
   let next = steps.next();
   while (!next.done) {
     const { offset, size } = next.value;

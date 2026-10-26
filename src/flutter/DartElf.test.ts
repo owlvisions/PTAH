@@ -40,11 +40,16 @@ const imageWithSections = (): Buffer => {
 };
 
 /** The same layout without section headers: symbols live in PT_DYNAMIC. */
-const strippedImageWithSections = (): Buffer => {
-  const elf = buildStrippedElf64Image([
-    { name: "_kDartVmSnapshotData", value: 0x400, size: 52 },
-    { name: "_kDartIsolateSnapshotData", value: 0x800, size: 52 },
-  ]);
+const strippedImageWithSections = (
+  extraDynamicEntries: ReadonlyArray<readonly [number, bigint]> = [],
+): Buffer => {
+  const elf = buildStrippedElf64Image(
+    [
+      { name: "_kDartVmSnapshotData", value: 0x400, size: 52 },
+      { name: "_kDartIsolateSnapshotData", value: 0x800, size: 52 },
+    ],
+    extraDynamicEntries,
+  );
   const section = snapshotSection(GALLERY_HASH);
   return Buffer.concat([
     elf,
@@ -89,6 +94,38 @@ describe("readElfSymbol", () => {
     expect(header.magicValid).toBe(true);
     expect(header.kind).toBe(3);
   });
+
+  it.each([
+    [16, "DT_SYMBOLIC"],
+    [22, "DT_TEXTREL"],
+    [24, "DT_BIND_NOW"],
+  ] as const)(
+    "ignores the payload of %s (%s) without losing symbols",
+    async (tag, _name) => {
+      const names = ["_kDartVmSnapshotData", "_kDartIsolateSnapshotData"];
+      const control = await readElfSymbols(
+        strippedImageWithSections([[tag, 0n]]),
+        names,
+      );
+      expect(control.failures).toEqual([]);
+      expect(control.symbols).toHaveLength(2);
+      const image = strippedImageWithSections([[tag, 0xffffffffffffffffn]]);
+      const original = Buffer.from(image);
+      expect(await readElfSymbols(image, names)).toEqual(control);
+      expect(Buffer.compare(image, original)).toBe(0);
+    },
+  );
+
+  it.each([4, 5, 6, 10, 11, 0x6ffffef5])(
+    "keeps representability checks for consumed dynamic tag %s",
+    async (tag) => {
+      const image = strippedImageWithSections([[tag, 0xffffffffffffffffn]]);
+      expect(await readElfSymbols(image, ["_kDartVmSnapshotData"])).toEqual({
+        symbols: [],
+        failures: [{ reason: "Dynamic entry is not representable" }],
+      });
+    },
+  );
 
   it("refuses a stripped image whose PT_DYNAMIC carries no symbols", async () => {
     // Drop the PT_DYNAMIC program header by leaving only PT_LOAD.
@@ -142,6 +179,53 @@ describe("readElfSymbol", () => {
       }
     },
   );
+});
+
+describe("dynamic symbols without a SHT_DYNSYM section", () => {
+  it.each([false, true])(
+    "uses PT_DYNAMIC with a retained directory (data sections: %s)",
+    async (retainDataSections) => {
+      const original = strippedImageWithSections();
+      const image = appendElfRanges(
+        original,
+        "section",
+        retainDataSections
+          ? [
+              { type: 1, offset: 0x400, size: 52 },
+              { type: 1, offset: 0x800, size: 52 },
+            ]
+          : [],
+      );
+      const names = ["_kDartVmSnapshotData", "_kDartIsolateSnapshotData"];
+      const control = await readElfSymbols(original, names);
+      expect(control.failures).toEqual([]);
+      expect(control.symbols).toHaveLength(2);
+      const before = Buffer.from(image);
+      expect(await readElfSymbols(image, names)).toEqual(control);
+      expect(Buffer.compare(image, before)).toBe(0);
+    },
+  );
+
+  it("keeps malformed present dynsym sections as failures despite usable PT_DYNAMIC", async () => {
+    const image = appendElfRanges(strippedImageWithSections(), "section", [
+      { type: 11, offset: 0, size: 0 },
+    ]);
+    expect(await readElfSymbols(image, ["_kDartVmSnapshotData"])).toEqual({
+      symbols: [],
+      failures: [{ reason: "Dynamic symbol table is malformed" }],
+    });
+  });
+
+  it("keeps bounded dynamic metadata requirements with a retained directory", async () => {
+    const image = appendElfRanges(strippedImageWithSections(), "section", []);
+    // The first entry is DT_SYMTAB, whose address must remain representable.
+    const dynamic = Number(image.readBigUInt64LE(64 + 56 + 8));
+    image.writeBigUInt64LE(0xffffffffffffffffn, dynamic + 8);
+    expect(await readElfSymbols(image, ["_kDartVmSnapshotData"])).toEqual({
+      symbols: [],
+      failures: [{ reason: "Dynamic entry is not representable" }],
+    });
+  });
 });
 
 describe("ELF symbol-table ownership", () => {

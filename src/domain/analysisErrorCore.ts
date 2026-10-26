@@ -108,14 +108,20 @@ export class AnalysisProtocolError extends AnalysisError {
 export class AnalysisInputError extends AnalysisError {
   readonly _tag = "AnalysisInputError";
   override readonly userMessage: string | undefined;
+  /** Refusal-specific correction, when the generic input-contract advice cannot fix it. */
+  readonly remediationAction: string | undefined;
 
   constructor(
     readonly operation: string,
-    options?: AnalysisErrorOptions & { readonly userMessage?: string },
+    options?: AnalysisErrorOptions & {
+      readonly userMessage?: string;
+      readonly remediationAction?: string;
+    },
     readonly issues: readonly AnalysisInputIssue[] = [],
   ) {
     super(`Invalid analysis input for ${operation}`, options);
     this.userMessage = options?.userMessage;
+    this.remediationAction = options?.remediationAction;
   }
 }
 
@@ -132,6 +138,8 @@ export interface AnalysisInputIssue {
   /** Schema-authored correction guidance for cross-field or custom checks. */
   readonly message?: string;
   readonly expected?: JsonValue;
+  /** Producer-examined facts about the refused value, such as its location and shape. */
+  readonly observed?: JsonValue;
   readonly minimum?: number;
   readonly maximum?: number;
 }

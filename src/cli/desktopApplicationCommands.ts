@@ -1,3 +1,4 @@
+import { localPathStringSchema } from "../domain/localPath.js";
 import {
   analysisEvidenceDeliveryOptions,
   deliverCliAnalysisEvidence,
@@ -20,7 +21,7 @@ export const registerDesktopApplicationCommands = (
     description:
       "Identify desktop runtime candidates from bounded directory and header observations",
     args: z.object({
-      path: z.string().describe("Local installation directory"),
+      path: localPathStringSchema.describe("Local installation directory"),
     }),
     options: z.object({
       max_entries: z

@@ -15,6 +15,12 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_binary_layout";
+const EVIDENCE_ARCHITECTURES = {
+  EM_X86_64: "x86_64",
+  EM_386: "x86",
+  EM_ARM: "arm",
+  EM_MIPS: "mips",
+} as const;
 
 /** Shared CLI/MCP validation and Evidence composition for offline layout inspection. */
 export class BinaryLayoutService {
@@ -87,7 +93,7 @@ export class BinaryLayoutService {
         {
           path: value.artifact.path,
           format: "elf",
-          architecture: "x86_64",
+          architecture: EVIDENCE_ARCHITECTURES[value.architecture.machine],
           sha256: value.artifact.sha256,
         },
         this.provider.identity,

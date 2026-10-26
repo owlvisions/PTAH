@@ -187,6 +187,7 @@ const mcp = async (cliDossier) => {
     opened = true;
     const analyzed = await call("analyze_function", {
       procedure: values.procedure,
+      detail: "complete",
     });
     const dossier = functionDossierSchema.parse(observe(analyzed));
     assert.deepEqual(dossier.procedure, cliDossier.procedure);

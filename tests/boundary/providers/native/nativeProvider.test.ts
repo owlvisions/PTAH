@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { build } from "plist";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
@@ -21,6 +22,7 @@ import {
 } from "../../../../src/native/CommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { parseLipoOutput } from "../../../../src/native/parsers/lipo.js";
+import { inspectPlistSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { parseCodeSignature } from "../../../../src/native/parsers/codesign.js";
 import { prepareProcessOwnershipInspection } from "../../../../src/process/ProcessOwnershipObservation.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -39,6 +41,11 @@ import {
   nativeMachoTarget as machoTarget,
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
+
+/** The file runner identifies selected .plist inputs as XML. */
+const writeFixturePlist = async (path: string): Promise<void> => {
+  await writeFile(path, build(JSON.parse(await fixture("plist.json"))));
+};
 
 const cleanupOwner = (runId: string): ProviderProcessSupervisor => {
   const child = Object.assign(new EventEmitter(), {
@@ -1320,9 +1327,9 @@ describe("native macOS provider inspection", () => {
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(join(app, "Contents/Info.plist"), "fixture");
+    await writeFixturePlist(join(app, "Contents/Info.plist"));
     const externalPlist = join(directory, "Outside.plist");
-    await writeFile(externalPlist, "fixture");
+    await writeFixturePlist(externalPlist);
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1370,7 +1377,7 @@ describe("native macOS provider raw results", () => {
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(join(app, "Contents/Info.plist"), "fixture");
+    await writeFixturePlist(join(app, "Contents/Info.plist"));
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1396,6 +1403,13 @@ describe("native macOS provider raw results", () => {
           expect.objectContaining({ tool: expect.any(String) }),
         ]),
       });
+      if (operation === "inspect_plist") {
+        const plist = inspectPlistSchema.parse(execution.value.result);
+        expect(plist.provenance.map(({ command }) => command)).toEqual([
+          ["/usr/bin/file", "-b", "$PLIST"],
+          ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+        ]);
+      }
     }
   });
 });
@@ -1407,7 +1421,7 @@ describe("native plist defaults for iOS-style bundles", () => {
     const executable = join(app, "Flat");
     await mkdir(app, { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(join(app, "Info.plist"), "fixture");
+    await writeFixturePlist(join(app, "Info.plist"));
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1422,6 +1436,37 @@ describe("native plist defaults for iOS-style bundles", () => {
       source_path: join(app, "Info.plist"),
     });
   });
+});
+
+it("rejects malformed selected plist bytes before mocked conversion can invent facts", async () => {
+  directory = await createTestTempDirectory("rea-native-malformed-plist-");
+  const app = join(directory, "Malformed.app");
+  const path = join(app, "Contents/Info.plist");
+  await mkdir(join(app, "Contents"), { recursive: true });
+  await writeFile(path, "fixture");
+  const tools: string[] = [];
+  const replay = new FixtureRunner();
+  const runner: NativeCommandRunner = {
+    run(tool, arguments_, options) {
+      tools.push(tool);
+      return replay.run(tool, arguments_, options);
+    },
+  };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    machoTarget(join(app, "Contents/MacOS/Fixture"), app),
+  );
+  for (const [parameters, tag] of [
+    [{}, "AnalysisCapabilityUnavailableError"],
+    [{ path }, "AnalysisInputError"],
+  ] as const) {
+    const result = await client.execute("inspect_plist", parameters);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: tag, operation: "inspect_plist" },
+    });
+  }
+  expect(tools).toEqual(["file", "file"]);
+  expect(await readFile(path, "utf8")).toBe("fixture");
 });
 
 /** Emit entitlements whose dictionary also holds a legal `__proto__` key. */

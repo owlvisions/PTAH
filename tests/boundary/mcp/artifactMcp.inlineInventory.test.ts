@@ -20,7 +20,7 @@ import {
 } from "../../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import {
   analysisViewResultSchema,
   type AnalysisViewResult,
@@ -446,10 +446,10 @@ it.each(["full", "compact"] as const)(
         {
           operation: "inventory_artifact",
           parameters: {},
-          result: jsonValueSchema.parse({
+          result: {
             ...graph,
             occurrences: graph.occurrences.slice(0, 1),
-          }),
+          },
         },
       );
       const partialReply = await client.callTool({

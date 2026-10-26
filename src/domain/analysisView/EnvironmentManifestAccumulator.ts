@@ -11,7 +11,9 @@ import {
   type WebNetworkCaptureRecord,
 } from "../webNetworkCapture.js";
 import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
+import { recordedResponseBodyIsEmpty } from "./recordedResponseBody.js";
 import type { UnsignedAnalysisView } from "./analysisView.js";
+import type { ScenarioResponseBodyRetention } from "./scenarioCaptureRecords.js";
 import { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import {
   compareTools,
@@ -20,6 +22,10 @@ import {
   toolName,
   toolNameRegistry,
 } from "./environmentManifestNames.js";
+import {
+  primaryOrigin,
+  type OriginStats,
+} from "./environmentManifestOrigin.js";
 import {
   applyTemplateRules,
   SEGMENT_LIMITED_RULES,
@@ -87,8 +93,36 @@ interface GroupState extends ToolGroup {
   readonly queryNames: Set<string>;
   readonly apiPath: boolean;
   jsonLike: boolean;
+  /** Every response of the write group had no body, as a 204 has. */
+  bodiless: boolean;
 }
 
+const responseTextSchema = z.object({
+  response: z.object({
+    status: z.unknown().optional(),
+    content: z
+      .object({ text: z.unknown().optional(), size: z.unknown().optional() })
+      .nullable()
+      .optional(),
+  }),
+});
+/** Whether a record's response had no body: a 204 or 205, an empty text, or a recorded size of zero; a missing text alone may be a body not kept. */
+const emptyResponse = (record: WebNetworkCaptureRecord): boolean => {
+  const parsed = responseTextSchema.safeParse(record.reported);
+  if (!parsed.success) return false;
+  const { status, content } = parsed.data.response;
+  return (
+    status === 204 ||
+    status === 205 ||
+    recordedResponseBodyIsEmpty(record) ||
+    ((content?.text === undefined || content.text === null) &&
+      content?.size === 0)
+  );
+};
+/** A write group every response of which had no body, at least one of them a success. */
+const answeredEmpty = (group: GroupState): boolean =>
+  group.bodiless &&
+  [...group.statuses].some((status) => status >= 200 && status < 300);
 const postDataSchema = z.object({
   request: z.object({
     postData: z
@@ -114,6 +148,8 @@ const ASSET_PREFIXES = ["image/", "font/", "audio/", "video/"];
 const ASSET_PATH =
   /\.(?:m?js|css|map|html?|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|otf)$/iu;
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH"]);
+/** A write whose every response is empty is a tool whatever its content type: the empty reply is its answer. */
+const BODILESS_WRITE_METHODS = new Set([...WRITE_METHODS, "DELETE"]);
 /** Quotes, separators and brackets a four-part composite key adds around its texts. */
 const KEY_OVERHEAD_CHARS = 32;
 const UNKNOWNS: Manifest["unknowns"] = [
@@ -189,9 +225,12 @@ const hasParam = (parts: readonly MutablePart[]): boolean =>
 export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumulator {
   readonly #groups = new Map<string, GroupState>();
   readonly #records: RecordLine[] = [];
-  readonly #origins = new Map<string, { records: number; jsonLike: number }>();
+  readonly #origins = new Map<string, OriginStats>();
   readonly #rules: ReadonlySet<TemplateRule>;
   #unrepresented = 0;
+  #scenarioTransactions = 0;
+  #scenarioWithoutBody = 0;
+  #scenarioRedactedBodies = 0;
   #unrepresentableBodyKey = false;
 
   constructor(
@@ -209,7 +248,10 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     return true;
   }
 
-  add(record: WebNetworkCaptureRecord): Result<void, AnalysisError> {
+  add(
+    record: WebNetworkCaptureRecord,
+    scenarioResponseBody?: ScenarioResponseBodyRetention,
+  ): Result<void, AnalysisError> {
     const limitations = this.addLimitations(record.limitations);
     if (!limitations.ok) return limitations;
     try {
@@ -222,6 +264,13 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       if (line.kind === "excluded") {
         this.#unrepresented += 1;
         return ok(undefined);
+      }
+      // Coverage uses the same admitted request line as grouping, including origin and raw path.
+      if (scenarioResponseBody !== undefined) {
+        this.#scenarioTransactions += 1;
+        if (scenarioResponseBody === "absent") this.#scenarioWithoutBody += 1;
+        if (scenarioResponseBody === "redacted")
+          this.#scenarioRedactedBodies += 1;
       }
       const route = scanRouteTemplate(line.path, this.scratch);
       if (route === null) return this.overBudget();
@@ -258,7 +307,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         route,
         queryNames,
         { key, group },
-        bodyShape.value,
+        { shape: bodyShape.value, empty: emptyResponse(record) },
       );
     } finally {
       this.releaseTemporary();
@@ -300,8 +349,9 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     route: RouteTemplate,
     queryNames: ReadonlySet<string> | undefined,
     bucket: { readonly key: string; readonly group: GroupState | undefined },
-    bodyShape: BodyShape | null,
+    exchange: { readonly shape: BodyShape | null; readonly empty: boolean },
   ): Result<void, AnalysisError> {
+    const bodyShape = exchange.shape;
     const mime = mediaTypeEssence(line.rawMime);
     let group = bucket.group;
     // One retained record pointer, including its projected output.
@@ -369,6 +419,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         bodyShape,
         apiPath: isApiPath(route.template),
         jsonLike: false,
+        bodiless: BODILESS_WRITE_METHODS.has(line.method),
       };
       this.#groups.set(bucket.key, group);
     } else {
@@ -379,28 +430,11 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     }
     group.positions.push(position);
     group.jsonLike ||= jsonLike;
+    group.bodiless &&= exchange.empty;
     if (line.status !== null) group.statuses.add(line.status);
     if (mime !== null) group.contentTypes.add(mime);
     for (const name of queryNames ?? []) group.queryNames.add(name);
     return ok(undefined);
-  }
-
-  /** The origin with the most JSON-like records, then most records, then lowest code points. */
-  #primaryOrigin(): string | null {
-    let best: { origin: string; records: number; jsonLike: number } | null =
-      null;
-    for (const [origin, stats] of this.#origins) {
-      if (
-        best === null ||
-        stats.jsonLike > best.jsonLike ||
-        (stats.jsonLike === best.jsonLike &&
-          (stats.records > best.records ||
-            (stats.records === best.records &&
-              compare(origin, best.origin) < 0)))
-      )
-        best = { origin, ...stats };
-    }
-    return best?.origin ?? null;
   }
 
   #tools(groups: readonly ToolGroup[]): Tool[] {
@@ -464,14 +498,14 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
 
   /** Project the complete manifest; tools, records and exclusions are sorted deterministically. */
   finish(): Result<ManifestFields, AnalysisError> {
-    const primary = this.#primaryOrigin();
+    const primary = primaryOrigin(this.#origins);
     const toolGroups: GroupState[] = [];
     const exclusions = new Map<string, Exclusion & { templated: boolean }>();
     for (const group of this.#groups.values()) {
       const reason: Exclusion["reason"] | null =
         group.origin !== primary
           ? "other-origin"
-          : group.apiPath || group.jsonLike
+          : group.apiPath || group.jsonLike || answeredEmpty(group)
             ? null
             : isAsset(group)
               ? "ui-page-or-asset"
@@ -519,6 +553,16 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           ]
         : []),
       ...this.#segmentLimitLimitations(toolGroups),
+      ...(this.#scenarioWithoutBody > 0
+        ? [
+            `${String(this.#scenarioWithoutBody)} of ${String(this.#scenarioTransactions)} scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.`,
+          ]
+        : []),
+      ...(this.#scenarioRedactedBodies > 0
+        ? [
+            `${String(this.#scenarioRedactedBodies)} of ${String(this.#scenarioTransactions)} scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.`,
+          ]
+        : []),
       ...(this.#unrepresented > 0
         ? [
             `${String(this.#unrepresented)} retained records without a usable request line are not represented in the manifest.`,

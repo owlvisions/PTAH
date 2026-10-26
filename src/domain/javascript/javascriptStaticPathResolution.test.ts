@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseExpression } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { parserPluginsForPath } from "./javascriptSourceParser.js";
 import {
   calleeName,
@@ -221,7 +221,7 @@ describe("inert JavaScript path resolution", () => {
     [
       'path.join("sub", "../preload.js")',
       posix.join("sub", "../preload.js"),
-      "module-specifier",
+      "filesystem-expression",
     ],
     [
       'path.join(__dirname, "preload.js")',
@@ -253,7 +253,7 @@ describe("inert JavaScript path resolution", () => {
       "preload.js",
       "filesystem-expression",
     ],
-    ['join("sub", "preload.js")', "sub/preload.js", "module-specifier"],
+    ['join("sub", "preload.js")', "sub/preload.js", "filesystem-expression"],
     ["path.join(__dirname)", ".", "filesystem-expression"],
   ] as const)("preserves join behavior in %s", (expression, path, context) => {
     assertPathProjection(expression, path, context);
@@ -358,7 +358,7 @@ it("decodes a source-relative file URL once before composing a filesystem path",
 
 it("retains Worker URL references through their separate URL-aware producer", () => {
   const specifier = "./worker%252Fentry.js?version=1#worker";
-  const analysis = analyzeJavaScriptStaticSource(`
+  const analysis = analyzeCommonJsStaticFixture(`
     import { Worker } from "node:worker_threads";
     new Worker(new URL(${JSON.stringify(specifier)}, import.meta.url));
   `);
@@ -394,7 +394,7 @@ const parsePathExpression = (expression: string) =>
 const analyzePathConsumers = (expression: string) => {
   const property = `preload: ${expression}`;
   const genericPrefix =
-    'import path, {dirname} from "node:path"; import {fileURLToPath} from "node:url"; const options = { ';
+    'import path, {dirname,join} from "node:path"; import url, {fileURLToPath} from "node:url"; const options = { ';
   const windowPrefix = "new BrowserWindow({ webPreferences: { ";
   const windowExpression = `${windowPrefix}${property} } })`;
   const utilityExpression = `utilityProcess.fork(${expression})`;
@@ -404,7 +404,7 @@ const analyzePathConsumers = (expression: string) => {
     windowPrefix,
     windowExpression,
     utilityExpression,
-    analysis: analyzeJavaScriptStaticSource(
+    analysis: analyzeCommonJsStaticFixture(
       `${genericPrefix}${property} }; const { BrowserWindow, utilityProcess } = require("electron");\n${windowExpression};\n${utilityExpression};`,
     ),
   };
@@ -417,9 +417,14 @@ const assertPathProjection = (
 ) => {
   const node = parsePathExpression(expression);
   // This syntax matrix supplies identity explicitly; full-source cases prove it.
-  const nodePathResolve = (
+  const pathIntrinsics = (
     callee: import("@babel/types").Node,
-    fact?: "source-directory",
+    fact?:
+      | "resolve"
+      | "join"
+      | "file-url-to-path"
+      | "source-url"
+      | "source-directory",
   ) => {
     if (fact === "source-directory") {
       const name = calleeName(
@@ -429,36 +434,31 @@ const assertPathProjection = (
         name === "__dirname" || name === "dirname" || name.endsWith(".dirname")
       );
     }
+    if (fact === "source-url") return true;
     const name = calleeName(callee);
-    return name.endsWith(".resolve") && !name.includes("win32");
+    if (fact === "file-url-to-path") return name.endsWith("fileURLToPath");
+    return (
+      (name === (fact ?? "resolve") ||
+        name.endsWith(`.${fact ?? "resolve"}`)) &&
+      !name.includes("win32")
+    );
   };
-  expect(staticPath(node, nodePathResolve)).toBe(path);
-  expect(staticPathResolutionContext(node, nodePathResolve)).toBe(context);
-  const {
-    analysis,
-    property,
-    genericPrefix,
-    windowPrefix,
-    windowExpression,
-    utilityExpression,
-  } = analyzePathConsumers(expression);
+  expect(staticPath(node, pathIntrinsics)).toBe(path);
+  expect(staticPathResolutionContext(node, pathIntrinsics)).toBe(context);
+  const { analysis, windowExpression, utilityExpression } =
+    analyzePathConsumers(expression);
   expect(analysis.parse_status).toBe("complete");
   expect(analysis.parse_error_count).toBe(0);
-  expect(analysis.role_paths).toEqual(
-    (
-      [
-        [1, genericPrefix.length],
-        [2, windowPrefix.length],
-      ] as const
-    ).map(([line, column]) => ({
+  expect(analysis.role_paths).toEqual([
+    {
       role: "preload",
       path,
       resolution_context: context,
-      mechanism: "property:preload",
+      mechanism: "BrowserWindow:webPreferences.preload",
       module_key: null,
-      location: lineRange(line, column, column + property.length),
-    })),
-  );
+      location: lineRange(2, 0, windowExpression.length),
+    },
+  ]);
   expect(analysis.electron.browser_windows).toEqual([
     {
       options_status: "object-literal",

@@ -6,6 +6,9 @@ import type { BrowserContext } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
+import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
@@ -79,6 +82,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
   readonly version: string;
   readonly initialUrl: string;
   private readonly secrets: BrowserScenarioSecrets;
+  private readonly startOrigin: string;
   private readonly eventCapture: PlaywrightScenarioEvents;
   private readonly storage: PlaywrightScenarioStorage | undefined;
   private readonly serviceWorkers: PlaywrightScenarioServiceWorkers | undefined;
@@ -98,6 +102,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     options: {
       readonly mode: BrowserScenario["browser"]["mode"];
       readonly secrets: BrowserScenarioSecrets;
+      readonly startOrigin: string;
       readonly eventCapture: PlaywrightScenarioEvents;
       readonly storage: PlaywrightScenarioStorage | undefined;
       readonly serviceWorkers: PlaywrightScenarioServiceWorkers | undefined;
@@ -108,6 +113,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     this.processOwnership =
       options.mode === "launch" ? "provider-owned" : "external";
     this.secrets = options.secrets;
+    this.startOrigin = options.startOrigin;
     this.eventCapture = options.eventCapture;
     this.storage = options.storage;
     this.serviceWorkers = options.serviceWorkers;
@@ -144,9 +150,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     },
   ): Promise<PlaywrightScenarioSession> {
     throwIfScenarioCancelled(options.signal);
-    const secrets = BrowserScenarioSecrets.resolve(scenario, environment);
-    if (secrets === undefined)
-      throw new BrowserObservationError(OPERATION, "secret_unavailable");
+    const resolved = BrowserScenarioSecrets.resolve(scenario, environment);
+    if (!resolved.ok) throw resolved.error;
+    const secrets = resolved.value;
     const startedAt = performance.now();
     const openingCleanup = new Set<AnalysisCleanupLease>();
     const opening = openPlaywrightScenarioBrowser(scenario, environment, {
@@ -221,7 +227,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
             waitUntil: "load",
             timeout: 0,
           }),
-        undefined,
+        scenario.command_timeout_ms,
         options.signal,
       );
       await withPlaywrightExecutionBoundary(
@@ -324,6 +330,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       return new PlaywrightScenarioSession(opened, {
         mode: scenario.browser.mode,
         secrets,
+        startOrigin: new URL(scenario.start_url.url).origin,
         eventCapture: events,
         storage,
         serviceWorkers,
@@ -422,6 +429,10 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     return this.eventCapture.limitations();
   }
 
+  storageLimitations(): readonly string[] {
+    return this.storage?.limitations() ?? [];
+  }
+
   async perform(
     action: BrowserScenarioAction,
     signal?: AbortSignal,
@@ -432,6 +443,8 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           page: this.opened.page,
           action,
           secrets: this.secrets,
+          startOrigin: this.startOrigin,
+          signal,
         }),
       "timeout_ms" in action ? action.timeout_ms : undefined,
       signal,
@@ -459,7 +472,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       undefined,
       signal,
     );
-    return withPlaywrightExecutionBoundary(
+    const artifacts = await withPlaywrightExecutionBoundary(
       () =>
         capturePlaywrightStepArtifacts({
           context: this.opened.context,
@@ -470,6 +483,27 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       undefined,
       signal,
     );
+    try {
+      await withPlaywrightExecutionBoundary(
+        () => this.serviceWorkers?.assertBlocked() ?? Promise.resolve(),
+        undefined,
+        signal,
+      );
+    } catch (cause: unknown) {
+      const failure =
+        cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(
+              PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+              OPERATION,
+              { cause },
+            );
+      failure.retainDiagnostics({
+        collected_artifacts: jsonValueSchema.parse(artifacts),
+      });
+      throw failure;
+    }
+    return artifacts;
   }
 
   async close(stopLoading = this.signal?.aborted === true) {

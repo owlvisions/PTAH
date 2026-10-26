@@ -48,7 +48,12 @@ const duplicateReport = z
   })
   .passthrough();
 
-const run = (packageName, entrypoint, arguments_) => {
+const run = (
+  packageName,
+  entrypoint,
+  arguments_,
+  environment = process.env,
+) => {
   const executable = join(
     dirname(require.resolve(`${packageName}/package.json`)),
     entrypoint,
@@ -56,6 +61,7 @@ const run = (packageName, entrypoint, arguments_) => {
   const result = spawnSync(process.execPath, [executable, ...arguments_], {
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
+    env: environment,
   });
   if (result.stderr) process.stderr.write(result.stderr);
   if (result.error !== undefined) throw result.error;
@@ -66,14 +72,30 @@ const run = (packageName, entrypoint, arguments_) => {
 
 try {
   await mkdir(reportRoot, { recursive: true });
-  if (mode === "lint") {
-    const reportPath = join(reportRoot, "oxlint.json");
+  if (mode === "lint" || mode === "typed-lint") {
+    const typed = mode === "typed-lint";
+    const reportPath = join(
+      reportRoot,
+      typed ? "typed-oxlint.json" : "oxlint.json",
+    );
     await rm(reportPath, { force: true });
-    const result = run("oxlint", "bin/oxlint", [
-      ...extraArguments,
-      "--format",
-      "json",
-    ]);
+    const result = run(
+      "oxlint",
+      "bin/oxlint",
+      [
+        ...(typed ? ["--type-aware", "--threads", "1"] : []),
+        ...extraArguments,
+        "--format",
+        "json",
+      ],
+      typed
+        ? {
+            ...process.env,
+            GOMAXPROCS: process.env.GOMAXPROCS ?? "2",
+            GOMEMLIMIT: process.env.GOMEMLIMIT ?? "1024MiB",
+          }
+        : process.env,
+    );
     let report;
     try {
       report = lintReport.parse(JSON.parse(result.stdout));
@@ -89,7 +111,7 @@ try {
       ({ severity }) => severity === "error",
     );
     console.log(
-      `Lint: ${report.number_of_files} files, ${errors.length} errors, ${warnings.length} warnings.`,
+      `${typed ? "Typed lint" : "Lint"}: ${report.number_of_files} files, ${errors.length} errors, ${warnings.length} warnings.`,
     );
     for (const diagnostic of errors) {
       const location = diagnostic.labels[0]?.span;
@@ -106,7 +128,9 @@ try {
       )
       .slice(0, 8))
       console.log(`  ${rule}: ${count} warnings`);
-    console.log(`Full diagnostics: ${reportPath}; npm run lint:details`);
+    console.log(
+      `Full diagnostics: ${reportPath}${typed ? "" : "; npm run lint:details"}`,
+    );
     process.exitCode = result.status;
   } else if (mode === "duplicates") {
     const output = join(reportRoot, "jscpd");
@@ -143,7 +167,7 @@ try {
     console.log(`Full diagnostics: ${reportPath}; npm run jscpd:details`);
     process.exitCode = result.status;
   } else {
-    throw new Error("Expected lint or duplicates");
+    throw new Error("Expected lint, typed-lint or duplicates");
   }
 } catch (cause) {
   console.error(cause instanceof Error ? cause.message : String(cause));

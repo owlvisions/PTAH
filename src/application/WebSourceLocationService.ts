@@ -9,7 +9,6 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   selectedWebScriptArtifactsSchema,
@@ -171,7 +170,7 @@ export class WebSourceLocationService {
         },
         {
           operation: OPERATION,
-          parameters: jsonObjectSchema.parse(input),
+          parameters: input,
           result: normalized.data,
           rawResult: { source_map_text: map.text },
           confidence: "derived",

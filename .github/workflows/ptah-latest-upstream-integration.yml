@@ -5,10 +5,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'patches/PTAH-overlay-from-supplied-REA-baseline.patch'
-      - '.github/workflows/ptah-latest-upstream-integration.yml'
+      - "patches/PTAH-overlay-from-supplied-REA-baseline.patch"
+      - ".github/workflows/ptah-latest-upstream-integration.yml"
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: "17 */6 * * *"
 
 permissions:
   contents: read
@@ -59,14 +59,14 @@ jobs:
       - name: Set up supported Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '24.22.1'
+          node-version: "24.22.1"
           cache: npm
           cache-dependency-path: upstream/package-lock.json
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Run PTAH syntax checks and tests
         working-directory: upstream
@@ -86,7 +86,7 @@ jobs:
         working-directory: upstream
         run: |
           npm run deps:check
-          npm run check
+          npm run check:ci
           npm test
 
       - name: Upload integrated source snapshot

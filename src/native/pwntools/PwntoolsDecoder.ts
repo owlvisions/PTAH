@@ -17,8 +17,10 @@ import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { ProviderIdentity } from "../../application/AnalysisProvider.js";
+import type {
+  ExecutionOptions,
+  ProviderIdentity,
+} from "../../application/AnalysisProvider.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisPartialObservation,
@@ -63,6 +65,12 @@ import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 
 const HOST_REQUIREMENT =
   "The initial real-verified pwntools artifact profile supports Linux x64 only.";
+
+/** The pwntools profile runs only on Linux x64; discovery and execution share this check. */
+export const pwntoolsHostSupported = (
+  platform: NodeJS.Platform,
+  arch: string,
+): boolean => platform === "linux" && arch === "x64";
 
 /** Owned launcher seam shared by the offline pwntools artifact adapters. */
 export type PwntoolsLauncher = NonNullable<
@@ -263,7 +271,7 @@ export class PwntoolsDecoder<
         throw new AnalysisCancelledError(OPERATION, {
           cause: options.signal.reason,
         });
-      if (process.platform !== "linux" || process.arch !== "x64")
+      if (!pwntoolsHostSupported(process.platform, process.arch))
         throw new AnalysisCapabilityUnavailableError(
           this.identity.id,
           OPERATION,
