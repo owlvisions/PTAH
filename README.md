@@ -33,11 +33,22 @@ PTAH-native commands run from a source checkout without installing project depen
 ```sh
 node scripts/ptah.mjs help
 node scripts/ptah.mjs self-check --json
-node scripts/ptah.mjs fingerprint --target ./sample.bin
+node scripts/ptah.mjs fingerprint --target ./sample.bin --inspect     # format details + entropy, no execution
+node scripts/ptah.mjs strings --target ./sample.bin --min-length 8     # bounded printable strings with offsets
 node scripts/ptah.mjs init --target ./sample.bin --output ./sample.investigation.json
 node scripts/ptah.mjs add-evidence --input ./sample.investigation.json --output ./sample.investigation.json \
-  --id ev-1 --kind static-analysis --summary "Exports a login handler" --source "objdump -h" --confidence observed
+  --id ev-1 --kind static-analysis --summary "Exports a login handler" --source "objdump -h" \
+  --confidence observed --artifact ./objdump-output.txt
+node scripts/ptah.mjs add-claim --input ./sample.investigation.json --output ./sample.investigation.json \
+  --id c-1 --text "The binary exposes a login handler" --evidence-ids ev-1
+node scripts/ptah.mjs set-claim-status --input ./sample.investigation.json --output ./sample.investigation.json \
+  --id c-1 --status verified --reason "handler symbol observed in section table"
+node scripts/ptah.mjs lint --input ./sample.investigation.json
+node scripts/ptah.mjs stats --input ./sample.investigation.json
+node scripts/ptah.mjs history --input ./sample.investigation.json
 node scripts/ptah.mjs report --input ./sample.investigation.json --format markdown
+node scripts/ptah.mjs graph --input ./sample.investigation.json --format mermaid
+node scripts/ptah.mjs plan --input ./sample.investigation.json --steps 3
 node scripts/ptah.mjs export-case --input ./sample.investigation.json --output ./sample.ptah-case.json
 node scripts/ptah.mjs diff --base ./yesterday.ptah-case.json --head ./sample.ptah-case.json
 node scripts/ptah.mjs ui
@@ -47,10 +58,10 @@ Run the dependency-free test suite with `npm run test:ptah`. Full instructions, 
 
 ## What PTAH does today
 
-- **Investigation engine** (`scripts/ptah-engine.mjs`): fingerprinting with magic-signature detection, schema and provenance validation, evidence reports (JSON and Markdown), directed evidence graphs, deterministic investigation diff, target-drift verification, bounded planning, and checksummed case bundles.
-- **CLI** (`ptah`): `info`, `self-check`, `providers [--probe]`, `fingerprint`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `verify`, `export-case`, `verify-case`, `import-case`, `report [--format markdown]`, `diff`, `graph`, `plan`, `analyze`, and `ui`. Any other command is routed to the inherited REA CLI.
-- **MCP server** (`ptah-mcp`): `ptah_fingerprint`, `ptah_verify`, `ptah_report`, `ptah_diff`, `ptah_graph`, `ptah_plan`, `ptah_providers`, `ptah_static_analyze`, `ptah_case_export`, `ptah_case_verify`, and `ptah_case_import` over stdio JSON-RPC.
-- **Workbench** (`ptah ui`): upload a target, build the investigation, run bounded metadata analysis, inspect reports/graphs/plans, download a Markdown report, export a verified case, and resume one after confirming the target matches.
+- **Investigation engine** (`scripts/ptah-engine.mjs`, `scripts/ptah-analysis.mjs`): fingerprinting with 25+ magic signatures, ELF/PE/Mach-O header decoding (class, endianness, machine, type, PE32/PE32+), Shannon entropy with packing hints, bounded ASCII/UTF-16LE string extraction, schema and provenance validation with a published JSON Schema, hash-chained history, evidence artifact digests, reports (JSON and Markdown), graphs (JSON, DOT, Mermaid), deterministic diff, lint, and metrics, target-drift verification, single- and multi-step bounded planning, and checksummed case bundles.
+- **CLI** (`ptah`): `info`, `self-check`, `providers [--probe]`, `fingerprint [--inspect]`, `strings`, `init`, `add-evidence [--artifact]`, `add-claim`, `add-question`, `add-action`, `set-claim-status`, `resolve-question`, `verify`, `lint`, `stats`, `history`, `schema`, `export-case`, `verify-case`, `import-case`, `report [--format markdown]`, `diff`, `graph [--format dot|mermaid]`, `plan [--steps N]`, `analyze`, and `ui`. Any other command is routed to the inherited REA CLI.
+- **MCP server** (`ptah-mcp`): `ptah_fingerprint`, `ptah_inspect`, `ptah_strings`, `ptah_verify`, `ptah_report`, `ptah_diff`, `ptah_lint`, `ptah_stats`, `ptah_schema`, `ptah_graph`, `ptah_plan`, `ptah_providers`, `ptah_static_analyze`, `ptah_case_export`, `ptah_case_verify`, and `ptah_case_import` over stdio JSON-RPC.
+- **Workbench** (`ptah ui`): upload a target, build the investigation (every change recorded in history), run bounded metadata analysis, inspect reports/graphs/plans/lint/metrics/format-and-entropy/strings, download a Markdown report, export a verified case, and resume one after confirming the target matches.
 - **Inherited analyzers** (REA layer): native binaries via Hopper, Ghidra, or IDA; JavaScript and Electron applications; .NET assemblies; Android; WebAssembly; firmware; and web captures. These run beneath PTAH and are documented in the collapsed section below.
 
 ## Architecture

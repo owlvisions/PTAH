@@ -13,14 +13,19 @@ When installed as an npm package, the executable is `ptah-mcp`. Configure your M
 ## Tools
 
 - `ptah_fingerprint`: hash and identify a regular file without executing it.
+- `ptah_inspect`: fingerprint plus ELF/PE/Mach-O header details and entropy.
+- `ptah_strings`: bounded printable ASCII/UTF-16LE strings with offsets (`minLength`, `maxResults`, `maxBytes`).
 - `ptah_verify`: validate an investigation and optionally re-hash its target.
 - `ptah_case_export`: write a portable investigation case bundle with a SHA-256 corruption checksum.
 - `ptah_case_verify`: validate a case bundle and optionally re-hash its target.
 - `ptah_case_import`: verify a case bundle and atomically restore its investigation JSON.
 - `ptah_report`: return a provenance-aware report as JSON (default) or Markdown (`format: "markdown"`).
 - `ptah_diff`: deterministically compare two investigations or verified case bundles (`base`, `head`).
-- `ptah_graph`: return the directed evidence graph.
-- `ptah_plan`: select one deterministic next action under call/cost budgets.
+- `ptah_lint`: advisory quality findings (status exceeding evidence, orphan evidence, unreachable questions, duplicates).
+- `ptah_stats`: deterministic evidence/claim/question metrics.
+- `ptah_schema`: the investigation JSON Schema.
+- `ptah_graph`: return the directed evidence graph as JSON, DOT, or Mermaid (`format`).
+- `ptah_plan`: select one deterministic next action under call/cost budgets, or `steps` greedy actions under a shared cost budget.
 - `ptah_providers`: discover provider commands on `PATH` without executing them.
 - `ptah_static_analyze`: run allow-listed `objdump`, `llvm-objdump`, or `wasm-tools` file/object metadata inspection or WebAssembly validation (which requires a confirmed WebAssembly signature) with a bounded timeout and output cap; this does not execute the target program.
 

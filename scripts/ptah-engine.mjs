@@ -50,13 +50,44 @@ const MAGIC_SIGNATURES = [
     bytes: [0x50, 0x4b, 0x07, 0x08],
   },
   { format: "SQLite database", bytes: [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65] },
+  { format: "PDF document", bytes: [0x25, 0x50, 0x44, 0x46, 0x2d] },
+  { format: "gzip archive", bytes: [0x1f, 0x8b] },
+  { format: "xz archive", bytes: [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00] },
+  { format: "zstd archive", bytes: [0x28, 0xb5, 0x2f, 0xfd] },
+  { format: "7-Zip archive", bytes: [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c] },
+  { format: "RAR archive", bytes: [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07] },
+  { format: "bzip2 archive", bytes: [0x42, 0x5a, 0x68] },
+  {
+    format: "PNG image",
+    bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+  },
+  { format: "LLVM bitcode", bytes: [0x42, 0x43, 0xc0, 0xde] },
+  { format: "Lua bytecode", bytes: [0x1b, 0x4c, 0x75, 0x61] },
+  {
+    format: "Python compiled module (marshal, version-specific)",
+    bytes: [0x00, 0x00, 0x0d, 0x0a],
+    offset: 2,
+  },
+  {
+    format: "Unix archive (ar / static library)",
+    bytes: [0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e, 0x0a],
+  },
+  { format: "Script with shebang", bytes: [0x23, 0x21] },
 ];
 
-function detectFormat(header, filePath) {
-  const signature = MAGIC_SIGNATURES.find(({ bytes }) =>
-    bytes.every((byte, index) => header[index] === byte),
+const TAR_MAGIC_OFFSET = 257;
+const TAR_MAGIC = Buffer.from("ustar");
+
+function detectFormat(header, filePath, tarProbe = Buffer.alloc(0)) {
+  const signature = MAGIC_SIGNATURES.find(({ bytes, offset = 0 }) =>
+    bytes.every((byte, index) => header[offset + index] === byte),
   );
   if (signature) return signature.format;
+  if (
+    tarProbe.length >= TAR_MAGIC.length &&
+    tarProbe.subarray(0, 5).equals(TAR_MAGIC)
+  )
+    return "tar archive (ustar)";
   const extension = extname(filePath).toLowerCase();
   const knownExtensions = new Map([
     [".apk", "Android APK (extension only; signature not confirmed)"],
@@ -90,9 +121,15 @@ export async function fingerprintTarget(filePath) {
   for await (const chunk of createReadStream(absolutePath)) hash.update(chunk);
   const headerHandle = await open(absolutePath, "r");
   const header = Buffer.alloc(16);
+  const tarProbe = Buffer.alloc(5);
   let headerLength = 0;
+  let tarProbeLength = 0;
   try {
     headerLength = (await headerHandle.read(header, 0, 16, 0)).bytesRead;
+    if (fileStat.size >= TAR_MAGIC_OFFSET + 5)
+      tarProbeLength = (
+        await headerHandle.read(tarProbe, 0, 5, TAR_MAGIC_OFFSET)
+      ).bytesRead;
   } finally {
     await headerHandle.close();
   }
@@ -115,9 +152,25 @@ export async function fingerprintTarget(filePath) {
     detectedFormat: detectFormat(
       header.subarray(0, headerLength),
       absolutePath,
+      tarProbe.subarray(0, tarProbeLength),
     ),
     executed: false,
     modified: false,
+  };
+}
+
+/** Fingerprint plus structural format details and entropy; still never executes the target. */
+export async function inspectTarget(filePath, options = {}) {
+  const fingerprint = await fingerprintTarget(filePath);
+  const { describeFormat, fileEntropy } = await import("./ptah-analysis.mjs");
+  const [details, entropy] = await Promise.all([
+    describeFormat(filePath),
+    fileEntropy(filePath, { maxBytes: options.maxEntropyBytes }),
+  ]);
+  return {
+    ...fingerprint,
+    formatDetails: details.format === null ? null : details,
+    entropy,
   };
 }
 
@@ -335,6 +388,49 @@ function uniqueIds(items, path) {
   return seen;
 }
 
+function validateArtifact(artifact, evidenceId) {
+  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact))
+    throw new TypeError(`evidence.${evidenceId}.artifact must be an object`);
+  requireString(artifact.sha256, `evidence.${evidenceId}.artifact.sha256`);
+  if (!/^[a-f0-9]{64}$/i.test(artifact.sha256))
+    throw new TypeError(
+      `evidence.${evidenceId}.artifact.sha256 must be a 64-character hexadecimal SHA-256 digest`,
+    );
+  if (!Number.isInteger(artifact.sizeBytes) || artifact.sizeBytes < 0)
+    throw new TypeError(
+      `evidence.${evidenceId}.artifact.sizeBytes must be a non-negative integer`,
+    );
+  if (artifact.name !== undefined)
+    requireString(artifact.name, `evidence.${evidenceId}.artifact.name`);
+}
+
+function historyEntryDigest(entry) {
+  const { entrySha256: _ignored, ...rest } = entry;
+  return sha256Text(canonicalJson(rest));
+}
+
+function validateHistory(history) {
+  requireArray(history, "history");
+  let previous = null;
+  history.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      throw new TypeError(`history[${index}] must be an object`);
+    if (entry.seq !== index + 1)
+      throw new TypeError(`history[${index}].seq must be ${index + 1}`);
+    requireString(entry.action, `history[${index}].action`);
+    requireString(entry.at, `history[${index}].at`);
+    if (Number.isNaN(Date.parse(entry.at)))
+      throw new TypeError(`history[${index}].at must be an ISO timestamp`);
+    if ((entry.previousEntrySha256 ?? null) !== previous)
+      throw new TypeError(
+        `history[${index}].previousEntrySha256 breaks the hash chain`,
+      );
+    if (entry.entrySha256 !== historyEntryDigest(entry))
+      throw new TypeError(`history[${index}].entrySha256 does not match`);
+    previous = entry.entrySha256;
+  });
+}
+
 /** Validate a portable, versioned investigation document. */
 export function validateInvestigation(document) {
   if (!document || typeof document !== "object" || Array.isArray(document)) {
@@ -361,9 +457,10 @@ export function validateInvestigation(document) {
   const questions = requireArray(document.questions ?? [], "questions");
   const actions = requireArray(document.actions ?? [], "actions");
   const evidenceIds = uniqueIds(evidence, "evidence");
-  const claimIds = uniqueIds(claims, "claims");
+  uniqueIds(claims, "claims");
   uniqueIds(questions, "questions");
   uniqueIds(actions, "actions");
+  if (document.history !== undefined) validateHistory(document.history);
 
   for (const item of evidence) {
     requireString(item.summary, `evidence.${item.id}.summary`);
@@ -390,6 +487,7 @@ export function validateInvestigation(document) {
         `evidence.${item.id} belongs to a different target digest; stale or cross-target evidence is not accepted`,
       );
     }
+    if (item.artifact !== undefined) validateArtifact(item.artifact, item.id);
   }
   for (const claim of claims) {
     requireString(claim.text, `claims.${claim.id}.text`);
@@ -435,6 +533,25 @@ export function validateInvestigation(document) {
       throw new TypeError(
         `questions.${question.id}.priority must be between 0 and 100`,
       );
+    }
+    if (question.resolution !== undefined) {
+      const resolution = question.resolution;
+      if (!resolution || typeof resolution !== "object")
+        throw new TypeError(
+          `questions.${question.id}.resolution must be an object`,
+        );
+      requireString(
+        resolution.reason,
+        `questions.${question.id}.resolution.reason`,
+      );
+      for (const id of requireArray(
+        resolution.evidenceIds ?? [],
+        `questions.${question.id}.resolution.evidenceIds`,
+      ))
+        if (!evidenceIds.has(id))
+          throw new TypeError(
+            `questions.${question.id}.resolution references missing evidence: ${id}`,
+          );
     }
   }
   for (const action of actions) {
@@ -487,6 +604,521 @@ export async function verifyInvestigation(input, targetPath = undefined) {
         "target digest mismatch: investigation was created for different bytes";
   }
   return result;
+}
+
+/**
+ * Append a hash-chained history entry. Entries are append-only: each digest
+ * covers the entry and the previous digest, so reordering or editing is detectable.
+ */
+export function recordHistory(input, action, details = {}, at = undefined) {
+  const investigation = validateInvestigation(input);
+  requireString(action, "action");
+  const history = investigation.history ?? [];
+  const previous = history.at(-1)?.entrySha256 ?? null;
+  const timestamp = at ?? new Date().toISOString();
+  if (Number.isNaN(Date.parse(timestamp)))
+    throw new TypeError("history timestamp must be an ISO timestamp");
+  const entry = {
+    seq: history.length + 1,
+    action,
+    at: timestamp,
+    ...details,
+    previousEntrySha256: previous,
+  };
+  entry.entrySha256 = historyEntryDigest(entry);
+  return { ...investigation, history: [...history, entry] };
+}
+
+const CLAIM_STATUSES = ["hypothesis", "supported", "verified", "rejected"];
+
+/** Change a claim's status; `verified` requires at least one observed evidence item. */
+export function setClaimStatus(input, claimId, status, options = {}) {
+  const investigation = validateInvestigation(input);
+  if (!CLAIM_STATUSES.includes(status))
+    throw new TypeError(`status must be one of ${CLAIM_STATUSES.join(", ")}`);
+  const claim = investigation.claims.find((item) => item.id === claimId);
+  if (!claim) throw new Error(`claim not found: ${claimId}`);
+  const evidenceById = indexById(investigation.evidence);
+  if (
+    status === "verified" &&
+    !claim.evidenceIds.some(
+      (id) => evidenceById.get(id)?.confidence === "observed",
+    )
+  )
+    throw new Error(
+      `claim ${claimId} cannot be verified: no cited evidence is observed`,
+    );
+  const previous = claim.status ?? "hypothesis";
+  const updated = {
+    ...investigation,
+    claims: investigation.claims.map((item) =>
+      item.id === claimId ? { ...item, status } : item,
+    ),
+  };
+  return recordHistory(
+    updated,
+    "claim-status",
+    {
+      claimId,
+      from: previous,
+      to: status,
+      ...(options.reason ? { reason: options.reason } : {}),
+    },
+    options.at,
+  );
+}
+
+/** Resolve or reopen a question with a reason and optional supporting evidence. */
+export function resolveQuestion(input, questionId, resolution, options = {}) {
+  const investigation = validateInvestigation(input);
+  const question = investigation.questions.find((q) => q.id === questionId);
+  if (!question) throw new Error(`question not found: ${questionId}`);
+  const reopen = resolution === null;
+  if (!reopen) {
+    requireString(resolution?.reason, "resolution.reason");
+    const evidenceIds = indexById(investigation.evidence);
+    for (const id of resolution.evidenceIds ?? [])
+      if (!evidenceIds.has(id))
+        throw new Error(`resolution references missing evidence: ${id}`);
+  }
+  const updated = {
+    ...investigation,
+    questions: investigation.questions.map((q) => {
+      if (q.id !== questionId) return q;
+      if (reopen) {
+        const { resolution: _dropped, ...rest } = q;
+        return { ...rest, resolved: false };
+      }
+      return {
+        ...q,
+        resolved: true,
+        resolution: {
+          reason: resolution.reason,
+          evidenceIds: [...(resolution.evidenceIds ?? [])],
+        },
+      };
+    }),
+  };
+  return recordHistory(
+    updated,
+    reopen ? "question-reopened" : "question-resolved",
+    { questionId, ...(reopen ? {} : { reason: resolution.reason }) },
+    options.at,
+  );
+}
+
+/** Quality checks that do not change the document; findings are advisory and deterministic. */
+export function lintInvestigation(input) {
+  const investigation = validateInvestigation(input);
+  const findings = [];
+  const add = (severity, code, subject, message) =>
+    findings.push({ severity, code, subject, message });
+  const evidenceById = indexById(investigation.evidence);
+  const citedEvidence = new Set(
+    investigation.claims.flatMap((claim) => claim.evidenceIds),
+  );
+  for (const q of investigation.questions)
+    for (const id of q.resolution?.evidenceIds ?? []) citedEvidence.add(id);
+  for (const item of investigation.evidence) {
+    if (!citedEvidence.has(item.id))
+      add(
+        "info",
+        "orphan-evidence",
+        item.id,
+        "Evidence is not cited by any claim or question resolution.",
+      );
+    if (item.confidence === "observed" && item.artifact === undefined)
+      add(
+        "info",
+        "observed-without-artifact",
+        item.id,
+        "Observed evidence has no artifact digest; attach raw output for reproducibility.",
+      );
+  }
+  const summaries = new Map();
+  for (const item of investigation.evidence) {
+    const key = `${item.kind}\u0000${item.summary.trim().toLowerCase()}`;
+    if (summaries.has(key))
+      add(
+        "warning",
+        "duplicate-evidence-summary",
+        item.id,
+        `Same kind and summary as ${summaries.get(key)}.`,
+      );
+    else summaries.set(key, item.id);
+  }
+  for (const claim of investigation.claims) {
+    const cited = claim.evidenceIds.map((id) => evidenceById.get(id));
+    const status = claim.status ?? "hypothesis";
+    if (cited.every((e) => e.confidence === "inferred"))
+      add(
+        status === "hypothesis" ? "info" : "warning",
+        "inference-only-claim",
+        claim.id,
+        "Claim relies only on inferred evidence.",
+      );
+    if (
+      (status === "verified" || status === "supported") &&
+      !cited.some((e) => e.confidence === "observed")
+    )
+      add(
+        "error",
+        "status-exceeds-evidence",
+        claim.id,
+        `Claim is ${status} but cites no observed evidence.`,
+      );
+  }
+  const producible = new Set(
+    investigation.actions.flatMap((action) => action.produces ?? []),
+  );
+  const present = new Set(investigation.evidence.map((item) => item.kind));
+  for (const q of investigation.questions) {
+    if (q.resolved) {
+      if (!q.resolution)
+        add(
+          "warning",
+          "resolved-without-reason",
+          q.id,
+          "Question is resolved but records no resolution reason.",
+        );
+      continue;
+    }
+    const missing = (q.requiredEvidenceKinds ?? []).filter(
+      (kind) => !present.has(kind),
+    );
+    const unproducible = missing.filter((kind) => !producible.has(kind));
+    if (unproducible.length > 0)
+      add(
+        "warning",
+        "unreachable-question",
+        q.id,
+        `No candidate action produces: ${unproducible.join(", ")}.`,
+      );
+    if ((q.requiredEvidenceKinds ?? []).length === 0)
+      add(
+        "info",
+        "question-without-requirements",
+        q.id,
+        "Question lists no required evidence kinds; the planner cannot act on it.",
+      );
+  }
+  findings.sort(
+    (a, b) =>
+      ["error", "warning", "info"].indexOf(a.severity) -
+        ["error", "warning", "info"].indexOf(b.severity) ||
+      a.code.localeCompare(b.code) ||
+      a.subject.localeCompare(b.subject),
+  );
+  const counts = { error: 0, warning: 0, info: 0 };
+  for (const finding of findings) counts[finding.severity] += 1;
+  return {
+    schemaVersion: INVESTIGATION_SCHEMA_VERSION,
+    target: investigation.target,
+    ok: counts.error === 0,
+    counts,
+    findings,
+  };
+}
+
+/** Deterministic quality metrics; ratios are null when the denominator is zero. */
+export function investigationStats(input) {
+  const investigation = validateInvestigation(input);
+  const report = buildEvidenceReport(investigation);
+  const ratio = (numerator, denominator) =>
+    denominator === 0 ? null : Number((numerator / denominator).toFixed(4));
+  const byLabel = {
+    "evidence-backed": 0,
+    "derived-support": 0,
+    "inference-only": 0,
+    verified: 0,
+  };
+  for (const claim of report.claims) byLabel[claim.supportLabel] += 1;
+  const byConfidence = { observed: 0, derived: 0, inferred: 0 };
+  const byKind = {};
+  let withArtifact = 0;
+  for (const item of investigation.evidence) {
+    byConfidence[item.confidence] += 1;
+    byKind[item.kind] = (byKind[item.kind] ?? 0) + 1;
+    if (item.artifact) withArtifact += 1;
+  }
+  const cited = new Set(investigation.claims.flatMap((c) => c.evidenceIds));
+  const resolved = investigation.questions.filter((q) => q.resolved).length;
+  const present = new Set(investigation.evidence.map((item) => item.kind));
+  const openWithMissing = investigation.questions.filter(
+    (q) =>
+      !q.resolved &&
+      (q.requiredEvidenceKinds ?? []).some((kind) => !present.has(kind)),
+  ).length;
+  return {
+    schemaVersion: INVESTIGATION_SCHEMA_VERSION,
+    target: investigation.target,
+    evidence: {
+      total: investigation.evidence.length,
+      byConfidence,
+      byKind: Object.fromEntries(
+        Object.entries(byKind).sort(([a], [b]) => a.localeCompare(b)),
+      ),
+      citedRatio: ratio(cited.size, investigation.evidence.length),
+      artifactRatio: ratio(withArtifact, investigation.evidence.length),
+    },
+    claims: {
+      total: report.claims.length,
+      bySupportLabel: byLabel,
+      evidenceBackedRatio: ratio(
+        byLabel["evidence-backed"] + byLabel.verified,
+        report.claims.length,
+      ),
+      inferenceOnlyRatio: ratio(
+        byLabel["inference-only"],
+        report.claims.length,
+      ),
+    },
+    questions: {
+      total: investigation.questions.length,
+      resolved,
+      open: investigation.questions.length - resolved,
+      openWithMissingEvidence: openWithMissing,
+      resolvedRatio: ratio(resolved, investigation.questions.length),
+    },
+    actions: { total: investigation.actions.length },
+    historyEntries: investigation.history?.length ?? 0,
+  };
+}
+
+/** Plan up to `steps` actions greedily under a shared budget, simulating produced evidence. */
+export function planSteps(input, budget = {}) {
+  const investigation = validateInvestigation(input);
+  const steps = budget.steps ?? 3;
+  if (!Number.isInteger(steps) || steps < 1)
+    throw new TypeError("budget.steps must be a positive integer");
+  let remainingCost = budget.maxCost ?? Number.POSITIVE_INFINITY;
+  let working = investigation;
+  const plan = [];
+  let terminal = null;
+  for (let index = 0; index < steps; index += 1) {
+    if (!(remainingCost > 0)) {
+      terminal = {
+        status: "budget-exhausted",
+        reason: "The cost budget was consumed by earlier planned steps.",
+      };
+      break;
+    }
+    const next = planNextAction(working, {
+      maxCalls: 1,
+      maxCost: remainingCost,
+    });
+    if (next.status !== "planned") {
+      terminal = next;
+      break;
+    }
+    plan.push({
+      step: index + 1,
+      questionId: next.questionId,
+      actionId: next.selectedAction.id,
+      actionName: next.selectedAction.name,
+      produces: next.selectedAction.produces,
+      estimatedCost: next.selectedAction.estimatedCost,
+    });
+    remainingCost -= next.selectedAction.estimatedCost;
+    working = {
+      ...working,
+      evidence: [
+        ...working.evidence,
+        ...next.selectedAction.produces.map((kind, i) => ({
+          id: `simulated-${index + 1}-${i}`,
+          kind,
+          summary: "simulated by planner",
+          source: "planner simulation",
+          confidence: "inferred",
+          targetSha256: working.target.sha256,
+        })),
+      ],
+    };
+  }
+  return {
+    status:
+      plan.length === 0 ? (terminal?.status ?? "no-action-needed") : "planned",
+    steps: plan,
+    totalEstimatedCost: plan.reduce((sum, step) => sum + step.estimatedCost, 0),
+    stoppedBecause: terminal
+      ? { status: terminal.status, reason: terminal.reason }
+      : plan.length === steps
+        ? { status: "step-limit", reason: `Reached ${steps} planned steps.` }
+        : null,
+    note: "Planned steps assume each action yields its listed evidence kinds; nothing has been executed.",
+  };
+}
+
+function graphLabel(value) {
+  return String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+function mermaidLabel(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+/** Render the evidence graph as Graphviz DOT or Mermaid text. */
+export function renderEvidenceGraph(input, format = "dot") {
+  const graph = buildEvidenceGraph(input);
+  if (format === "dot") {
+    const lines = ["digraph ptah {", "  rankdir=LR;", "  node [shape=box];"];
+    for (const node of graph.nodes)
+      lines.push(
+        `  "${graphLabel(node.id)}" [label="${graphLabel(`${node.type}: ${node.label}`)}"${
+          node.type === "target"
+            ? ", shape=ellipse"
+            : node.type === "question" && !node.resolved
+              ? ", style=dashed"
+              : ""
+        }];`,
+      );
+    for (const edge of graph.edges)
+      lines.push(
+        `  "${graphLabel(edge.from)}" -> "${graphLabel(edge.to)}" [label="${graphLabel(edge.type)}"];`,
+      );
+    lines.push("}", "");
+    return lines.join("\n");
+  }
+  if (format === "mermaid") {
+    const ids = new Map(graph.nodes.map((node, i) => [node.id, `n${i}`]));
+    const lines = ["graph LR"];
+    for (const node of graph.nodes)
+      lines.push(
+        `  ${ids.get(node.id)}["${mermaidLabel(`${node.type}: ${node.label}`)}"]`,
+      );
+    for (const edge of graph.edges)
+      lines.push(
+        `  ${ids.get(edge.from)} -->|${edge.type}| ${ids.get(edge.to)}`,
+      );
+    lines.push("");
+    return lines.join("\n");
+  }
+  throw new TypeError("graph format must be json, dot, or mermaid");
+}
+
+/** JSON Schema (draft 2020-12) describing investigation documents accepted by this engine. */
+export function investigationJsonSchema() {
+  const sha256 = { type: "string", pattern: "^[a-fA-F0-9]{64}$" };
+  const nonEmpty = { type: "string", minLength: 1 };
+  const idList = { type: "array", items: nonEmpty };
+  const kinds = { type: "string", enum: [...EVIDENCE_KINDS] };
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $id: "https://github.com/owlvisions/PTAH/docs/schema/ptah-investigation.schema.json",
+    title: "PTAH investigation",
+    type: "object",
+    required: ["schemaVersion", "target"],
+    properties: {
+      schemaVersion: { const: INVESTIGATION_SCHEMA_VERSION },
+      target: {
+        type: "object",
+        required: ["id", "sha256"],
+        properties: { id: nonEmpty, sha256 },
+      },
+      evidence: {
+        type: "array",
+        items: {
+          type: "object",
+          required: [
+            "id",
+            "kind",
+            "summary",
+            "source",
+            "confidence",
+            "targetSha256",
+          ],
+          properties: {
+            id: nonEmpty,
+            kind: kinds,
+            summary: nonEmpty,
+            source: nonEmpty,
+            confidence: { type: "string", enum: [...CONFIDENCE] },
+            targetSha256: sha256,
+            artifact: {
+              type: "object",
+              required: ["sha256", "sizeBytes"],
+              properties: {
+                sha256,
+                sizeBytes: { type: "integer", minimum: 0 },
+                name: nonEmpty,
+              },
+            },
+          },
+        },
+      },
+      claims: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["id", "text", "evidenceIds"],
+          properties: {
+            id: nonEmpty,
+            text: nonEmpty,
+            evidenceIds: { ...idList, minItems: 1 },
+            status: { type: "string", enum: CLAIM_STATUSES },
+          },
+        },
+      },
+      questions: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["id", "text"],
+          properties: {
+            id: nonEmpty,
+            text: nonEmpty,
+            priority: { type: "number", minimum: 0, maximum: 100 },
+            requiredEvidenceKinds: { type: "array", items: kinds },
+            resolved: { type: "boolean" },
+            resolution: {
+              type: "object",
+              required: ["reason"],
+              properties: { reason: nonEmpty, evidenceIds: idList },
+            },
+          },
+        },
+      },
+      actions: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["id", "name"],
+          properties: {
+            id: nonEmpty,
+            name: nonEmpty,
+            produces: { type: "array", items: kinds },
+            cost: { type: "number", exclusiveMinimum: 0 },
+          },
+        },
+      },
+      history: {
+        type: "array",
+        description:
+          "Append-only hash chain; each entrySha256 covers the entry and previousEntrySha256.",
+        items: {
+          type: "object",
+          required: [
+            "seq",
+            "action",
+            "at",
+            "previousEntrySha256",
+            "entrySha256",
+          ],
+          properties: {
+            seq: { type: "integer", minimum: 1 },
+            action: nonEmpty,
+            at: { type: "string", format: "date-time" },
+            previousEntrySha256: { anyOf: [sha256, { type: "null" }] },
+            entrySha256: sha256,
+          },
+        },
+      },
+    },
+  };
 }
 
 /** Return claims with explicit evidence references and conservative support labels. */

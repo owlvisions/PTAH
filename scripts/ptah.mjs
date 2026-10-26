@@ -31,7 +31,17 @@ import {
   saveInvestigationCase,
   renderEvidenceReportMarkdown,
   diffInvestigations,
+  inspectTarget,
+  recordHistory,
+  setClaimStatus,
+  resolveQuestion,
+  lintInvestigation,
+  investigationStats,
+  planSteps,
+  renderEvidenceGraph,
+  investigationJsonSchema,
 } from "./ptah-engine.mjs";
+import { extractStrings } from "./ptah-analysis.mjs";
 import { isSupportedPtahNodeVersion } from "./ptah-runtime.mjs";
 
 process.stdout.on("error", (error) => {
@@ -68,13 +78,16 @@ function printHelp() {
     `       [--investigation FILE --save-investigation FILE --evidence-id ID]  Record successful analysis as evidence\n`,
   );
   process.stdout.write(
-    `  ptah fingerprint --target FILE  Hash and identify a file without executing it\n`,
+    `  ptah fingerprint --target FILE [--inspect]  Hash and identify a file without executing it; --inspect adds format details and entropy\n`,
+  );
+  process.stdout.write(
+    `  ptah strings --target FILE [--min-length 6] [--max-results 500] [--max-bytes N]  Extract printable strings with offsets\n`,
   );
   process.stdout.write(
     `  ptah init --target FILE --output FILE [--id ID]  Create an investigation tied to target bytes\n`,
   );
   process.stdout.write(
-    `  ptah add-evidence --input FILE --output FILE --id ID --kind KIND --summary TEXT --source REF [--confidence observed|derived|inferred]\n`,
+    `  ptah add-evidence --input FILE --output FILE --id ID --kind KIND --summary TEXT --source REF [--confidence observed|derived|inferred] [--artifact FILE]\n`,
   );
   process.stdout.write(
     `  ptah add-claim --input FILE --output FILE --id ID --text TEXT --evidence-ids ID[,ID] [--status hypothesis|supported|verified|rejected]\n`,
@@ -84,6 +97,24 @@ function printHelp() {
   );
   process.stdout.write(
     `  ptah add-action --input FILE --output FILE --id ID --name NAME --produces KIND[,KIND] [--cost NUMBER]\n`,
+  );
+  process.stdout.write(
+    `  ptah set-claim-status --input FILE --output FILE --id ID --status hypothesis|supported|verified|rejected [--reason TEXT]\n`,
+  );
+  process.stdout.write(
+    `  ptah resolve-question --input FILE --output FILE --id ID --reason TEXT [--evidence-ids ID[,ID]] | --reopen\n`,
+  );
+  process.stdout.write(
+    `  ptah lint --input FILE    Advisory quality findings (exit 2 when errors exist)\n`,
+  );
+  process.stdout.write(
+    `  ptah stats --input FILE   Deterministic evidence/claim/question metrics\n`,
+  );
+  process.stdout.write(
+    `  ptah history --input FILE  Show and verify the append-only hash-chained history\n`,
+  );
+  process.stdout.write(
+    `  ptah schema               Print the investigation JSON Schema\n`,
   );
   process.stdout.write(
     `  ptah verify --input FILE [--target FILE]  Validate evidence and optionally re-hash target bytes\n`,
@@ -107,10 +138,10 @@ function printHelp() {
     `  ptah diff --base FILE --head FILE  Compare two investigations or verified case bundles\n`,
   );
   process.stdout.write(
-    `  ptah graph --input FILE   Export a directed evidence graph as JSON\n`,
+    `  ptah graph --input FILE [--format json|dot|mermaid]  Export the directed evidence graph\n`,
   );
   process.stdout.write(
-    `  ptah plan --input FILE    Plan one bounded investigation step\n`,
+    `  ptah plan --input FILE [--steps N] [--max-calls N] [--max-cost N]  Plan one bounded step, or N greedy steps\n`,
   );
   process.stdout.write(`  ptah help                 Show this help\n`);
   process.stdout.write(`  ptah <rea-command>\n`);
@@ -139,11 +170,12 @@ function printInfo(json = false) {
       legacy: "scripts/rea.mjs",
     },
     nativeCapabilities: [
-      "target fingerprinting without execution",
-      "provenance-validated investigations",
-      "evidence reports (JSON and Markdown) and graphs",
-      "deterministic investigation diff",
-      "bounded planner",
+      "target fingerprinting, format details, and entropy without execution",
+      "bounded printable-string extraction",
+      "provenance-validated investigations with hash-chained history",
+      "evidence reports (JSON and Markdown), graphs (JSON, DOT, Mermaid)",
+      "deterministic investigation diff, lint, and stats",
+      "bounded single- and multi-step planner",
       "checksummed portable case bundles",
       "bounded static analyzer adapters",
       "loopback-only workbench",
@@ -247,8 +279,38 @@ function optionValue(name) {
 async function runFingerprint() {
   const target = optionValue("--target");
   if (!target) throw new Error("Missing required --target FILE argument.");
-  const result = await fingerprintTarget(target);
+  const result = args.includes("--inspect")
+    ? await inspectTarget(target)
+    : await fingerprintTarget(target);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+function integerOption(name, fallback) {
+  const raw = optionValue(name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value)) throw new Error(`${name} must be an integer.`);
+  return value;
+}
+
+async function runStrings() {
+  const target = optionValue("--target");
+  if (!target) throw new Error("Missing required --target FILE argument.");
+  const result = await extractStrings(target, {
+    minLength: integerOption("--min-length", 6),
+    maxResults: integerOption("--max-results", 500),
+    maxBytes: integerOption("--max-bytes", 16 * 1024 * 1024),
+  });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+async function artifactDigest(filePath) {
+  const fingerprint = await fingerprintTarget(filePath);
+  return {
+    sha256: fingerprint.sha256,
+    sizeBytes: fingerprint.sizeBytes,
+    name: fingerprint.id,
+  };
 }
 
 async function runInit() {
@@ -258,7 +320,12 @@ async function runInit() {
   if (!target) throw new Error("Missing required --target FILE argument.");
   if (!output) throw new Error("Missing required --output FILE argument.");
   const investigation = await createInvestigationForTarget(target, id);
-  const savedTo = await saveInvestigation(output, investigation);
+  const savedTo = await saveInvestigation(
+    output,
+    recordHistory(investigation, "init", {
+      targetId: investigation.target.id,
+    }),
+  );
   process.stdout.write(
     `${JSON.stringify({ status: "created", path: savedTo, target: investigation.target, schemaVersion: investigation.schemaVersion }, null, 2)}\n`,
   );
@@ -284,6 +351,7 @@ async function runAddEvidence() {
   input.evidence ??= [];
   if (input.evidence.some((item) => item.id === id))
     throw new Error(`Evidence id already exists: ${id}`);
+  const artifactPath = optionValue("--artifact");
   input.evidence.push({
     id,
     kind,
@@ -291,8 +359,12 @@ async function runAddEvidence() {
     source,
     confidence,
     targetSha256: input.target.sha256,
+    ...(artifactPath ? { artifact: await artifactDigest(artifactPath) } : {}),
   });
-  const savedTo = await saveInvestigation(output, input);
+  const savedTo = await saveInvestigation(
+    output,
+    recordHistory(input, "evidence-added", { evidenceId: id, kind }),
+  );
   process.stdout.write(
     `${JSON.stringify({ status: "evidence-added", evidenceId: id, targetSha256: input.target.sha256, path: savedTo }, null, 2)}\n`,
   );
@@ -319,7 +391,10 @@ async function appendInvestigationRecord(
   if (input[collection].some((item) => item.id === record.id))
     throw new Error(`${collection} id already exists: ${record.id}`);
   input[collection].push(record);
-  const savedTo = await saveInvestigation(output, input);
+  const savedTo = await saveInvestigation(
+    output,
+    recordHistory(input, `${collection}-added`, { id: record.id }),
+  );
   process.stdout.write(
     `${JSON.stringify({ status: `${collection}-added`, id: record.id, path: savedTo }, null, 2)}\n`,
   );
@@ -448,6 +523,75 @@ async function runImportCase() {
   );
 }
 
+function splitList(name) {
+  return (
+    optionValue(name)
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean) ?? []
+  );
+}
+
+async function runSetClaimStatus() {
+  const input = await readInvestigationInput();
+  const output = optionValue("--output");
+  const id = optionValue("--id");
+  const status = optionValue("--status");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  if (!id) throw new Error("Missing required --id argument.");
+  if (!status) throw new Error("Missing required --status argument.");
+  const updated = setClaimStatus(input, id, status, {
+    reason: optionValue("--reason"),
+  });
+  const savedTo = await saveInvestigation(output, updated);
+  process.stdout.write(
+    `${JSON.stringify({ status: "claim-status-set", claimId: id, claimStatus: status, path: savedTo }, null, 2)}\n`,
+  );
+}
+
+async function runResolveQuestion() {
+  const input = await readInvestigationInput();
+  const output = optionValue("--output");
+  const id = optionValue("--id");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  if (!id) throw new Error("Missing required --id argument.");
+  const reopen = args.includes("--reopen");
+  const reason = optionValue("--reason");
+  if (!reopen && !reason)
+    throw new Error("Missing required --reason argument (or pass --reopen).");
+  const updated = resolveQuestion(
+    input,
+    id,
+    reopen ? null : { reason, evidenceIds: splitList("--evidence-ids") },
+  );
+  const savedTo = await saveInvestigation(output, updated);
+  process.stdout.write(
+    `${JSON.stringify({ status: reopen ? "question-reopened" : "question-resolved", questionId: id, path: savedTo }, null, 2)}\n`,
+  );
+}
+
+async function runLint() {
+  const result = lintInvestigation(await readInvestigationInput());
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (!result.ok) process.exitCode = 2;
+}
+
+async function runStats() {
+  process.stdout.write(
+    `${JSON.stringify(investigationStats(await readInvestigationInput()), null, 2)}\n`,
+  );
+}
+
+async function runHistory() {
+  const investigation = await readInvestigationInput();
+  const { validateInvestigation } = await import("./ptah-engine.mjs");
+  const validated = validateInvestigation(investigation);
+  const history = validated.history ?? [];
+  process.stdout.write(
+    `${JSON.stringify({ target: validated.target, entries: history.length, chainValid: true, headSha256: history.at(-1)?.entrySha256 ?? null, history }, null, 2)}\n`,
+  );
+}
+
 async function runDiff() {
   const basePath = optionValue("--base");
   const headPath = optionValue("--head");
@@ -475,6 +619,11 @@ async function runEngineCommand(command) {
         throw new Error("--format must be json or markdown");
       output = buildEvidenceReport(input);
     } else if (command === "graph") {
+      const format = optionValue("--format") ?? "json";
+      if (format !== "json") {
+        process.stdout.write(renderEvidenceGraph(input, format));
+        return;
+      }
       output = buildEvidenceGraph(input);
     } else {
       const callsIndex = args.indexOf("--max-calls");
@@ -482,7 +631,11 @@ async function runEngineCommand(command) {
       const budget = {};
       if (callsIndex >= 0) budget.maxCalls = Number(args[callsIndex + 1]);
       if (costIndex >= 0) budget.maxCost = Number(args[costIndex + 1]);
-      output = planNextAction(input, budget);
+      const steps = optionValue("--steps");
+      output =
+        steps === undefined
+          ? planNextAction(input, budget)
+          : planSteps(input, { ...budget, steps: Number(steps) });
     }
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
     if (command === "plan" && output.status === "blocked") process.exitCode = 2;
@@ -671,6 +824,36 @@ if (
   } catch (error) {
     process.stderr.write(
       `PTAH diff failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  }
+} else if (args[0] === "schema") {
+  process.stdout.write(
+    `${JSON.stringify(investigationJsonSchema(), null, 2)}\n`,
+  );
+} else if (
+  [
+    "strings",
+    "set-claim-status",
+    "resolve-question",
+    "lint",
+    "stats",
+    "history",
+  ].includes(args[0])
+) {
+  try {
+    const handlers = {
+      strings: runStrings,
+      "set-claim-status": runSetClaimStatus,
+      "resolve-question": runResolveQuestion,
+      lint: runLint,
+      stats: runStats,
+      history: runHistory,
+    };
+    await handlers[args[0]]();
+  } catch (error) {
+    process.stderr.write(
+      `PTAH ${args[0]} failed: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 1;
   }

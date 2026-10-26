@@ -14,7 +14,12 @@ import {
   createInvestigationCase,
   importInvestigationCase,
   renderEvidenceReportMarkdown,
+  recordHistory,
+  lintInvestigation,
+  investigationStats,
+  inspectTarget,
 } from "./ptah-engine.mjs";
+import { extractStrings } from "./ptah-analysis.mjs";
 
 const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -80,8 +85,10 @@ export async function createPtahUiServer(options = {}) {
   let targetPath;
   let investigationPath = join(workspace, "investigation.json");
   let investigation;
-  const persist = async (candidate) => {
-    const validated = validateInvestigation(candidate);
+  const persist = async (candidate, action = undefined, details = {}) => {
+    const validated = validateInvestigation(
+      action ? recordHistory(candidate, action, details) : candidate,
+    );
     await saveInvestigation(investigationPath, validated);
     investigation = validated;
     return investigation;
@@ -135,7 +142,7 @@ export async function createPtahUiServer(options = {}) {
         );
         await writeFile(targetPath, bytes, { flag: "wx", mode: 0o600 });
         const candidate = await createInvestigationForTarget(targetPath, name);
-        await persist(candidate);
+        await persist(candidate, "init", { targetId: name });
         return sendJson(response, 201, {
           initialized: true,
           target: {
@@ -159,7 +166,9 @@ export async function createPtahUiServer(options = {}) {
               error: "upload the matching target before importing a case",
             });
           const imported = await importInvestigationCase(body, targetPath);
-          await persist(imported);
+          await persist(imported, "case-imported", {
+            evidenceCount: imported.evidence.length,
+          });
           return sendJson(response, 200, {
             status: "imported",
             investigation,
@@ -187,7 +196,7 @@ export async function createPtahUiServer(options = {}) {
               },
             ],
           };
-          await persist(candidate);
+          await persist(candidate, "evidence-added", { evidenceId: id });
           return sendJson(response, 201, { investigation });
         }
         if (request.url === "/api/claim") {
@@ -205,7 +214,7 @@ export async function createPtahUiServer(options = {}) {
               },
             ],
           };
-          await persist(candidate);
+          await persist(candidate, "claims-added", { id: body.id });
           return sendJson(response, 201, { investigation });
         }
         if (request.url === "/api/question") {
@@ -222,7 +231,7 @@ export async function createPtahUiServer(options = {}) {
               },
             ],
           };
-          await persist(candidate);
+          await persist(candidate, "questions-added", { id: body.id });
           return sendJson(response, 201, { investigation });
         }
         if (request.url === "/api/action") {
@@ -238,7 +247,7 @@ export async function createPtahUiServer(options = {}) {
               },
             ],
           };
-          await persist(candidate);
+          await persist(candidate, "actions-added", { id: body.id });
           return sendJson(response, 201, { investigation });
         }
         if (request.url === "/api/analyze") {
@@ -253,6 +262,8 @@ export async function createPtahUiServer(options = {}) {
               `ev-${body.provider}-${analysis.outputSha256.slice(0, 10)}`;
             await persist(
               attachAnalysisEvidence(investigation, analysis, evidenceId),
+              "evidence-added",
+              { evidenceId, kind: "static-analysis", provider: body.provider },
             );
             analysis.evidence = { id: evidenceId, recorded: true };
           }
@@ -268,6 +279,45 @@ export async function createPtahUiServer(options = {}) {
         if (!investigation)
           return sendJson(response, 409, { error: "upload a target first" });
         return sendJson(response, 200, buildEvidenceReport(investigation));
+      }
+      if (request.method === "GET" && request.url === "/api/lint") {
+        if (!investigation)
+          return sendJson(response, 409, { error: "upload a target first" });
+        return sendJson(response, 200, lintInvestigation(investigation));
+      }
+      if (request.method === "GET" && request.url === "/api/stats") {
+        if (!investigation)
+          return sendJson(response, 409, { error: "upload a target first" });
+        return sendJson(response, 200, investigationStats(investigation));
+      }
+      if (request.method === "GET" && request.url === "/api/inspect") {
+        if (!targetPath)
+          return sendJson(response, 409, { error: "upload a target first" });
+        return sendJson(response, 200, await inspectTarget(targetPath));
+      }
+      if (request.method === "GET" && request.url?.startsWith("/api/strings")) {
+        if (!targetPath)
+          return sendJson(response, 409, { error: "upload a target first" });
+        const params = new URL(request.url, "http://127.0.0.1").searchParams;
+        const bounded = (name, fallback, max) => {
+          const raw = params.get(name);
+          const value = raw === null ? fallback : Number(raw);
+          if (!Number.isInteger(value) || value < 1 || value > max)
+            throw Object.assign(
+              new Error(`${name} must be an integer between 1 and ${max}`),
+              { statusCode: 400 },
+            );
+          return value;
+        };
+        return sendJson(
+          response,
+          200,
+          await extractStrings(targetPath, {
+            minLength: Math.max(2, bounded("minLength", 6, 256)),
+            maxResults: bounded("maxResults", 200, 2000),
+            maxBytes: bounded("maxBytes", 16 * 1024 * 1024, 128 * 1024 * 1024),
+          }),
+        );
       }
       if (request.method === "GET" && request.url === "/api/report.md") {
         if (!investigation)
