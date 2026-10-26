@@ -8,6 +8,7 @@ import { networkProviders } from "./adapters/network.mjs";
 import { radare2Providers } from "./adapters/radare2.mjs";
 import { ghidraProviders } from "./adapters/ghidra.mjs";
 import { licensedEngineProviders } from "./adapters/licensed-engines.mjs";
+import { inspectorProviders } from "./adapters/inspectors/index.mjs";
 import { CapabilityRegistry } from "./registry.mjs";
 
 /** Every adapter PTAH ships, grouped so stages and docs can enumerate them. */
@@ -22,6 +23,7 @@ export function defaultProviders() {
     ...radare2Providers(),
     ...ghidraProviders(),
     ...licensedEngineProviders(),
+    ...inspectorProviders(),
   ];
 }
 

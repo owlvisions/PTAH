@@ -87,3 +87,22 @@ export {
   KunaProvider,
   licensedEngineProviders,
 } from "./adapters/licensed-engines.mjs";
+export { inspectorProviders } from "./adapters/inspectors/index.mjs";
+export {
+  MachoInspector,
+  machoProviders,
+} from "./adapters/inspectors/macho.mjs";
+export {
+  parseGguf,
+  parseSafetensors,
+  parseSqlite,
+  parseGodotPck,
+  parseBeam,
+  containerProviders,
+} from "./adapters/inspectors/containers.mjs";
+export {
+  parseEvm,
+  parseIl2cpp,
+  detectToolchains,
+  bytecodeProviders,
+} from "./adapters/inspectors/bytecode.mjs";

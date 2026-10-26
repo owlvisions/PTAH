@@ -25,6 +25,7 @@ const MAGIC = [
   [[0xa1, 0xb2, 0xc3, 0xd4], "pcap"],
   [[0x0a, 0x0d, 0x0d, 0x0a], "pcapng"],
   [[0x47, 0x47, 0x55, 0x46], "gguf"],
+  [[0xaf, 0x1b, 0xb1, 0xfa], "il2cpp-metadata"],
   [[0x47, 0x44, 0x50, 0x43], "godot-pck"],
   [[0x46, 0x4f, 0x52, 0x31], "beam"],
   [
@@ -110,14 +111,18 @@ function peFlavor(header) {
   return managed ? "dotnet" : "pe";
 }
 
-function detect(header, names) {
+function detect(header, names, name) {
   if (header[0] === 0x4d && header[1] === 0x5a) return peFlavor(header);
   if (header.toString("latin1", 0, 2) === "#!") return "script";
   if (header.toString("latin1", 0, 8) === "!<arch>\n") return "ar-archive";
   const match = MAGIC.find(([bytes]) =>
     bytes.every((byte, index) => header[index] === byte),
   );
-  if (!match) return "unknown";
+  if (!match) {
+    // Formats without a reliable magic are recognized by extension.
+    if (name?.toLowerCase().endsWith(".safetensors")) return "safetensors";
+    return "unknown";
+  }
   if (match[1] === "zip") return zipFlavor(names);
   if (match[1] === "macho-fat-or-java-class")
     // Java class files carry a major version >= 45 here; fat Mach-O an arch count.
@@ -150,7 +155,7 @@ export async function identifyTarget(filePath) {
       name: basename(path),
       sizeBytes: info.size,
       sha256: await digest(path),
-      format: detect(header, names),
+      format: detect(header, names, basename(path)),
     });
   } finally {
     await handle.close();
