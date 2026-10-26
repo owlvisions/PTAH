@@ -232,6 +232,343 @@ void test("history, lint, stats, claim status, question resolution, schema, stri
   }
 });
 
+void test("freeze, merge, link, migrate, signing, encryption, gzip, and --quiet work from the CLI", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ptah-cli-case-tools-"));
+  try {
+    const target = join(dir, "t.bin");
+    await writeFile(target, "case tools fixture");
+    const a = join(dir, "a.json");
+    const b = join(dir, "b.json");
+    const merged = join(dir, "m.json");
+    const ok = (result) => assert.equal(result.status, 0, result.stderr);
+    const quiet = run(["init", "--target", target, "--output", a, "--quiet"]);
+    ok(quiet);
+    assert.equal(quiet.stdout, "");
+    ok(
+      run([
+        "add-evidence",
+        "--input",
+        a,
+        "--output",
+        a,
+        "--id",
+        "e1",
+        "--kind",
+        "symbol",
+        "--summary",
+        "s",
+        "--source",
+        "nm",
+        "--tags",
+        "sym,exports",
+      ]),
+    );
+    assert.deepEqual(JSON.parse(await readFile(a, "utf8")).evidence[0].tags, [
+      "sym",
+      "exports",
+    ]);
+    ok(run(["init", "--target", target, "--output", b, "--quiet"]));
+    ok(
+      run([
+        "add-evidence",
+        "--input",
+        b,
+        "--output",
+        b,
+        "--id",
+        "e2",
+        "--kind",
+        "documentation",
+        "--summary",
+        "d",
+        "--source",
+        "man",
+        "--quiet",
+      ]),
+    );
+    ok(
+      run([
+        "add-evidence",
+        "--input",
+        b,
+        "--output",
+        b,
+        "--id",
+        "e1",
+        "--kind",
+        "symbol",
+        "--summary",
+        "different",
+        "--source",
+        "nm",
+        "--quiet",
+      ]),
+    );
+    const conflict = run([
+      "merge",
+      "--base",
+      a,
+      "--other",
+      b,
+      "--output",
+      merged,
+    ]);
+    assert.equal(conflict.status, 1);
+    assert.match(conflict.stderr, /merge conflicts on evidence\/e1/);
+    const resolved = run([
+      "merge",
+      "--base",
+      a,
+      "--other",
+      b,
+      "--output",
+      merged,
+      "--prefer",
+      "base",
+    ]);
+    ok(resolved);
+    assert.deepEqual(JSON.parse(resolved.stdout).added, {
+      evidence: 1,
+      claims: 0,
+      questions: 0,
+      actions: 0,
+    });
+
+    ok(run(["freeze", "--input", merged, "--output", merged, "--quiet"]));
+    const blocked = run([
+      "add-claim",
+      "--input",
+      merged,
+      "--output",
+      merged,
+      "--id",
+      "c",
+      "--text",
+      "t",
+      "--evidence-ids",
+      "e1",
+    ]);
+    assert.equal(blocked.status, 1);
+    assert.match(blocked.stderr, /frozen content digest mismatch/);
+    ok(run(["unfreeze", "--input", merged, "--output", merged, "--quiet"]));
+    ok(
+      run([
+        "add-claim",
+        "--input",
+        merged,
+        "--output",
+        merged,
+        "--id",
+        "c",
+        "--text",
+        "t",
+        "--evidence-ids",
+        "e1",
+        "--tags",
+        "format",
+        "--quiet",
+      ]),
+    );
+
+    const gz = join(dir, "case.json.gz");
+    ok(
+      run([
+        "export-case",
+        "--input",
+        merged,
+        "--output",
+        gz,
+        "--gzip",
+        "--quiet",
+      ]),
+    );
+    assert.deepEqual([...(await readFile(gz)).subarray(0, 2)], [0x1f, 0x8b]);
+    const plainVerify = run(["verify-case", "--input", gz, "--target", target]);
+    ok(plainVerify);
+    const plain = JSON.parse(plainVerify.stdout);
+    assert.equal(plain.compressed, true);
+    assert.equal(plain.signature.present, false);
+    const requireSig = run([
+      "verify-case",
+      "--input",
+      gz,
+      "--require-signature",
+    ]);
+    assert.equal(requireSig.status, 2);
+
+    const keys = join(dir, "keys");
+    const keygen = run(["keygen", "--output-dir", keys]);
+    ok(keygen);
+    const keyInfo = JSON.parse(keygen.stdout);
+    const { stat } = await import("node:fs/promises");
+    assert.equal(
+      ((await stat(keyInfo.privateKeyPath)).mode & 0o777).toString(8),
+      "600",
+    );
+    const signed = join(dir, "signed.json");
+    ok(
+      run([
+        "sign-case",
+        "--input",
+        gz,
+        "--key",
+        keyInfo.privateKeyPath,
+        "--output",
+        signed,
+        "--quiet",
+      ]),
+    );
+    const verified = run([
+      "verify-case",
+      "--input",
+      signed,
+      "--public-key",
+      keyInfo.publicKeyPath,
+      "--require-signature",
+    ]);
+    ok(verified);
+    assert.equal(JSON.parse(verified.stdout).signature.verified, true);
+    const otherKeys = run(["keygen", "--output-dir", join(dir, "other-keys")]);
+    ok(otherKeys);
+    const wrongKey = run([
+      "verify-case",
+      "--input",
+      signed,
+      "--public-key",
+      JSON.parse(otherKeys.stdout).publicKeyPath,
+    ]);
+    assert.equal(wrongKey.status, 2);
+    assert.match(JSON.parse(wrongKey.stdout).error, /different key/);
+    const importWrongKey = run([
+      "import-case",
+      "--input",
+      signed,
+      "--output",
+      join(dir, "never.json"),
+      "--public-key",
+      JSON.parse(otherKeys.stdout).publicKeyPath,
+    ]);
+    assert.equal(importWrongKey.status, 1);
+    await assert.rejects(readFile(join(dir, "never.json")), { code: "ENOENT" });
+
+    const encrypted = join(dir, "enc.json");
+    const env = {
+      ...process.env,
+      PTAH_CASE_PASSPHRASE: "a long enough passphrase",
+    };
+    const encrypt = spawnSync(
+      process.execPath,
+      [entrypoint, "encrypt-case", "--input", signed, "--output", encrypted],
+      { cwd: root, encoding: "utf8", env },
+    );
+    assert.equal(encrypt.status, 0, encrypt.stderr);
+    assert.ok(
+      !(await readFile(encrypted, "utf8")).includes("different"),
+      "ciphertext must not leak content",
+    );
+    const noPass = run(["verify-case", "--input", encrypted]);
+    assert.equal(noPass.status, 1);
+    assert.match(noPass.stderr, /PTAH_CASE_PASSPHRASE/);
+    const noArgPass = run([
+      "encrypt-case",
+      "--input",
+      signed,
+      "--output",
+      join(dir, "x.json"),
+    ]);
+    assert.equal(noArgPass.status, 1);
+    assert.match(noArgPass.stderr, /never pass it as an argument/);
+    const withPass = spawnSync(
+      process.execPath,
+      [
+        entrypoint,
+        "verify-case",
+        "--input",
+        encrypted,
+        "--public-key",
+        keyInfo.publicKeyPath,
+      ],
+      { cwd: root, encoding: "utf8", env },
+    );
+    assert.equal(withPass.status, 0, withPass.stderr);
+    const decoded = JSON.parse(withPass.stdout);
+    assert.equal(decoded.encrypted, true);
+    assert.equal(decoded.signature.verified, true);
+    const decrypted = spawnSync(
+      process.execPath,
+      [
+        entrypoint,
+        "decrypt-case",
+        "--input",
+        encrypted,
+        "--output",
+        join(dir, "dec.json"),
+      ],
+      { cwd: root, encoding: "utf8", env },
+    );
+    assert.equal(decrypted.status, 0, decrypted.stderr);
+    assert.equal(
+      JSON.parse(await readFile(join(dir, "dec.json"), "utf8")).signature
+        .algorithm,
+      "ed25519",
+    );
+
+    const linked = run([
+      "link-case",
+      "--input",
+      a,
+      "--output",
+      a,
+      "--case",
+      signed,
+      "--note",
+      "merged pass",
+    ]);
+    ok(linked);
+    assert.equal(JSON.parse(linked.stdout).related.sameTarget, true);
+    assert.equal(
+      run(["link-case", "--input", a, "--output", a, "--case", signed]).status,
+      1,
+    );
+
+    const legacy = join(dir, "legacy.json");
+    await writeFile(
+      legacy,
+      JSON.stringify({
+        target: { id: "old", sha256: "A".repeat(64) },
+        evidence: [
+          {
+            id: "e",
+            kind: "other",
+            summary: "s",
+            source: "x",
+            sha256: "A".repeat(64),
+          },
+        ],
+      }),
+    );
+    const migrate = run([
+      "migrate",
+      "--input",
+      legacy,
+      "--output",
+      join(dir, "new.json"),
+    ]);
+    ok(migrate);
+    assert.equal(JSON.parse(migrate.stdout).fromVersion, 0);
+    assert.equal(
+      JSON.parse(await readFile(join(dir, "new.json"), "utf8")).evidence[0]
+        .targetSha256,
+      "a".repeat(64),
+    );
+    const list = run(["migrate", "--input", legacy, "--list"]);
+    ok(list);
+    assert.equal(JSON.parse(list.stdout).migrations.length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 void test("report --format markdown and diff work end to end from the CLI", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ptah-report-diff-"));
   try {

@@ -69,6 +69,16 @@
             "type": "string",
             "pattern": "^[a-fA-F0-9]{64}$"
           },
+          "tags": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
           "artifact": {
             "type": "object",
             "required": ["sha256", "sizeBytes"],
@@ -115,6 +125,16 @@
           "status": {
             "type": "string",
             "enum": ["hypothesis", "supported", "verified", "rejected"]
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
           }
         }
       }
@@ -212,6 +232,44 @@
           "cost": {
             "type": "number",
             "exclusiveMinimum": 0
+          }
+        }
+      }
+    },
+    "frozen": {
+      "type": "object",
+      "required": ["at", "contentSha256"],
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "contentSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        }
+      }
+    },
+    "relatedCases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["payloadSha256", "targetSha256", "sameTarget"],
+        "properties": {
+          "payloadSha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          },
+          "targetSha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          },
+          "sameTarget": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

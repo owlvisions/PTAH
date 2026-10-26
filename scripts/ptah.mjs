@@ -40,8 +40,23 @@ import {
   planSteps,
   renderEvidenceGraph,
   investigationJsonSchema,
+  freezeInvestigation,
+  unfreezeInvestigation,
+  linkRelatedCase,
+  mergeInvestigations,
+  migrateInvestigation,
+  listMigrations,
 } from "./ptah-engine.mjs";
 import { extractStrings } from "./ptah-analysis.mjs";
+import {
+  generateCaseKeyPair,
+  signCase,
+  verifyCaseSignature,
+  encryptCase,
+  compressCase,
+  parseCaseBytes,
+} from "./ptah-case-tools.mjs";
+import { mkdir, writeFile as writeFileAtomicUnsafe } from "node:fs/promises";
 import { isSupportedPtahNodeVersion } from "./ptah-runtime.mjs";
 
 process.stdout.on("error", (error) => {
@@ -51,7 +66,16 @@ process.stdout.on("error", (error) => {
 });
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const QUIET = rawArgs.includes("--quiet");
+const args = rawArgs.filter((arg) => arg !== "--quiet");
+/** Print a command result unless --quiet was supplied; errors always reach stderr. */
+function emit(value) {
+  if (QUIET) return;
+  process.stdout.write(
+    typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`,
+  );
+}
 const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
 );
@@ -120,13 +144,13 @@ function printHelp() {
     `  ptah verify --input FILE [--target FILE]  Validate evidence and optionally re-hash target bytes\n`,
   );
   process.stdout.write(
-    `  ptah export-case --input FILE --output FILE  Create a portable checksummed case bundle\n`,
+    `  ptah export-case --input FILE --output FILE [--gzip]  Create a portable checksummed case bundle\n`,
   );
   process.stdout.write(
-    `  ptah verify-case --input FILE [--target FILE]  Verify a case bundle and optionally its target\n`,
+    `  ptah verify-case --input FILE [--target FILE] [--public-key FILE] [--require-signature]  Verify a case bundle (gzip/encrypted accepted)\n`,
   );
   process.stdout.write(
-    `  ptah import-case --input FILE --output FILE [--target FILE]  Verify and restore a case bundle\n`,
+    `  ptah import-case --input FILE --output FILE [--target FILE] [--public-key FILE]  Verify and restore a case bundle\n`,
   );
   process.stdout.write(
     `  ptah ui [--port 4177]  Start the loopback-only local GUI\n`,
@@ -144,6 +168,9 @@ function printHelp() {
     `  ptah plan --input FILE [--steps N] [--max-calls N] [--max-cost N]  Plan one bounded step, or N greedy steps\n`,
   );
   process.stdout.write(`  ptah help                 Show this help\n`);
+  process.stdout.write(
+    `  --quiet                   Suppress stdout for any command; errors still go to stderr\n`,
+  );
   process.stdout.write(`  ptah <rea-command>\n`);
   process.stdout.write(
     `                            Run an inherited REA analyzer command through PTAH's compatibility layer\n\n`,
@@ -246,7 +273,7 @@ async function selfCheck(json = false) {
       "Legacy dispatcher is missing; compatibility commands cannot run.",
     );
   if (json) {
-    process.stdout.write(`${JSON.stringify({ ...result, issues }, null, 2)}\n`);
+    emit({ ...result, issues });
   } else {
     process.stdout.write(`PTAH self-check\n`);
     process.stdout.write(
@@ -282,7 +309,7 @@ async function runFingerprint() {
   const result = args.includes("--inspect")
     ? await inspectTarget(target)
     : await fingerprintTarget(target);
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
 }
 
 function integerOption(name, fallback) {
@@ -301,7 +328,7 @@ async function runStrings() {
     maxResults: integerOption("--max-results", 500),
     maxBytes: integerOption("--max-bytes", 16 * 1024 * 1024),
   });
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
 }
 
 async function artifactDigest(filePath) {
@@ -326,9 +353,12 @@ async function runInit() {
       targetId: investigation.target.id,
     }),
   );
-  process.stdout.write(
-    `${JSON.stringify({ status: "created", path: savedTo, target: investigation.target, schemaVersion: investigation.schemaVersion }, null, 2)}\n`,
-  );
+  emit({
+    status: "created",
+    path: savedTo,
+    target: investigation.target,
+    schemaVersion: investigation.schemaVersion,
+  });
 }
 
 async function runAddEvidence() {
@@ -352,6 +382,7 @@ async function runAddEvidence() {
   if (input.evidence.some((item) => item.id === id))
     throw new Error(`Evidence id already exists: ${id}`);
   const artifactPath = optionValue("--artifact");
+  const tags = splitList("--tags");
   input.evidence.push({
     id,
     kind,
@@ -360,14 +391,18 @@ async function runAddEvidence() {
     confidence,
     targetSha256: input.target.sha256,
     ...(artifactPath ? { artifact: await artifactDigest(artifactPath) } : {}),
+    ...(tags.length ? { tags } : {}),
   });
   const savedTo = await saveInvestigation(
     output,
     recordHistory(input, "evidence-added", { evidenceId: id, kind }),
   );
-  process.stdout.write(
-    `${JSON.stringify({ status: "evidence-added", evidenceId: id, targetSha256: input.target.sha256, path: savedTo }, null, 2)}\n`,
-  );
+  emit({
+    status: "evidence-added",
+    evidenceId: id,
+    targetSha256: input.target.sha256,
+    path: savedTo,
+  });
 }
 
 async function appendInvestigationRecord(
@@ -413,6 +448,7 @@ async function runAddClaim() {
       text: optionValue("--text"),
       evidenceIds,
       ...(optionValue("--status") ? { status: optionValue("--status") } : {}),
+      ...(splitList("--tags").length ? { tags: splitList("--tags") } : {}),
     },
     ["id", "text", "evidenceIds"],
   );
@@ -470,7 +506,7 @@ async function runVerify() {
   const input = await readInvestigationInput();
   const targetPath = optionValue("--target");
   const result = await verifyInvestigation(input, targetPath);
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
   if (!result.valid) process.exitCode = 2;
 }
 
@@ -478,21 +514,71 @@ async function readJsonFile(filePath) {
   return JSON.parse(await readFile(resolve(process.cwd(), filePath), "utf8"));
 }
 
+async function readCaseFile(filePath) {
+  const bytes = await readFile(resolve(process.cwd(), filePath));
+  return parseCaseBytes(bytes, {
+    passphrase: process.env.PTAH_CASE_PASSPHRASE,
+  });
+}
+
+async function writeCaseBytes(filePath, bytes) {
+  const absolutePath = resolve(process.cwd(), filePath);
+  await mkdir(dirname(absolutePath), { recursive: true });
+  const temporaryPath = `${absolutePath}.tmp-${process.pid}`;
+  await writeFileAtomicUnsafe(temporaryPath, bytes, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  const { rename } = await import("node:fs/promises");
+  await rename(temporaryPath, absolutePath);
+  return absolutePath;
+}
+
 async function runExportCase() {
   const output = optionValue("--output");
   if (!output) throw new Error("Missing required --output FILE argument.");
   const bundle = createInvestigationCase(await readInvestigationInput());
-  const savedTo = await saveInvestigationCase(output, bundle.investigation);
-  process.stdout.write(
-    `${JSON.stringify({ status: "exported", path: savedTo, ...bundle.integrity }, null, 2)}\n`,
-  );
+  const gzip = args.includes("--gzip");
+  const savedTo = gzip
+    ? await writeCaseBytes(output, compressCase(bundle))
+    : await saveInvestigationCase(output, bundle.investigation);
+  emit({
+    status: "exported",
+    path: savedTo,
+    compressed: gzip,
+    ...bundle.integrity,
+  });
 }
 
 async function runVerifyCase() {
   const inputPath = optionValue("--input");
   if (!inputPath) throw new Error("Missing required --input FILE argument.");
-  const bundle = await readJsonFile(inputPath);
+  const {
+    document: bundle,
+    compressed,
+    encrypted,
+  } = await readCaseFile(inputPath);
   const result = verifyInvestigationCase(bundle);
+  result.compressed = compressed;
+  result.encrypted = encrypted;
+  const publicKeyPath = optionValue("--public-key");
+  result.signature = verifyCaseSignature(
+    bundle,
+    publicKeyPath
+      ? await readFile(resolve(process.cwd(), publicKeyPath), "utf8")
+      : undefined,
+  );
+  if (result.signature.verified === false) {
+    result.valid = false;
+    result.error = `signature check failed: ${result.signature.reason}`;
+  }
+  if (
+    args.includes("--require-signature") &&
+    result.signature.verified !== true
+  ) {
+    result.valid = false;
+    result.error ??= "a verified signature is required";
+  }
   const targetPath = optionValue("--target");
   if (result.valid && targetPath !== undefined) {
     const target = await verifyInvestigation(bundle.investigation, targetPath);
@@ -503,7 +589,7 @@ async function runVerifyCase() {
       result.error = target.error;
     }
   }
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
   if (!result.valid) process.exitCode = 2;
 }
 
@@ -512,15 +598,198 @@ async function runImportCase() {
   const output = optionValue("--output");
   if (!inputPath) throw new Error("Missing required --input FILE argument.");
   if (!output) throw new Error("Missing required --output FILE argument.");
-  const bundle = await readJsonFile(inputPath);
+  const { document: bundle } = await readCaseFile(inputPath);
+  const publicKeyPath = optionValue("--public-key");
+  if (publicKeyPath || args.includes("--require-signature")) {
+    const signature = verifyCaseSignature(
+      bundle,
+      publicKeyPath
+        ? await readFile(resolve(process.cwd(), publicKeyPath), "utf8")
+        : undefined,
+    );
+    if (signature.verified !== true)
+      throw new Error(`signature check failed: ${signature.reason}`);
+  }
   const investigation = await importInvestigationCase(
     bundle,
     optionValue("--target"),
   );
   const savedTo = await saveInvestigation(output, investigation);
-  process.stdout.write(
-    `${JSON.stringify({ status: "imported", path: savedTo, target: investigation.target, evidenceCount: investigation.evidence.length, claimCount: investigation.claims.length }, null, 2)}\n`,
+  emit({
+    status: "imported",
+    path: savedTo,
+    target: investigation.target,
+    evidenceCount: investigation.evidence.length,
+    claimCount: investigation.claims.length,
+  });
+}
+
+async function runKeygen() {
+  const outputDir = optionValue("--output-dir");
+  if (!outputDir)
+    throw new Error("Missing required --output-dir DIR argument.");
+  const keys = generateCaseKeyPair();
+  const absolute = resolve(process.cwd(), outputDir);
+  await mkdir(absolute, { recursive: true, mode: 0o700 });
+  const privatePath = join(absolute, "ptah-case-signing.key");
+  const publicPath = join(absolute, "ptah-case-signing.pub");
+  await writeFileAtomicUnsafe(privatePath, keys.privateKeyPem, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  await writeFileAtomicUnsafe(publicPath, keys.publicKeyPem, {
+    flag: "wx",
+    mode: 0o644,
+  });
+  emit({
+    status: "keys-generated",
+    algorithm: keys.algorithm,
+    privateKeyPath: privatePath,
+    publicKeyPath: publicPath,
+    publicKeySha256: keys.publicKeySha256,
+    note: "Keep the private key secret; share only the .pub file with reviewers.",
+  });
+}
+
+async function runSignCase() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output") ?? inputPath;
+  const keyPath = optionValue("--key");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!keyPath) throw new Error("Missing required --key FILE argument.");
+  const { document: bundle } = await readCaseFile(inputPath);
+  const signed = signCase(
+    bundle,
+    await readFile(resolve(process.cwd(), keyPath), "utf8"),
   );
+  const savedTo = await writeCaseBytes(
+    output,
+    args.includes("--gzip")
+      ? compressCase(signed)
+      : Buffer.from(`${JSON.stringify(signed, null, 2)}\n`),
+  );
+  emit({ status: "signed", path: savedTo, ...signed.signature });
+}
+
+function requirePassphraseEnv() {
+  const passphrase = process.env.PTAH_CASE_PASSPHRASE;
+  if (!passphrase)
+    throw new Error(
+      "Set PTAH_CASE_PASSPHRASE in the environment (never pass it as an argument).",
+    );
+  return passphrase;
+}
+
+async function runEncryptCase() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const { document: bundle } = await readCaseFile(inputPath);
+  const envelope = encryptCase(bundle, requirePassphraseEnv());
+  const savedTo = await writeCaseBytes(
+    output,
+    args.includes("--gzip")
+      ? compressCase(envelope)
+      : Buffer.from(`${JSON.stringify(envelope, null, 2)}\n`),
+  );
+  emit({
+    status: "encrypted",
+    path: savedTo,
+    cipher: envelope.cipher,
+    kdf: envelope.kdf.name,
+  });
+}
+
+async function runDecryptCase() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const passphrase = requirePassphraseEnv();
+  const bytes = await readFile(resolve(process.cwd(), inputPath));
+  const { document: bundle, encrypted } = parseCaseBytes(bytes, { passphrase });
+  if (!encrypted) throw new Error("input is not an encrypted case envelope");
+  const savedTo = await writeCaseBytes(
+    output,
+    Buffer.from(`${JSON.stringify(bundle, null, 2)}\n`),
+  );
+  emit({ status: "decrypted", path: savedTo, ...bundle.integrity });
+}
+
+async function runFreeze(freeze) {
+  const input = await readInvestigationInput();
+  const output = optionValue("--output");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const updated = freeze
+    ? freezeInvestigation(input)
+    : unfreezeInvestigation(input);
+  const savedTo = await saveInvestigation(output, updated);
+  emit({
+    status: freeze ? "frozen" : "unfrozen",
+    path: savedTo,
+    frozen: updated.frozen ?? null,
+  });
+}
+
+async function runLinkCase() {
+  const input = await readInvestigationInput();
+  const output = optionValue("--output");
+  const casePath = optionValue("--case");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  if (!casePath) throw new Error("Missing required --case FILE argument.");
+  const { document: bundle } = await readCaseFile(casePath);
+  const updated = linkRelatedCase(input, bundle, {
+    note: optionValue("--note"),
+  });
+  const savedTo = await saveInvestigation(output, updated);
+  emit({
+    status: "case-linked",
+    path: savedTo,
+    related: updated.relatedCases.at(-1),
+  });
+}
+
+async function runMerge() {
+  const basePath = optionValue("--base");
+  const otherPath = optionValue("--other");
+  const output = optionValue("--output");
+  if (!basePath) throw new Error("Missing required --base FILE argument.");
+  if (!otherPath) throw new Error("Missing required --other FILE argument.");
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const result = mergeInvestigations(
+    await readJsonFile(basePath),
+    await readJsonFile(otherPath),
+    { prefer: optionValue("--prefer") },
+  );
+  const savedTo = await saveInvestigation(output, result.investigation);
+  emit({
+    status: "merged",
+    path: savedTo,
+    added: result.added,
+    conflicts: result.conflicts,
+    note: result.note,
+  });
+}
+
+async function runMigrate() {
+  const inputPath = optionValue("--input");
+  const output = optionValue("--output");
+  if (!inputPath) throw new Error("Missing required --input FILE argument.");
+  if (args.includes("--list")) {
+    emit({ currentSchemaVersion: 1, migrations: listMigrations() });
+    return;
+  }
+  if (!output) throw new Error("Missing required --output FILE argument.");
+  const result = migrateInvestigation(await readJsonFile(inputPath));
+  const savedTo = await saveInvestigation(output, result.investigation);
+  emit({
+    status: "migrated",
+    path: savedTo,
+    fromVersion: result.fromVersion,
+    toVersion: result.toVersion,
+    applied: result.applied,
+  });
 }
 
 function splitList(name) {
@@ -544,9 +813,12 @@ async function runSetClaimStatus() {
     reason: optionValue("--reason"),
   });
   const savedTo = await saveInvestigation(output, updated);
-  process.stdout.write(
-    `${JSON.stringify({ status: "claim-status-set", claimId: id, claimStatus: status, path: savedTo }, null, 2)}\n`,
-  );
+  emit({
+    status: "claim-status-set",
+    claimId: id,
+    claimStatus: status,
+    path: savedTo,
+  });
 }
 
 async function runResolveQuestion() {
@@ -565,21 +837,21 @@ async function runResolveQuestion() {
     reopen ? null : { reason, evidenceIds: splitList("--evidence-ids") },
   );
   const savedTo = await saveInvestigation(output, updated);
-  process.stdout.write(
-    `${JSON.stringify({ status: reopen ? "question-reopened" : "question-resolved", questionId: id, path: savedTo }, null, 2)}\n`,
-  );
+  emit({
+    status: reopen ? "question-reopened" : "question-resolved",
+    questionId: id,
+    path: savedTo,
+  });
 }
 
 async function runLint() {
   const result = lintInvestigation(await readInvestigationInput());
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
   if (!result.ok) process.exitCode = 2;
 }
 
 async function runStats() {
-  process.stdout.write(
-    `${JSON.stringify(investigationStats(await readInvestigationInput()), null, 2)}\n`,
-  );
+  emit(investigationStats(await readInvestigationInput()));
 }
 
 async function runHistory() {
@@ -587,10 +859,32 @@ async function runHistory() {
   const { validateInvestigation } = await import("./ptah-engine.mjs");
   const validated = validateInvestigation(investigation);
   const history = validated.history ?? [];
-  process.stdout.write(
-    `${JSON.stringify({ target: validated.target, entries: history.length, chainValid: true, headSha256: history.at(-1)?.entrySha256 ?? null, history }, null, 2)}\n`,
-  );
+  emit({
+    target: validated.target,
+    entries: history.length,
+    chainValid: true,
+    headSha256: history.at(-1)?.entrySha256 ?? null,
+    history,
+  });
 }
+
+const COMMAND_HANDLERS = {
+  strings: runStrings,
+  "set-claim-status": runSetClaimStatus,
+  "resolve-question": runResolveQuestion,
+  lint: runLint,
+  stats: runStats,
+  history: runHistory,
+  freeze: () => runFreeze(true),
+  unfreeze: () => runFreeze(false),
+  "link-case": runLinkCase,
+  merge: runMerge,
+  migrate: runMigrate,
+  keygen: runKeygen,
+  "sign-case": runSignCase,
+  "encrypt-case": runEncryptCase,
+  "decrypt-case": runDecryptCase,
+};
 
 async function runDiff() {
   const basePath = optionValue("--base");
@@ -601,7 +895,7 @@ async function runDiff() {
     await readJsonFile(basePath),
     await readJsonFile(headPath),
   );
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  emit(result);
   if (!result.identical) process.exitCode = 3;
 }
 
@@ -637,7 +931,7 @@ async function runEngineCommand(command) {
           ? planNextAction(input, budget)
           : planSteps(input, { ...budget, steps: Number(steps) });
     }
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    emit(output);
     if (command === "plan" && output.status === "blocked") process.exitCode = 2;
   } catch (error) {
     process.stderr.write(
@@ -697,7 +991,7 @@ if (
         })
       : await discoverProviders();
     if (args.includes("--json")) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      emit(result);
     } else if (args.includes("--probe")) {
       process.stdout.write(
         result.providers
@@ -790,7 +1084,7 @@ if (
         recorded: true,
       };
     }
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    emit(result);
     if (result.status !== "ok" || result.targetChanged) process.exitCode = 2;
   } catch (error) {
     process.stderr.write(
@@ -828,28 +1122,10 @@ if (
     process.exitCode = 1;
   }
 } else if (args[0] === "schema") {
-  process.stdout.write(
-    `${JSON.stringify(investigationJsonSchema(), null, 2)}\n`,
-  );
-} else if (
-  [
-    "strings",
-    "set-claim-status",
-    "resolve-question",
-    "lint",
-    "stats",
-    "history",
-  ].includes(args[0])
-) {
+  emit(investigationJsonSchema());
+} else if (Object.hasOwn(COMMAND_HANDLERS, args[0])) {
   try {
-    const handlers = {
-      strings: runStrings,
-      "set-claim-status": runSetClaimStatus,
-      "resolve-question": runResolveQuestion,
-      lint: runLint,
-      stats: runStats,
-      history: runHistory,
-    };
+    const handlers = COMMAND_HANDLERS;
     await handlers[args[0]]();
   } catch (error) {
     process.stderr.write(
