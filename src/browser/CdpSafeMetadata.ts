@@ -1,6 +1,6 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import { cdpStringValue, type UnknownRecord } from "./CdpCaptureValues.js";
+import type { CdpResponseFacts } from "./CdpNetworkEventFacts.js";
 import { structuredFieldToken } from "./StructuredFieldToken.js";
 
 type ResponseMetadata = WebPageInspection["metadata"]["responses"][number];
@@ -16,7 +16,7 @@ type ParsedLink = {
 export const safeResponseMetadata = (
   requestId: string,
   url: string,
-  response: UnknownRecord,
+  response: CdpResponseFacts,
   allowedOrigins: ReadonlySet<string>,
 ): {
   readonly response: ResponseMetadata;
@@ -26,7 +26,7 @@ export const safeResponseMetadata = (
   // RFC 9110 section 5.3: repeated field lines combine as one comma-separated value.
   const field = (name: string): string | undefined =>
     headers.get(name)?.join(", ");
-  const responseUrl = cdpStringValue(response.url) ?? url;
+  const responseUrl = response.url ?? url;
   const parsedLinks = parseLinks(
     headers.get("link"),
     responseUrl,
@@ -53,7 +53,7 @@ export const safeResponseMetadata = (
     response: {
       request_id: requestId,
       url,
-      mime_type: mediaTypeDeclaration(cdpStringValue(response.mimeType)),
+      mime_type: mediaTypeDeclaration(response.mimeType),
       content_length: contentLength(field("content-length")),
       content_encoding: boundedHeader(field("content-encoding")),
       csp,

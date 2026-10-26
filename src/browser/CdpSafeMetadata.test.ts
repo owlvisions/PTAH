@@ -1,7 +1,22 @@
 import { MIMEType } from "node:util";
 import { describe, expect, it } from "vitest";
 
-import { safeResponseMetadata } from "./CdpSafeMetadata.js";
+import { safeResponseMetadata as projectResponseMetadata } from "./CdpSafeMetadata.js";
+import { readCdpResponseFacts } from "./CdpNetworkEventFacts.js";
+import type { UnknownRecord } from "./CdpCaptureValues.js";
+
+/** Admit each raw response fixture through the production field owner. */
+const safeResponseMetadata = (
+  requestId: string,
+  url: string,
+  response: UnknownRecord,
+  allowedOrigins: ReadonlySet<string>,
+) => {
+  const facts = readCdpResponseFacts(response);
+  if (facts === undefined)
+    throw new Error("Expected a response fixture record");
+  return projectResponseMetadata(requestId, url, facts, allowedOrigins);
+};
 
 const origin = "https://app.example.test";
 
