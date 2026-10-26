@@ -301,6 +301,7 @@ void test("upstream sync timer supports second intervals with one-second accurac
       interval: "15s",
     });
     const timer = await readFile(result.timer, "utf8");
+    assert.match(timer, /OnActiveSec=15s/);
     assert.match(timer, /OnUnitActiveSec=15s/);
     assert.match(timer, /AccuracySec=1s/);
     assert.doesNotMatch(timer, /OnCalendar|RandomizedDelaySec/);

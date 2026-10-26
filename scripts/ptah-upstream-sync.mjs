@@ -386,9 +386,11 @@ export async function installSyncTimer({
 }) {
   // Short intervals use a monotonic timer with 1 s accuracy (systemd's default
   // accuracy is one minute); anything else is a calendar expression.
+  // OnActiveSec starts the first run when the timer is enabled: OnBootSec has
+  // long passed on a running machine and OnUnitActiveSec needs a prior run.
   const monotonic = /^\d+(?:s|sec|m|min|h)$/u.test(interval);
   const schedule = monotonic
-    ? `OnBootSec=${interval}\nOnUnitActiveSec=${interval}\nAccuracySec=1s`
+    ? `OnActiveSec=${interval}\nOnBootSec=${interval}\nOnUnitActiveSec=${interval}\nAccuracySec=1s`
     : `OnCalendar=${interval}\nPersistent=true\nRandomizedDelaySec=300`;
   const directory = join(home, ".config", "systemd", "user");
   await mkdir(directory, { recursive: true });
