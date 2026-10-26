@@ -330,9 +330,13 @@ void test("the engine has no dependency on REA or anything outside its own direc
   assert.ok(files.length >= 8);
   for (const file of files) {
     const text = await readFile(file, "utf8");
-    for (const [, specifier] of text.matchAll(
-      /(?:from|import)\s*\(?\s*["']([^"']+)["']/g,
+    // Real module specifiers only: `from "x"`, `import("x")`, or a bare
+    // `import "x"` at a statement boundary — not the word "import" inside a
+    // string such as a CLI flag "-import".
+    for (const [, from, dynamic, bare] of text.matchAll(
+      /\bfrom\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']|(?:^|[\n;])\s*import\s+["']([^"']+)["']/g,
     )) {
+      const specifier = from ?? dynamic ?? bare;
       if (specifier.startsWith("node:")) continue;
       assert.ok(
         specifier.startsWith("."),

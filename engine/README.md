@@ -66,19 +66,26 @@ const { evidence, provider, attempts } = await session.run("importsExports");
 
 ## Provider status
 
-| Provider     | Kind | Formats                        | Tasks                                          | License          | Status            |
-| ------------ | ---- | ------------------------------ | ---------------------------------------------- | ---------------- | ----------------- |
-| readelf      | tool | elf                            | manifest, sections, symbols, importsExports    | GPL-3.0-or-later | tested live       |
-| objdump      | tool | elf, pe                        | disassemble, sections                          | GPL-3.0-or-later | tested live (ELF) |
-| nm           | tool | elf, pe                        | symbols, importsExports                        | GPL-3.0-or-later | tested live (ELF) |
-| aapt2        | tool | apk                            | manifest                                       | Apache-2.0       | tested live       |
-| apktool      | tool | apk, aab                       | manifest, resources                            | Apache-2.0       | tested live       |
-| jadx         | tool | apk, aab, dex, jar, java-class | decompile, strings                             | Apache-2.0       | tested live       |
-| wasm-objdump | tool | wasm                           | sections, importsExports, disassemble          | Apache-2.0       | tested live       |
-| monodis      | tool | dotnet                         | manifest, symbols, importsExports, disassemble | MIT              | tested live       |
-| binwalk      | tool | unknown, bin                   | resources                                      | MIT              | tested live       |
-| unblob       | tool | unknown, bin                   | resources                                      | MIT              | tested live       |
-| tshark       | tool | pcap, pcapng                   | resources                                      | GPL-2.0-or-later | tested live       |
+| Provider     | Kind   | Formats                        | Tasks                                                             | License                    | Status                                           |
+| ------------ | ------ | ------------------------------ | ----------------------------------------------------------------- | -------------------------- | ------------------------------------------------ |
+| readelf      | tool   | elf                            | manifest, sections, symbols, importsExports                       | GPL-3.0-or-later           | tested live                                      |
+| objdump      | tool   | elf, pe                        | disassemble, sections                                             | GPL-3.0-or-later           | tested live (ELF)                                |
+| nm           | tool   | elf, pe                        | symbols, importsExports                                           | GPL-3.0-or-later           | tested live (ELF)                                |
+| aapt2        | tool   | apk                            | manifest                                                          | Apache-2.0                 | tested live                                      |
+| apktool      | tool   | apk, aab                       | manifest, resources                                               | Apache-2.0                 | tested live                                      |
+| jadx         | tool   | apk, aab, dex, jar, java-class | decompile, strings                                                | Apache-2.0                 | tested live                                      |
+| wasm-objdump | tool   | wasm                           | sections, importsExports, disassemble                             | Apache-2.0                 | tested live                                      |
+| monodis      | tool   | dotnet                         | manifest, symbols, importsExports, disassemble                    | MIT                        | tested live                                      |
+| binwalk      | tool   | unknown, bin                   | resources                                                         | MIT                        | tested live                                      |
+| unblob       | tool   | unknown, bin                   | resources                                                         | MIT                        | tested live                                      |
+| tshark       | tool   | pcap, pcapng                   | resources                                                         | GPL-2.0-or-later           | tested live                                      |
+| radare2      | engine | elf, pe, macho, dex            | manifest, sections, symbols, importsExports, strings, disassemble | LGPL-3.0-only              | tested live (ELF)                                |
+| rizin        | engine | elf, pe, macho, dex            | same as radare2, one priority lower (fallback)                    | LGPL-3.0-only              | tested live (ELF)                                |
+| ghidra       | engine | elf, pe, macho, dex            | decompile, symbols                                                | Apache-2.0                 | tested live (ELF)                                |
+| ida          | engine | elf, pe, macho                 | decompile, symbols                                                | commercial (user-licensed) | adapter; PTAH_IDA_BINARY + PTAH_IDA_SCRIPT       |
+| hopper       | engine | elf, pe, macho                 | decompile                                                         | commercial (user-licensed) | adapter; PTAH_HOPPER_BINARY + PTAH_HOPPER_SCRIPT |
+| jeb          | engine | apk, aab, dex                  | decompile                                                         | commercial (user-licensed) | adapter; PTAH_JEB_BINARY + PTAH_JEB_SCRIPT       |
+| kuna         | engine | elf, pe, macho                 | symbols                                                           | user-provided              | adapter; PTAH_KUNA_BINARY                        |
 
 Commercial engines (IDA, Hopper, JEB, Binary Ninja) are never bundled; their
 adapters, when added, call the user's own licensed installation.

@@ -1,0 +1,322 @@
+[
+  {
+    "ordinal": 1,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "getenv",
+    "plt": 8240
+  },
+  {
+    "ordinal": 2,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "free",
+    "plt": 8256
+  },
+  {
+    "ordinal": 3,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__vfprintf_chk",
+    "plt": 8272
+  },
+  {
+    "ordinal": 4,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__libc_start_main"
+  },
+  {
+    "ordinal": 5,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "abort",
+    "plt": 8288
+  },
+  {
+    "ordinal": 6,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__errno_location",
+    "plt": 8304
+  },
+  {
+    "ordinal": 7,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "strncmp",
+    "plt": 8320
+  },
+  {
+    "ordinal": 8,
+    "bind": "WEAK",
+    "type": "NOTYPE",
+    "name": "_ITM_deregisterTMCloneTable"
+  },
+  {
+    "ordinal": 9,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "_exit",
+    "plt": 8336
+  },
+  {
+    "ordinal": 10,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__fpending",
+    "plt": 8352
+  },
+  {
+    "ordinal": 11,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "fcntl",
+    "plt": 8368
+  },
+  {
+    "ordinal": 12,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "textdomain",
+    "plt": 8384
+  },
+  {
+    "ordinal": 13,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "fclose",
+    "plt": 8400
+  },
+  {
+    "ordinal": 14,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "bindtextdomain",
+    "plt": 8416
+  },
+  {
+    "ordinal": 15,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "dcgettext",
+    "plt": 8432
+  },
+  {
+    "ordinal": 16,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__ctype_get_mb_cur_max",
+    "plt": 8448
+  },
+  {
+    "ordinal": 17,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "strlen",
+    "plt": 8464
+  },
+  {
+    "ordinal": 18,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__stack_chk_fail",
+    "plt": 8480
+  },
+  {
+    "ordinal": 19,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "strchr",
+    "plt": 8496
+  },
+  {
+    "ordinal": 20,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__overflow",
+    "plt": 8512
+  },
+  {
+    "ordinal": 21,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "strrchr",
+    "plt": 8528
+  },
+  {
+    "ordinal": 22,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "memset",
+    "plt": 8544
+  },
+  {
+    "ordinal": 23,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "mbrtoc32",
+    "plt": 8560
+  },
+  {
+    "ordinal": 24,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "strspn",
+    "plt": 8576
+  },
+  {
+    "ordinal": 25,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "strcspn",
+    "plt": 8592
+  },
+  {
+    "ordinal": 26,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "memcmp",
+    "plt": 8608
+  },
+  {
+    "ordinal": 27,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "fputs_unlocked",
+    "plt": 8624
+  },
+  {
+    "ordinal": 28,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "calloc",
+    "plt": 8640
+  },
+  {
+    "ordinal": 29,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "strcmp",
+    "plt": 8656
+  },
+  {
+    "ordinal": 30,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "fputc_unlocked",
+    "plt": 8672
+  },
+  { "ordinal": 31, "bind": "WEAK", "type": "NOTYPE", "name": "__gmon_start__" },
+  {
+    "ordinal": 32,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "memcpy",
+    "plt": 8688
+  },
+  {
+    "ordinal": 33,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "strerror_r",
+    "plt": 8704
+  },
+  {
+    "ordinal": 34,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "malloc",
+    "plt": 8720
+  },
+  {
+    "ordinal": 35,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "fwrite_unlocked",
+    "plt": 8736
+  },
+  {
+    "ordinal": 36,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "realloc",
+    "plt": 8752
+  },
+  {
+    "ordinal": 37,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "setlocale",
+    "plt": 8768
+  },
+  {
+    "ordinal": 38,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__printf_chk",
+    "plt": 8784
+  },
+  {
+    "ordinal": 39,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__cxa_atexit",
+    "plt": 8800
+  },
+  {
+    "ordinal": 40,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "exit",
+    "plt": 8816
+  },
+  {
+    "ordinal": 41,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__fprintf_chk",
+    "plt": 8832
+  },
+  {
+    "ordinal": 42,
+    "bind": "WEAK",
+    "type": "NOTYPE",
+    "name": "_ITM_registerTMCloneTable"
+  },
+  {
+    "ordinal": 43,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "fflush_unlocked",
+    "plt": 8848
+  },
+  {
+    "ordinal": 44,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "mbsinit",
+    "plt": 8864
+  },
+  {
+    "ordinal": 45,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "iswprint",
+    "plt": 8880
+  },
+  {
+    "ordinal": 46,
+    "bind": "GLOBAL",
+    "type": "FUNC",
+    "name": "__ctype_b_loc",
+    "plt": 8896
+  },
+  {
+    "ordinal": 49,
+    "bind": "WEAK",
+    "type": "FUNC",
+    "name": "__cxa_finalize",
+    "plt": 8912
+  }
+]

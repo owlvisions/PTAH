@@ -1,0 +1,722 @@
+[
+  {
+    "vaddr": 28676,
+    "paddr": 28676,
+    "ordinal": 0,
+    "size": 5,
+    "length": 4,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "TERM"
+  },
+  {
+    "vaddr": 28681,
+    "paddr": 28681,
+    "ordinal": 1,
+    "size": 5,
+    "length": 4,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "dumb"
+  },
+  {
+    "vaddr": 28690,
+    "paddr": 28690,
+    "ordinal": 2,
+    "size": 6,
+    "length": 5,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": ",=[ \\n"
+  },
+  {
+    "vaddr": 28696,
+    "paddr": 28696,
+    "ordinal": 3,
+    "size": 7,
+    "length": 6,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "--help"
+  },
+  {
+    "vaddr": 28703,
+    "paddr": 28703,
+    "ordinal": 4,
+    "size": 10,
+    "length": 9,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "--version"
+  },
+  {
+    "vaddr": 28713,
+    "paddr": 28713,
+    "ordinal": 5,
+    "size": 5,
+    "length": 4,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "true"
+  },
+  {
+    "vaddr": 28718,
+    "paddr": 28718,
+    "ordinal": 6,
+    "size": 17,
+    "length": 16,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "\\e]8;;%s%s#%s%.*s"
+  },
+  {
+    "vaddr": 28735,
+    "paddr": 28735,
+    "ordinal": 7,
+    "size": 15,
+    "length": 14,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "\\e]8;;%s#%s%.*s"
+  },
+  {
+    "vaddr": 28750,
+    "paddr": 28750,
+    "ordinal": 8,
+    "size": 5,
+    "length": 4,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "\\e[1m"
+  },
+  {
+    "vaddr": 28755,
+    "paddr": 28755,
+    "ordinal": 9,
+    "size": 5,
+    "length": 4,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "\\e[0m"
+  },
+  {
+    "vaddr": 28760,
+    "paddr": 28760,
+    "ordinal": 10,
+    "size": 8,
+    "length": 7,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "\\e]8;;\\e\\\\"
+  },
+  {
+    "vaddr": 28770,
+    "paddr": 28770,
+    "ordinal": 11,
+    "size": 16,
+    "length": 15,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "test invocation"
+  },
+  {
+    "vaddr": 28786,
+    "paddr": 28786,
+    "ordinal": 12,
+    "size": 22,
+    "length": 21,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Multi-call invocation"
+  },
+  {
+    "vaddr": 28808,
+    "paddr": 28808,
+    "ordinal": 13,
+    "size": 15,
+    "length": 14,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "sha2 utilities"
+  },
+  {
+    "vaddr": 28823,
+    "paddr": 28823,
+    "ordinal": 14,
+    "size": 10,
+    "length": 9,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "sha224sum"
+  },
+  {
+    "vaddr": 28833,
+    "paddr": 28833,
+    "ordinal": 15,
+    "size": 10,
+    "length": 9,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "sha256sum"
+  },
+  {
+    "vaddr": 28843,
+    "paddr": 28843,
+    "ordinal": 16,
+    "size": 10,
+    "length": 9,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "sha384sum"
+  },
+  {
+    "vaddr": 28853,
+    "paddr": 28853,
+    "ordinal": 17,
+    "size": 10,
+    "length": 9,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "sha512sum"
+  },
+  {
+    "vaddr": 28863,
+    "paddr": 28863,
+    "ordinal": 18,
+    "size": 5,
+    "length": 4,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "%s\\n\\n"
+  },
+  {
+    "vaddr": 28868,
+    "paddr": 28868,
+    "ordinal": 19,
+    "size": 27,
+    "length": 26,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Full documentation <%s%s>\\n"
+  },
+  {
+    "vaddr": 28895,
+    "paddr": 28895,
+    "ordinal": 20,
+    "size": 18,
+    "length": 17,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "/usr/share/locale"
+  },
+  {
+    "vaddr": 28913,
+    "paddr": 28913,
+    "ordinal": 21,
+    "size": 13,
+    "length": 12,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Jim Meyering"
+  },
+  {
+    "vaddr": 28926,
+    "paddr": 28926,
+    "ordinal": 22,
+    "size": 14,
+    "length": 13,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "GNU coreutils"
+  },
+  {
+    "vaddr": 28940,
+    "paddr": 28940,
+    "ordinal": 23,
+    "size": 5,
+    "length": 4,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "9.10"
+  },
+  {
+    "vaddr": 28945,
+    "paddr": 28945,
+    "ordinal": 24,
+    "size": 12,
+    "length": 11,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "write error"
+  },
+  {
+    "vaddr": 28957,
+    "paddr": 28957,
+    "ordinal": 25,
+    "size": 7,
+    "length": 6,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "gnulib"
+  },
+  {
+    "vaddr": 28964,
+    "paddr": 28964,
+    "ordinal": 26,
+    "size": 7,
+    "length": 6,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "%s: %s"
+  },
+  {
+    "vaddr": 28971,
+    "paddr": 28971,
+    "ordinal": 27,
+    "size": 21,
+    "length": 20,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Unknown system error"
+  },
+  {
+    "vaddr": 28992,
+    "paddr": 28992,
+    "ordinal": 28,
+    "size": 5,
+    "length": 4,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "%s:"
+  },
+  {
+    "vaddr": 28997,
+    "paddr": 28997,
+    "ordinal": 29,
+    "size": 8,
+    "length": 7,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "%s:%u:"
+  },
+  {
+    "vaddr": 29009,
+    "paddr": 29009,
+    "ordinal": 30,
+    "size": 8,
+    "length": 7,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "/.libs/"
+  },
+  {
+    "vaddr": 29024,
+    "paddr": 29024,
+    "ordinal": 31,
+    "size": 7,
+    "length": 6,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "iteral"
+  },
+  {
+    "vaddr": 29031,
+    "paddr": 29031,
+    "ordinal": 32,
+    "size": 6,
+    "length": 5,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "shell"
+  },
+  {
+    "vaddr": 29037,
+    "paddr": 29037,
+    "ordinal": 33,
+    "size": 13,
+    "length": 12,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "shell-always"
+  },
+  {
+    "vaddr": 29050,
+    "paddr": 29050,
+    "ordinal": 34,
+    "size": 13,
+    "length": 12,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "shell-escape"
+  },
+  {
+    "vaddr": 29063,
+    "paddr": 29063,
+    "ordinal": 35,
+    "size": 20,
+    "length": 19,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "shell-escape-always"
+  },
+  {
+    "vaddr": 29085,
+    "paddr": 29085,
+    "ordinal": 36,
+    "size": 8,
+    "length": 7,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "c-maybe"
+  },
+  {
+    "vaddr": 29093,
+    "paddr": 29093,
+    "ordinal": 37,
+    "size": 8,
+    "length": 7,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "clocale"
+  },
+  {
+    "vaddr": 29101,
+    "paddr": 29101,
+    "ordinal": 38,
+    "size": 12,
+    "length": 11,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "%s (%s) %s\\n"
+  },
+  {
+    "vaddr": 29113,
+    "paddr": 29113,
+    "ordinal": 39,
+    "size": 7,
+    "length": 6,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "%s %s\\n"
+  },
+  {
+    "vaddr": 29120,
+    "paddr": 29120,
+    "ordinal": 40,
+    "size": 21,
+    "length": 20,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Packaged by %s (%s)\\n"
+  },
+  {
+    "vaddr": 29141,
+    "paddr": 29141,
+    "ordinal": 41,
+    "size": 7,
+    "length": 6,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "9.10-1"
+  },
+  {
+    "vaddr": 29148,
+    "paddr": 29148,
+    "ordinal": 42,
+    "size": 7,
+    "length": 6,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Debian"
+  },
+  {
+    "vaddr": 29159,
+    "paddr": 29159,
+    "ordinal": 43,
+    "size": 16,
+    "length": 15,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s.\\n"
+  },
+  {
+    "vaddr": 29175,
+    "paddr": 29175,
+    "ordinal": 44,
+    "size": 23,
+    "length": 22,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s and %s.\\n"
+  },
+  {
+    "vaddr": 29198,
+    "paddr": 29198,
+    "ordinal": 45,
+    "size": 28,
+    "length": 27,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s, %s, and %s.\\n"
+  },
+  {
+    "vaddr": 29226,
+    "paddr": 29226,
+    "ordinal": 46,
+    "size": 20,
+    "length": 19,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Report bugs to: %s\\n"
+  },
+  {
+    "vaddr": 29246,
+    "paddr": 29246,
+    "ordinal": 47,
+    "size": 22,
+    "length": 21,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "bug-coreutils@gnu.org"
+  },
+  {
+    "vaddr": 29268,
+    "paddr": 29268,
+    "ordinal": 48,
+    "size": 20,
+    "length": 19,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "%s home page: <%s>\\n"
+  },
+  {
+    "vaddr": 29288,
+    "paddr": 29288,
+    "ordinal": 49,
+    "size": 29,
+    "length": 28,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "https://www.gnu.org/gethelp/"
+  },
+  {
+    "vaddr": 29317,
+    "paddr": 29317,
+    "ordinal": 50,
+    "size": 17,
+    "length": 16,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "memory exhausted"
+  },
+  {
+    "vaddr": 29336,
+    "paddr": 29336,
+    "ordinal": 51,
+    "size": 6,
+    "length": 5,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "POSIX"
+  },
+  {
+    "vaddr": 29344,
+    "paddr": 29344,
+    "ordinal": 52,
+    "size": 40,
+    "length": 39,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "https://www.gnu.org/software/coreutils/"
+  },
+  {
+    "vaddr": 29384,
+    "paddr": 29384,
+    "ordinal": 53,
+    "size": 61,
+    "length": 60,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "https://www.gnu.org/software/coreutils/manual/coreutils.html"
+  },
+  {
+    "vaddr": 29456,
+    "paddr": 29456,
+    "ordinal": 54,
+    "size": 61,
+    "length": 60,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Usage: %s [ignored command line arguments]\\n  or:  %s OPTION\\n"
+  },
+  {
+    "vaddr": 29520,
+    "paddr": 29520,
+    "ordinal": 55,
+    "size": 44,
+    "length": 43,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Exit with a status code indicating success."
+  },
+  {
+    "vaddr": 29568,
+    "paddr": 29568,
+    "ordinal": 56,
+    "size": 50,
+    "length": 49,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "      --help\\n         display this help and exit\\n"
+  },
+  {
+    "vaddr": 29624,
+    "paddr": 29624,
+    "ordinal": 57,
+    "size": 62,
+    "length": 61,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "      --version\\n         output version information and exit\\n"
+  },
+  {
+    "vaddr": 29688,
+    "paddr": 29688,
+    "ordinal": 58,
+    "size": 185,
+    "length": 184,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "\\nYour shell may have its own version of %s, which usually supersedes\\nthe version described here.  Please refer to your shell's documentation\\nfor details about the options it supports.\\n"
+  },
+  {
+    "vaddr": 29880,
+    "paddr": 29880,
+    "ordinal": 59,
+    "size": 71,
+    "length": 70,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Report any translation bugs to <https://translationproject.org/team/>\\n"
+  },
+  {
+    "vaddr": 29952,
+    "paddr": 29952,
+    "ordinal": 60,
+    "size": 51,
+    "length": 50,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "or available locally via: info '(coreutils) %s%s'\\n"
+  },
+  {
+    "vaddr": 30008,
+    "paddr": 30008,
+    "ordinal": 61,
+    "size": 171,
+    "length": 170,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "License GPLv3+: GNU GPL version 3 or later <%s>.\\nThis is free software: you are free to change and redistribute it.\\nThere is NO WARRANTY, to the extent permitted by law.\\n"
+  },
+  {
+    "vaddr": 30184,
+    "paddr": 30184,
+    "ordinal": 62,
+    "size": 34,
+    "length": 33,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "https://gnu.org/licenses/gpl.html"
+  },
+  {
+    "vaddr": 30224,
+    "paddr": 30224,
+    "ordinal": 63,
+    "size": 32,
+    "length": 31,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s, %s, %s,\\nand %s.\\n"
+  },
+  {
+    "vaddr": 30256,
+    "paddr": 30256,
+    "ordinal": 64,
+    "size": 36,
+    "length": 35,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s, %s, %s,\\n%s, and %s.\\n"
+  },
+  {
+    "vaddr": 30296,
+    "paddr": 30296,
+    "ordinal": 65,
+    "size": 40,
+    "length": 39,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s, %s, %s,\\n%s, %s, and %s.\\n"
+  },
+  {
+    "vaddr": 30336,
+    "paddr": 30336,
+    "ordinal": 66,
+    "size": 44,
+    "length": 43,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s, %s, %s,\\n%s, %s, %s, and %s.\\n"
+  },
+  {
+    "vaddr": 30384,
+    "paddr": 30384,
+    "ordinal": 67,
+    "size": 48,
+    "length": 47,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s, %s, %s,\\n%s, %s, %s, %s,\\nand %s.\\n"
+  },
+  {
+    "vaddr": 30432,
+    "paddr": 30432,
+    "ordinal": 68,
+    "size": 52,
+    "length": 51,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s, %s, %s,\\n%s, %s, %s, %s,\\n%s, and %s.\\n"
+  },
+  {
+    "vaddr": 30488,
+    "paddr": 30488,
+    "ordinal": 69,
+    "size": 60,
+    "length": 59,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Written by %s, %s, %s,\\n%s, %s, %s, %s,\\n%s, %s, and others.\\n"
+  },
+  {
+    "vaddr": 30552,
+    "paddr": 30552,
+    "ordinal": 70,
+    "size": 39,
+    "length": 38,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "General help using GNU software: <%s>\\n"
+  },
+  {
+    "vaddr": 31584,
+    "paddr": 31584,
+    "ordinal": 71,
+    "size": 47,
+    "length": 46,
+    "section": ".rodata",
+    "type": "ascii",
+    "string": "Copyright %s %d Free Software Foundation, Inc."
+  }
+]

@@ -1,0 +1,302 @@
+[
+  {
+    "name": "",
+    "size": 0,
+    "vsize": 0,
+    "type": "NULL",
+    "perm": "----",
+    "flags": 0,
+    "paddr": 0,
+    "vaddr": 0
+  },
+  {
+    "name": ".note.gnu.build-id",
+    "size": 36,
+    "vsize": 36,
+    "type": "NOTE",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 848,
+    "vaddr": 848
+  },
+  {
+    "name": ".interp",
+    "size": 28,
+    "vsize": 28,
+    "type": "PROGBITS",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 884,
+    "vaddr": 884
+  },
+  {
+    "name": ".gnu.hash",
+    "size": 92,
+    "vsize": 92,
+    "type": "GNU_HASH",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 912,
+    "vaddr": 912
+  },
+  {
+    "name": ".dynsym",
+    "size": 1416,
+    "vsize": 1416,
+    "type": "DYNSYM",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 1008,
+    "vaddr": 1008
+  },
+  {
+    "name": ".dynstr",
+    "size": 779,
+    "vsize": 779,
+    "type": "STRTAB",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 2424,
+    "vaddr": 2424
+  },
+  {
+    "name": ".gnu.version",
+    "size": 118,
+    "vsize": 118,
+    "type": "GNU_VERSYM",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 3204,
+    "vaddr": 3204
+  },
+  {
+    "name": ".gnu.version_r",
+    "size": 128,
+    "vsize": 128,
+    "type": "GNU_VERNEED",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 3328,
+    "vaddr": 3328
+  },
+  {
+    "name": ".rela.dyn",
+    "size": 744,
+    "vsize": 744,
+    "type": "RELA",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 3456,
+    "vaddr": 3456
+  },
+  {
+    "name": ".rela.plt",
+    "size": 1008,
+    "vsize": 1008,
+    "type": "RELA",
+    "perm": "-r--",
+    "flags": 66,
+    "paddr": 4200,
+    "vaddr": 4200
+  },
+  {
+    "name": ".init",
+    "size": 23,
+    "vsize": 23,
+    "type": "PROGBITS",
+    "perm": "-r-x",
+    "flags": 6,
+    "paddr": 8192,
+    "vaddr": 8192
+  },
+  {
+    "name": ".plt",
+    "size": 688,
+    "vsize": 688,
+    "type": "PROGBITS",
+    "perm": "-r-x",
+    "flags": 6,
+    "paddr": 8224,
+    "vaddr": 8224
+  },
+  {
+    "name": ".plt.got",
+    "size": 8,
+    "vsize": 8,
+    "type": "PROGBITS",
+    "perm": "-r-x",
+    "flags": 6,
+    "paddr": 8912,
+    "vaddr": 8912
+  },
+  {
+    "name": ".text",
+    "size": 17470,
+    "vsize": 17470,
+    "type": "PROGBITS",
+    "perm": "-r-x",
+    "flags": 6,
+    "paddr": 8960,
+    "vaddr": 8960
+  },
+  {
+    "name": ".fini",
+    "size": 9,
+    "vsize": 9,
+    "type": "PROGBITS",
+    "perm": "-r-x",
+    "flags": 6,
+    "paddr": 26432,
+    "vaddr": 26432
+  },
+  {
+    "name": ".rodata",
+    "size": 2959,
+    "vsize": 2959,
+    "type": "PROGBITS",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 28672,
+    "vaddr": 28672
+  },
+  {
+    "name": ".eh_frame_hdr",
+    "size": 828,
+    "vsize": 828,
+    "type": "PROGBITS",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 31632,
+    "vaddr": 31632
+  },
+  {
+    "name": ".eh_frame",
+    "size": 3696,
+    "vsize": 3696,
+    "type": "PROGBITS",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 32464,
+    "vaddr": 32464
+  },
+  {
+    "name": ".note.gnu.property",
+    "size": 32,
+    "vsize": 32,
+    "type": "NOTE",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 36160,
+    "vaddr": 36160
+  },
+  {
+    "name": ".note.ABI-tag",
+    "size": 32,
+    "vsize": 32,
+    "type": "NOTE",
+    "perm": "-r--",
+    "flags": 2,
+    "paddr": 36192,
+    "vaddr": 36192
+  },
+  {
+    "name": ".init_array",
+    "size": 8,
+    "vsize": 8,
+    "type": "INIT_ARRAY",
+    "perm": "-rw-",
+    "flags": 3,
+    "paddr": 39888,
+    "vaddr": 39888
+  },
+  {
+    "name": ".fini_array",
+    "size": 8,
+    "vsize": 8,
+    "type": "FINI_ARRAY",
+    "perm": "-rw-",
+    "flags": 3,
+    "paddr": 39896,
+    "vaddr": 39896
+  },
+  {
+    "name": ".data.rel.ro",
+    "size": 152,
+    "vsize": 152,
+    "type": "PROGBITS",
+    "perm": "-rw-",
+    "flags": 3,
+    "paddr": 39904,
+    "vaddr": 39904
+  },
+  {
+    "name": ".dynamic",
+    "size": 496,
+    "vsize": 496,
+    "type": "DYNAMIC",
+    "perm": "-rw-",
+    "flags": 3,
+    "paddr": 40056,
+    "vaddr": 40056
+  },
+  {
+    "name": ".got",
+    "size": 400,
+    "vsize": 400,
+    "type": "PROGBITS",
+    "perm": "-rw-",
+    "flags": 3,
+    "paddr": 40552,
+    "vaddr": 40552
+  },
+  {
+    "name": ".data",
+    "size": 160,
+    "vsize": 160,
+    "type": "PROGBITS",
+    "perm": "-rw-",
+    "flags": 3,
+    "paddr": 40960,
+    "vaddr": 40960
+  },
+  {
+    "name": ".bss",
+    "size": 0,
+    "vsize": 448,
+    "type": "NOBITS",
+    "perm": "-rw-",
+    "flags": 3,
+    "paddr": 41120,
+    "vaddr": 41120
+  },
+  {
+    "name": ".gnu_debugaltlink",
+    "size": 73,
+    "vsize": 73,
+    "type": "PROGBITS",
+    "perm": "----",
+    "flags": 0,
+    "paddr": 41120,
+    "vaddr": 0
+  },
+  {
+    "name": ".gnu_debuglink",
+    "size": 52,
+    "vsize": 52,
+    "type": "PROGBITS",
+    "perm": "----",
+    "flags": 0,
+    "paddr": 41196,
+    "vaddr": 0
+  },
+  {
+    "name": ".shstrtab",
+    "size": 294,
+    "vsize": 294,
+    "type": "STRTAB",
+    "perm": "----",
+    "flags": 0,
+    "paddr": 41248,
+    "vaddr": 0
+  }
+]

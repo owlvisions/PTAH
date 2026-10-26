@@ -1,0 +1,112 @@
+[
+  {
+    "name": "stdout",
+    "flagname": "obj.stdout",
+    "realname": "stdout",
+    "ordinal": 47,
+    "bind": "GLOBAL",
+    "size": 8,
+    "unsafe": "console",
+    "type": "OBJ",
+    "vaddr": 41128,
+    "paddr": 18446744073709551615,
+    "is_imported": false
+  },
+  {
+    "name": "error_message_count",
+    "flagname": "obj.error_message_count",
+    "realname": "error_message_count",
+    "ordinal": 48,
+    "bind": "GLOBAL",
+    "size": 4,
+    "type": "OBJ",
+    "vaddr": 41188,
+    "paddr": 18446744073709551615,
+    "is_imported": false
+  },
+  {
+    "name": "__progname",
+    "flagname": "obj.__progname",
+    "realname": "__progname",
+    "ordinal": 50,
+    "bind": "GLOBAL",
+    "size": 8,
+    "type": "OBJ",
+    "vaddr": 41120,
+    "paddr": 18446744073709551615,
+    "is_imported": false
+  },
+  {
+    "name": "error_at_line",
+    "flagname": "sym.error_at_line",
+    "realname": "error_at_line",
+    "ordinal": 51,
+    "bind": "GLOBAL",
+    "size": 166,
+    "type": "FUNC",
+    "vaddr": 9755,
+    "paddr": 9755,
+    "is_imported": false
+  },
+  {
+    "name": "__progname_full",
+    "flagname": "obj.__progname_full",
+    "realname": "__progname_full",
+    "ordinal": 53,
+    "bind": "GLOBAL",
+    "size": 8,
+    "type": "OBJ",
+    "vaddr": 41136,
+    "paddr": 18446744073709551615,
+    "is_imported": false
+  },
+  {
+    "name": "stderr",
+    "flagname": "obj.stderr",
+    "realname": "stderr",
+    "ordinal": 55,
+    "bind": "GLOBAL",
+    "size": 8,
+    "unsafe": "console",
+    "type": "OBJ",
+    "vaddr": 41152,
+    "paddr": 18446744073709551615,
+    "is_imported": false
+  },
+  {
+    "name": "error",
+    "flagname": "sym.error",
+    "realname": "error",
+    "ordinal": 56,
+    "bind": "GLOBAL",
+    "size": 176,
+    "type": "FUNC",
+    "vaddr": 9334,
+    "paddr": 9334,
+    "is_imported": false
+  },
+  {
+    "name": "error_print_progname",
+    "flagname": "obj.error_print_progname",
+    "realname": "error_print_progname",
+    "ordinal": 57,
+    "bind": "GLOBAL",
+    "size": 8,
+    "type": "OBJ",
+    "vaddr": 41192,
+    "paddr": 18446744073709551615,
+    "is_imported": false
+  },
+  {
+    "name": "error_one_per_line",
+    "flagname": "obj.error_one_per_line",
+    "realname": "error_one_per_line",
+    "ordinal": 58,
+    "bind": "GLOBAL",
+    "size": 4,
+    "type": "OBJ",
+    "vaddr": 41184,
+    "paddr": 18446744073709551615,
+    "is_imported": false
+  }
+]
