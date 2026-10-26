@@ -14,6 +14,39 @@ import { redactExplicitText } from "./explicitSensitiveValues.js";
 import type { JsonValue } from "./jsonValue.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
+import {
+  fileSnapshotPartialObservationSchema,
+  type FileSnapshotPartialObservation,
+} from "./fileSnapshotObservation.js";
+
+/** Exclude whole identity values; redacted text is no longer a path or digest. */
+const excludeSnapshotIdentity = (
+  value: unknown,
+  values: readonly string[],
+): FileSnapshotPartialObservation | undefined => {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("kind" in value) ||
+    (value.kind !== "file-snapshot-hash" && value.kind !== "file-snapshot-read")
+  )
+    return undefined;
+  const parsed = fileSnapshotPartialObservationSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  const snapshot = parsed.data;
+  const exclude = (identity: string | null): string | null =>
+    identity !== null &&
+    values.some((literal) => literal !== "" && identity.includes(literal))
+      ? null
+      : identity;
+  const path = exclude(snapshot.path);
+  if (snapshot.kind === "file-snapshot-hash") {
+    const sha256 = exclude(snapshot.sha256);
+    return { ...snapshot, path, sha256 };
+  }
+  const admitted_sha256 = exclude(snapshot.admitted_sha256);
+  return { ...snapshot, path, admitted_sha256 };
+};
 
 /** Keep a real JSON-pointer ancestor when a property identity is explicitly excluded. */
 export const redactExplicitPointer = (
@@ -41,9 +74,11 @@ export const redactExplicitFailure = (
   values: readonly string[],
 ): AnalysisError => {
   if (values.length === 0) return error;
+  const snapshot = excludeSnapshotIdentity(error.partialObservation, values);
+  if (snapshot !== undefined) error.partialObservation = snapshot;
   const redacted = redactFailure(error, values);
-  // Observation owners already apply format-aware exclusions. Keep their facts
-  // and identity across every diagnostic replacement, including input/capacity.
+  // Other observation owners already apply their format-aware exclusions.
+  // Keep those facts across diagnostic replacements, including input/capacity.
   if (redacted !== error && error.partialObservation !== undefined)
     redacted.retainPartialObservation(error.partialObservation);
   return redacted === error
@@ -86,6 +121,8 @@ const redactFailure = (
         .map(([key, item]) => [key, visit(item)]),
     );
   const visit = (value: JsonValue): JsonValue => {
+    const snapshot = excludeSnapshotIdentity(value, values);
+    if (snapshot !== undefined) return snapshot;
     if (typeof value === "string") return text(value);
     if (Array.isArray(value)) return value.map(visit);
     if (typeof value === "object" && value !== null) return diagnostics(value);

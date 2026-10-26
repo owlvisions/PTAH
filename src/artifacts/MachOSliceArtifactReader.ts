@@ -28,6 +28,7 @@ import { streamChunkToBuffer } from "./StreamBytes.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
 /** Read-only universal Mach-O slice reader backed by native lipo metadata. */
 export class MachOSliceArtifactReader implements ArtifactReader {
@@ -116,7 +117,11 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       );
     const lipo = parsed.value;
     const { architectures } = lipo;
-    const structural = await readStructuralSlices(source.handle, fileSize);
+    const structural = await readStructuralSlices(
+      source.handle,
+      fileSize,
+      signal,
+    );
     await this.#source.readSelectedPath();
     if (structural.status === "malformed")
       throw new ArtifactReaderFailure(
@@ -478,12 +483,12 @@ export class MachOSliceArtifactReader implements ArtifactReader {
 const readStructuralSlices = async (
   file: FileHandle,
   size: number,
+  signal?: AbortSignal,
 ): Promise<Awaited<ReturnType<typeof readMachoImage>>> => {
-  const readAt: ReadAt = async (offset, length) => {
-    const bytes = Buffer.alloc(length);
-    const { bytesRead } = await file.read(bytes, 0, length, offset);
-    return bytes.subarray(0, bytesRead);
-  };
+  const readAt: ReadAt = (offset, length) =>
+    readFileHandleRange(file, offset, length, () =>
+      assertArtifactReadActive(signal),
+    );
   return readMachoImage(readAt, size);
 };
 

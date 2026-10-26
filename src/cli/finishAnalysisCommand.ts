@@ -21,8 +21,14 @@ export const finishAnalysisCommand = async <
   canonicalOperation: string,
   signal: AbortSignal,
   fallbackResource?: string,
-  options: { readonly failureProjection?: "initial" | "final" } = {},
+  options: {
+    readonly failureProjection?: "initial" | "final";
+    /** Apply invocation-specific exclusions after all owned cleanup is composed. */
+    readonly redactFailure?: (error: AnalysisError) => AnalysisError;
+  } = {},
 ): Promise<Value | ReturnType<typeof projectAnalysisError>> => {
+  const projectFailure = (error: AnalysisError) =>
+    projectAnalysisError(options.redactFailure?.(error) ?? error);
   let result: Result<Value, AnalysisError>;
   let cleanup: AnalysisError | undefined;
   try {
@@ -40,7 +46,7 @@ export const finishAnalysisCommand = async <
   // close retries and mutates the producer's live cleanup status.
   const initialFailure =
     !result.ok && options.failureProjection === "initial"
-      ? projectAnalysisError(result.error)
+      ? projectFailure(result.error)
       : undefined;
   try {
     // Resource owners may resolve their retained errors during close. This
@@ -90,5 +96,5 @@ export const finishAnalysisCommand = async <
           ).bindCleanupDependencies([result.error, cleanup]),
     };
   }
-  return result.ok ? result.value : projectAnalysisError(result.error);
+  return result.ok ? result.value : projectFailure(result.error);
 };

@@ -48,6 +48,8 @@ interface CliEvidenceDelivery {
   readonly evidenceOutput: string | undefined;
   /** Derived workflows publish their selected source closure with the result. */
   readonly sourceEvidence?: readonly Evidence[];
+  /** Invocation-specific exclusions also cover errors from final service cleanup. */
+  readonly redactFailure?: (error: AnalysisError) => AnalysisError;
 }
 
 export const cliEvidenceDeliveryInputError = (
@@ -136,6 +138,10 @@ export const deliverCliAnalysisEvidence = async (
       providerId,
       operation,
       signal,
+      undefined,
+      input.redactFailure === undefined
+        ? {}
+        : { redactFailure: input.redactFailure },
     );
   const complete = await finishAnalysisCommand(
     run,
@@ -143,6 +149,10 @@ export const deliverCliAnalysisEvidence = async (
     providerId,
     operation,
     signal,
+    undefined,
+    input.redactFailure === undefined
+      ? {}
+      : { redactFailure: input.redactFailure },
   );
   return publishCliAnalysisEvidence(complete, {
     providerId,
