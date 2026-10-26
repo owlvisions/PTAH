@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import {
   captureFrames,
   inspectCdpElectronPage,
@@ -496,7 +497,7 @@ describe("Electron frame capture", () => {
     const scriptPath = join(root, "app.js");
     await writeFile(scriptPath, "export const app = true;");
     const scripts: ElectronScriptDraft[] = [];
-    const executionContextFrames = new Map<string, string>();
+    const executionContextFrames = new Map<string, CdpContextFrameClaim>();
     const retention = { bytes: 2 };
     const completeness = new CdpCaptureCompleteness();
     const ingest = (method: string, params: unknown): void =>

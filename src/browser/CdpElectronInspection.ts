@@ -1,3 +1,4 @@
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
@@ -61,7 +62,7 @@ interface ElectronInspectionState {
   readonly completeness: CdpCaptureCompleteness;
   readonly scripts: ElectronScriptDraft[];
   readonly scriptMetadataRetention: ElectronScriptMetadataRetention;
-  readonly executionContextFrames: Map<string, string>;
+  readonly executionContextFrames: Map<string, CdpContextFrameClaim>;
   readonly frameGenerations: Map<string, number>;
   readonly frameParents: Map<string, string | null>;
   readonly frameDocuments: Map<string, ElectronFrameDocument>;

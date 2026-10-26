@@ -1,4 +1,10 @@
 import {
+  readCdpExecutionContextCreated,
+  readCdpExecutionContextDestroyed,
+  readCdpScriptParsed,
+  selectCdpScriptFrame,
+} from "./CdpScriptContextFacts.js";
+import {
   selectCdpFrameIdentity,
   cdpFrameEventFacts,
 } from "./CdpFrameIdentity.js";
@@ -15,12 +21,10 @@ import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { safeResponseMetadata } from "./CdpSafeMetadata.js";
 import {
   allowedSanitizedUrl,
-  executionContextKey,
   isHttpUrl,
   numberValue,
   admitRecords,
   recordValue,
-  scriptMetadataValues,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -48,19 +52,17 @@ export const handleExecutionContextCreated = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const context = recordValue(params.context);
-  const key = executionContextKey(context?.id);
-  const frameId = cdpStringValue(recordValue(context?.auxData)?.frameId);
-  if (key === null || frameId === undefined) return;
-  // New contexts may reuse an id. Scripts already parsed keep the frame stored on them.
-  state.executionContextFrames.set(key, frameId);
+  const facts = readCdpExecutionContextCreated(params);
+  if (facts.contextKey === null) return;
+  // Every reuse replaces future authority, including missing or malformed claims.
+  state.executionContextFrames.set(facts.contextKey, facts.frameClaim);
 };
 
 export const handleExecutionContextDestroyed = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const key = executionContextKey(params.executionContextId);
+  const key = readCdpExecutionContextDestroyed(params).contextKey;
   if (key !== null) state.executionContextFrames.delete(key);
 };
 
@@ -68,10 +70,11 @@ export const handleScriptParsed = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const scriptId = cdpStringValue(params.scriptId);
-  const rawUrl = cdpStringValue(params.url) ?? "";
+  const facts = readCdpScriptParsed(params);
+  const scriptId = facts.scriptId;
+  const rawUrl = facts.url ?? "";
   const sanitized = allowedSanitizedUrl(rawUrl, state.allowedOrigins);
-  if (scriptId === undefined) {
+  if (scriptId === undefined || scriptId === "") {
     state.completeness.exclude("scripts", "invalid_protocol_value");
     return;
   }
@@ -86,22 +89,27 @@ export const handleScriptParsed = (
     state.completeness.exclude("scripts", exclusionReasonForUrl(rawUrl));
     return;
   }
-  const executionContext = executionContextKey(params.executionContextId);
+  const executionContext = facts.contextKey;
+  const attribution = selectCdpScriptFrame(
+    facts.frameClaim,
+    executionContext === null
+      ? undefined
+      : state.executionContextFrames.get(executionContext),
+  );
+  if (attribution.invalid || attribution.conflicting)
+    state.completeness.exclude("scripts", "invalid_protocol_value");
   const baseScript = {
     scriptId,
     rawUrl,
     url: sanitized.url,
     origin: sanitized.origin,
-    ...scriptMetadataValues(params),
+    ...facts.metadata,
     executionContextKey: executionContext,
-    frameId:
-      executionContext === null
-        ? null
-        : (state.executionContextFrames.get(executionContext) ?? null),
+    frameId: attribution.frameId,
   };
   const baseBytes = scriptMetadataStringBytes(baseScript);
   const sourceMapDeclared =
-    typeof params.sourceMapURL === "string" && params.sourceMapURL.length > 0;
+    typeof facts.sourceMapUrl === "string" && facts.sourceMapUrl.length > 0;
   if (
     state.scripts.size >= CDP_CAPTURE_SCRIPT_METADATA_LIMITS.scripts ||
     baseBytes >
@@ -113,7 +121,7 @@ export const handleScriptParsed = (
     return;
   }
   const sourceMap = sourceMapForScript(
-    params.sourceMapURL,
+    facts.sourceMapUrl,
     rawUrl,
     state,
     CDP_CAPTURE_SCRIPT_METADATA_LIMITS.retainedBytes -

@@ -1,40 +1,6 @@
 import { z } from "zod";
 
 const integer = z.int().min(0);
-const contextAuxDataSchema = z
-  .object({
-    frameId: z.string().optional(),
-    isDefault: z.boolean().optional(),
-    type: z.string().optional(),
-  })
-  .passthrough();
-/** Validated producer script metadata; optional declarations remain unknown when absent. */
-export const runtimeScriptParsedSchema = z.object({
-  scriptId: z.string().min(1),
-  url: z.string(),
-  executionContextId: integer,
-  startLine: integer,
-  startColumn: integer,
-  endLine: integer,
-  endColumn: integer,
-  hash: z.string().optional(),
-  sourceMapURL: z.string().optional(),
-  hasSourceURL: z.boolean().optional(),
-  scriptLanguage: z.string().optional(),
-  executionContextAuxData: contextAuxDataSchema.optional(),
-});
-/** Frame ownership is taken from producer context metadata, independently of source URLs. */
-export const runtimeContextSchema = z.object({
-  context: z
-    .object({
-      id: integer,
-      origin: z.string().optional(),
-      name: z.string().optional(),
-      uniqueId: z.string().optional(),
-      auxData: contextAuxDataSchema.optional(),
-    })
-    .passthrough(),
-});
 const range = z.object({
   startOffset: integer,
   endOffset: integer,

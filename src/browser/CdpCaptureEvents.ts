@@ -1,3 +1,4 @@
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpEvent } from "./CdpConnection.js";
@@ -31,7 +32,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     string,
     { readonly request: number; readonly response: number }
   >();
-  readonly executionContextFrames = new Map<string, string>();
+  readonly executionContextFrames = new Map<string, CdpContextFrameClaim>();
   readonly network = new Map<string, NetworkState>();
   readonly networkRequestTimestamps = new Map<string, number>();
   readonly malformedRedirectRequestIds = new Set<string>();
