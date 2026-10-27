@@ -118,3 +118,15 @@ export {
   probeOptionalEngine,
   ADVANCED_ANALYZERS,
 } from "./analyzers.mjs";
+export {
+  capabilityMatrix,
+  coverageSummary,
+  renderMatrixMarkdown,
+  REA_FORMATS,
+  BEYOND_REA,
+} from "./matrix.mjs";
+export {
+  benchmark,
+  benchmarkEvidence,
+  renderBenchmarkMarkdown,
+} from "./benchmark.mjs";

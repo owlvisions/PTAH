@@ -115,3 +115,15 @@ Commercial engines (IDA, Hopper, JEB, Binary Ninja) are never bundled; their
 adapters, when added, call the user's own licensed installation.
 
 Run the tests with `node --test test/*.test.mjs` from this directory.
+
+## Capability matrix and benchmark
+
+- `CAPABILITY-MATRIX.md` — every (format, task) → PTAH providers, with a
+  parity/beyond-REA mark. Regenerate: `renderMatrixMarkdown(createDefaultRegistry())`.
+- `BENCHMARK.md` — measured run over the test fixtures (tasks, provider,
+  status, fallbacks, ms). Regenerate: `benchmark({ engine, targets })`.
+
+Latest measured run on this machine: 27 providers (11 tool, 7 engine, 9
+built-in), 21 formats; 18/18 benchmark tasks produced evidence across 6
+formats in ~6.2 s using 10 providers. The REA column is REA's documented
+coverage, not a head-to-head timing.
