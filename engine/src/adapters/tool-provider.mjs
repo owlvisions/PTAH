@@ -68,6 +68,9 @@ export class ToolProvider extends AnalysisProvider {
       timeoutMs: context.timeoutMs ?? 30_000,
       maxOutputBytes: context.maxOutputBytes ?? 8 * 1024 * 1024,
       env: toolEnvironment(env),
+      // Run inside the scratch dir so any stray files a tool drops in its cwd
+      // (e.g. unblob.log) land there and are cleaned up, not in the repo.
+      cwd: context.cwd,
     });
     if (result.timedOut)
       throw new ToolFailure(
@@ -107,6 +110,7 @@ export class ToolProvider extends AnalysisProvider {
     try {
       const run = await this.execute(target, args, {
         ...context,
+        cwd: context.cwd ?? base,
         tokens: { "{outdir}": outdir, ...context.tokens },
         display: { "{outdir}": "<outdir>", ...context.display },
       });

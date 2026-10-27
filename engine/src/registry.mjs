@@ -9,6 +9,33 @@ import { TASKS, unavailableEvidence, validateEvidence } from "./evidence.mjs";
 import { contractProblems } from "./provider.mjs";
 
 const PROBE_TIMEOUT_MS = 10_000;
+const PROVIDER_TIMEOUT_MS = 20 * 60_000;
+/** Failure messages that mean a provider is not installed, so later runs skip it. */
+const UNRUNNABLE =
+  /not found|not available|not installed|not bundled|ENOENT|command not found/iu;
+
+/** The comparable values each task's evidence contributes to cross-validation. */
+const names = (list) =>
+  Array.isArray(list)
+    ? list
+        .map((item) => item?.name ?? item)
+        .filter((v) => typeof v === "string")
+    : [];
+const CROSS_KEYS = {
+  importsExports: (evidence) =>
+    evidence.flatMap((e) => [
+      ...names(e.data.imports).map((n) => `import:${n}`),
+      ...names(e.data.exports).map((n) => `export:${n}`),
+    ]),
+  symbols: (evidence) =>
+    evidence.flatMap((e) =>
+      Object.values(e.data.tables ?? {}).flatMap((table) =>
+        names(table).map((n) => `sym:${n}`),
+      ),
+    ),
+  sections: (evidence) =>
+    evidence.flatMap((e) => names(e.data.sections).map((n) => `section:${n}`)),
+};
 
 const withTimeout = (promise, ms, label) =>
   Promise.race([
@@ -150,9 +177,15 @@ export class CapabilityRegistry {
           attempts,
         };
       try {
-        const evidence = (await provider[task](target, context)).map(
-          validateEvidence,
-        );
+        // Bound each provider call: a tool hang must not stall the registry
+        // beyond the tool's own exec timeout.
+        const evidence = (
+          await withTimeout(
+            provider[task](target, context),
+            context.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS,
+            `${provider.id} ${task}`,
+          )
+        ).map(validateEvidence);
         if (evidence.length === 0)
           throw new Error("provider returned no evidence");
         if (evidence.some((item) => item.targetSha256 !== target.sha256))
@@ -163,6 +196,18 @@ export class CapabilityRegistry {
         return { evidence, provider: provider.id, cached: false, attempts };
       } catch (error) {
         attempts.push({ provider: provider.id, error: error.message });
+        // A provider that turns out not to be runnable is demoted so later
+        // runs skip it instead of repeating a slow failure.
+        if (UNRUNNABLE.test(error.message)) {
+          const probe = this.#probes.get(provider.id);
+          if (probe)
+            this.#probes.set(provider.id, {
+              ...probe,
+              available: false,
+              reason: error.message,
+              demoted: true,
+            });
+        }
       }
     }
     const reason =
@@ -185,6 +230,52 @@ export class CapabilityRegistry {
   }
 
   /** Run several tasks concurrently with a bounded number in flight. */
+  /**
+   * Run every available provider for one task and compare their results on a
+   * task-specific key, so an independent engine can corroborate a finding.
+   * Returns per-provider evidence plus agreement: a value seen by more than
+   * one provider is `corroborated`; one seen by a lone provider is `single`.
+   */
+  async crossValidate(task, target, context = {}) {
+    if (!TASKS.includes(task)) throw new TypeError(`unknown task: ${task}`);
+    if (this.#probes.size < this.#providers.size) await this.probe();
+    const candidates = this.candidates(task, target.format);
+    const byProvider = [];
+    for (const provider of candidates) {
+      const result = await this.run(task, target, {
+        ...context,
+        provider: provider.id,
+      });
+      if (result.provider)
+        byProvider.push({ provider: provider.id, evidence: result.evidence });
+    }
+    const key = CROSS_KEYS[task];
+    const tally = new Map();
+    for (const { provider, evidence } of byProvider)
+      for (const value of key ? key(evidence) : [])
+        (tally.get(value) ?? tally.set(value, new Set()).get(value)).add(
+          provider,
+        );
+    const items = [...tally.entries()].map(([value, providers]) => ({
+      value,
+      providers: [...providers].sort(compareCodePoints),
+      support: providers.size >= 2 ? "corroborated" : "single",
+    }));
+    return {
+      task,
+      providers: byProvider.map((entry) => entry.provider),
+      corroborated: items.filter((item) => item.support === "corroborated")
+        .length,
+      single: items.filter((item) => item.support === "single").length,
+      agreement: items.length
+        ? items.filter((item) => item.support === "corroborated").length /
+          items.length
+        : null,
+      items: key ? items : undefined,
+      evidence: byProvider,
+    };
+  }
+
   async runAll(tasks, target, context = {}, concurrency = 4) {
     const results = {};
     const queue = [...tasks];

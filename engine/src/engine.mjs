@@ -53,6 +53,12 @@ export function createEngine({ registry, targetChecks = [] }) {
           log.push(...Object.values(results));
           return results;
         },
+        async crossValidate(task, context = {}) {
+          const result = await registry.crossValidate(task, target, context);
+          await guard();
+          log.push(...result.evidence);
+          return result;
+        },
         verify: () => checkDrift(target),
       };
     },
