@@ -130,3 +130,8 @@ export {
   benchmarkEvidence,
   renderBenchmarkMarkdown,
 } from "./benchmark.mjs";
+export {
+  reaMetrics,
+  compareInspections,
+  renderHeadToHead,
+} from "./compare-rea.mjs";
