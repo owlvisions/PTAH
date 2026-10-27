@@ -456,6 +456,208 @@ function unavailable(target, task, reason) {
   });
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// #37  License detection from embedded notices and strings
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Well-known SPDX identifiers and their text signatures. */
+const LICENSE_PATTERNS = [
+  ["MIT", /\bPermission is hereby granted, free of charge\b/u],
+  ["Apache-2.0", /\bApache License,?\s+Version 2\.0\b/iu],
+  ["GPL-2.0-only", /\bGNU General Public License\b.*version 2\b/isu],
+  ["GPL-3.0-only", /\bGNU General Public License\b.*version 3\b/isu],
+  ["LGPL-2.1-only", /\bGNU Lesser General Public License\b.*version 2\.1\b/isu],
+  [
+    "BSD-2-Clause",
+    /\bRedistribution and use in source and binary forms\b.*\bneither the name\b/isu,
+  ],
+  [
+    "BSD-3-Clause",
+    /\bRedistribution and use in source and binary forms\b.*\bNeither the name\b.*\bendorse\b/isu,
+  ],
+  ["ISC", /\bPermission to use, copy, modify, and(?:\/or)? distribute\b/iu],
+  ["MPL-2.0", /\bMozilla Public License\b.*\b2\.0\b/isu],
+  ["CC0-1.0", /\bCreative Commons\b.*\bCC0\b/isu],
+  [
+    "Unlicense",
+    /\bThis is free and unencumbered software released into the public domain\b/iu,
+  ],
+  ["AGPL-3.0-only", /\bGNU Affero General Public License\b.*version 3\b/isu],
+  // SPDX-License-Identifier: header (machine-readable)
+  ["SPDX-header", /SPDX-License-Identifier:\s*([\w.+-]+)/u],
+];
+
+/**
+ * Scan a text buffer for embedded license notices.
+ * Returns { licenses: string[], spdx: string|null }.
+ */
+export function detectLicenses(text) {
+  const found = new Set();
+  let spdx = null;
+  for (const [spdxId, pattern] of LICENSE_PATTERNS) {
+    const m = pattern.exec(text);
+    if (!m) continue;
+    if (spdxId === "SPDX-header") {
+      spdx = m[1];
+      found.add(m[1]);
+    } else {
+      found.add(spdxId);
+    }
+  }
+  return { licenses: [...found], spdx };
+}
+
+/**
+ * Scan a target file for embedded license notices as Evidence.
+ * Works on any text-bearing file: binaries include embedded notices.
+ */
+export async function scanLicenses(target, context = {}) {
+  const { bytes } = await readTargetBytes(target.path, context.maxBytes);
+  const text = bytes.toString("latin1");
+  const { licenses, spdx } = detectLicenses(text);
+  return [
+    createEvidence({
+      task: "manifest",
+      targetSha256: target.sha256,
+      provider: builtin(["<builtin>", "licenses"]),
+      confidence: "observed",
+      status: "ok",
+      summary: licenses.length
+        ? `${licenses.length} license notice(s) detected: ${licenses.join(", ")}`
+        : "no embedded license notices detected",
+      data: { licenses, spdx, kind: "licenses" },
+      rawSha256: sha256(canonicalJson(licenses)),
+      limitations: [
+        "Text pattern matching only; not a substitute for a full license compliance audit.",
+      ],
+    }),
+  ];
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// #33  SBOM export (CycloneDX JSON)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Generate a CycloneDX 1.4 JSON SBOM from a component inventory.
+ * `components` is [{ecosystem, name, version}] as returned by parseDependencies.
+ * `metadata` is {target, sha256, timestamp}.
+ */
+export function generateCycloneDx(components, metadata = {}) {
+  const now = metadata.timestamp ?? new Date().toISOString();
+  return {
+    bomFormat: "CycloneDX",
+    specVersion: "1.4",
+    version: 1,
+    serialNumber: `urn:uuid:ptah-${sha256(JSON.stringify(components)).slice(0, 16)}`,
+    metadata: {
+      timestamp: now,
+      tools: [{ vendor: "PTAH", name: "ptah-engine", version: "0.1.0" }],
+      component: metadata.target
+        ? {
+            type: "file",
+            name: metadata.target,
+            hashes: [{ alg: "SHA-256", content: metadata.sha256 ?? "" }],
+          }
+        : undefined,
+    },
+    components: components.map((c) => ({
+      type: "library",
+      name: c.name,
+      version: c.version ?? null,
+      purl: `pkg:${c.ecosystem}/${encodeURIComponent(c.name)}@${c.version ?? ""}`,
+    })),
+  };
+}
+
+/**
+ * Generate a CycloneDX SBOM Evidence from a dependency manifest file.
+ */
+export async function exportSbom(target, context = {}) {
+  const text = await readFile(target.path, "utf8");
+  const components = parseDependencies(target.name, text);
+  const sbom = generateCycloneDx(components, {
+    target: target.name,
+    sha256: target.sha256,
+  });
+  return [
+    createEvidence({
+      task: "manifest",
+      targetSha256: target.sha256,
+      provider: builtin(["<builtin>", "sbom"]),
+      confidence: "observed",
+      status: "ok",
+      summary: `CycloneDX 1.4 SBOM: ${components.length} component(s)`,
+      data: { kind: "sbom", format: "cyclonedx-1.4", sbom },
+      rawSha256: sha256(canonicalJson(sbom)),
+      limitations: [
+        "SBOM is derived from the manifest file only; transitive dependencies may be incomplete.",
+      ],
+    }),
+  ];
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// #35  Fuzzy hashing (ssdeep / TLSH) via external tool
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Compute fuzzy hash of a target using ssdeep (or tlsh if ssdeep absent).
+ * Returns an Evidence; degrades gracefully if neither tool is installed.
+ */
+export async function fuzzyHash(target, context = {}) {
+  const env = context.env ?? process.env;
+  const ssdeep = await findExecutable("ssdeep", env);
+  const tlsh = await findExecutable("tlsh", env);
+  if (!ssdeep && !tlsh)
+    return [
+      unavailable(
+        target,
+        "resources",
+        "ssdeep or tlsh is not installed; install one to enable fuzzy hashing",
+      ),
+    ];
+  const tool = ssdeep ?? tlsh;
+  const toolName = ssdeep ? "ssdeep" : "tlsh";
+  const args = ssdeep ? ["-b", target.path] : ["--xref", "-f", target.path];
+  const result = await runTool(tool, args, {
+    timeoutMs: context.timeoutMs ?? 30_000,
+    maxOutputBytes: 65536,
+    env: toolEnvironment(env),
+  });
+  if (result.code !== 0)
+    return [
+      unavailable(
+        target,
+        "resources",
+        `${toolName} exited ${result.code}: ${result.stderr.trim().slice(0, 100)}`,
+      ),
+    ];
+  const lines = result.stdout.trim().split("\n").filter(Boolean);
+  const hashLine = lines.find((l) => !l.startsWith("ssdeep")) ?? lines[0];
+  const hashValue = hashLine?.split(",")[0]?.trim() ?? hashLine?.trim() ?? "";
+  return [
+    createEvidence({
+      task: "resources",
+      targetSha256: target.sha256,
+      provider: {
+        id: toolName,
+        tool: toolName,
+        version: null,
+        argv: [toolName, "<target>"],
+      },
+      confidence: "observed",
+      status: "ok",
+      summary: `${toolName} fuzzy hash: ${hashValue.slice(0, 60)}${hashValue.length > 60 ? "…" : ""}`,
+      data: { kind: "fuzzy-hash", algorithm: toolName, hash: hashValue },
+      rawSha256: sha256(hashValue),
+      limitations: [
+        "Fuzzy hashes are similarity fingerprints; they are not collision-resistant and should not be used as identity proofs.",
+      ],
+    }),
+  ];
+}
+
 /** Catalog for doctor and the capability matrix. */
 export const ADVANCED_ANALYZERS = Object.freeze([
   { id: "secrets", kind: "builtin", beyondRea: false, run: scanSecrets },
@@ -481,5 +683,14 @@ export const ADVANCED_ANALYZERS = Object.freeze([
     beyondRea: false,
     optional: true,
     dynamic: true,
+  },
+  { id: "licenses", kind: "builtin", beyondRea: true, run: scanLicenses },
+  { id: "sbom", kind: "builtin", beyondRea: true, run: exportSbom },
+  {
+    id: "ssdeep",
+    kind: "tool",
+    beyondRea: true,
+    optional: true,
+    run: fuzzyHash,
   },
 ]);

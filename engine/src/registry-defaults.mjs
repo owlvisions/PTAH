@@ -10,6 +10,7 @@ import { ghidraProviders } from "./adapters/ghidra.mjs";
 import { gdbProviders } from "./adapters/gdb.mjs";
 import { licensedEngineProviders } from "./adapters/licensed-engines.mjs";
 import { inspectorProviders } from "./adapters/inspectors/index.mjs";
+import { staticExtraProviders } from "./adapters/static-extra.mjs";
 import { CapabilityRegistry } from "./registry.mjs";
 
 /** Every adapter PTAH ships, grouped so stages and docs can enumerate them. */
@@ -26,6 +27,7 @@ export function defaultProviders() {
     ...gdbProviders(),
     ...licensedEngineProviders(),
     ...inspectorProviders(),
+    ...staticExtraProviders(),
   ];
 }
 

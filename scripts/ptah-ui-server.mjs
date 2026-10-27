@@ -566,6 +566,125 @@ export async function createPtahUiServer(options = {}) {
         response.end(data);
         return;
       }
+      // ── Engine endpoints (#46/#47) ──────────────────────────────────────────
+      if (request.method === "GET" && request.url === "/api/engine/providers") {
+        const { createDefaultRegistry } =
+          await import("../engine/src/index.mjs");
+        const registry = createDefaultRegistry();
+        const { providers, routes } = await registry.probe();
+        return sendJson(response, 200, {
+          providers,
+          formatCount: Object.keys(routes).length,
+        });
+      }
+      if (request.method === "GET" && request.url === "/api/engine/matrix") {
+        const { createDefaultRegistry, renderMatrixMarkdown } =
+          await import("../engine/src/index.mjs");
+        const registry = createDefaultRegistry();
+        await registry.probe();
+        return sendJson(response, 200, {
+          matrix: renderMatrixMarkdown(registry),
+        });
+      }
+      if (request.method === "POST" && request.url === "/api/engine/analyze") {
+        if (!targetPath)
+          return sendJson(response, 409, { error: "upload a target first" });
+        const body = await readBody(request);
+        const tasks = body.tasks ?? [
+          "manifest",
+          "sections",
+          "symbols",
+          "importsExports",
+          "strings",
+        ];
+        const {
+          createDefaultRegistry,
+          createEngine,
+          renderHtmlReport,
+          EntropyInspector,
+          CryptoInspector,
+        } = await import("../engine/src/index.mjs");
+        const registry = createDefaultRegistry();
+        const engine = createEngine({ registry });
+        const attestation = {
+          ownership: "owner",
+          purpose: "interoperability",
+          statement: "ptah-ui",
+        };
+        const session = await engine.open(targetPath, attestation);
+        const results = await session.runAll(tasks, {});
+        // Also run entropy and crypto inspectors
+        try {
+          const entropyResult = await session.run("sections", {
+            provider: "entropy-inspector",
+          });
+          if (entropyResult.provider) results["entropy"] = entropyResult;
+        } catch {
+          /* optional */
+        }
+        try {
+          const cryptoResult = await session.run("resources", {
+            provider: "crypto-inspector",
+          });
+          if (cryptoResult.provider) results["crypto"] = cryptoResult;
+        } catch {
+          /* optional */
+        }
+        const htmlReport = renderHtmlReport(session.target, results, {
+          title: `PTAH Engine — ${session.target.path}`,
+        });
+        return sendJson(response, 200, {
+          target: {
+            format: session.target.format,
+            sha256: session.target.sha256,
+            size: session.target.size,
+          },
+          results: Object.fromEntries(
+            Object.entries(results).map(([task, r]) => [
+              task,
+              {
+                provider: r.provider,
+                status: r.evidence[0]?.status,
+                summary: r.evidence[0]?.summary,
+                data: r.evidence[0]?.data,
+                confidence: r.evidence[0]?.confidence,
+              },
+            ]),
+          ),
+          htmlReport,
+        });
+      }
+      if (
+        request.method === "GET" &&
+        request.url === "/api/engine/report.html"
+      ) {
+        if (!targetPath)
+          return sendJson(response, 409, { error: "upload a target first" });
+        const { createDefaultRegistry, createEngine, renderHtmlReport } =
+          await import("../engine/src/index.mjs");
+        const registry = createDefaultRegistry();
+        const engine = createEngine({ registry });
+        const attestation = {
+          ownership: "owner",
+          purpose: "interoperability",
+          statement: "ptah-ui",
+        };
+        const session = await engine.open(targetPath, attestation);
+        const results = await session.runAll(
+          ["manifest", "sections", "symbols", "importsExports", "strings"],
+          {},
+        );
+        const html = renderHtmlReport(session.target, results);
+        const buf = Buffer.from(html);
+        response.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          "content-length": buf.length,
+          "content-disposition":
+            'attachment; filename="ptah-engine-report.html"',
+        });
+        response.end(buf);
+        return;
+      }
       sendJson(response, 404, { error: "not found" });
     } catch (error) {
       sendJson(response, error?.statusCode ?? 400, {

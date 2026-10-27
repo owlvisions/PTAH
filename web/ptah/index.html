@@ -16,6 +16,20 @@
         --good: #70d6a1;
         --bad: #ff9a9a;
       }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #f0f4ff;
+        --panel: #ffffff;
+        --line: #c8d5ef;
+        --text: #1a2340;
+        --muted: #5a6a8a;
+        --accent: #2563eb;
+        --good: #16a34a;
+        --bad: #dc2626;
+      }
+      :root[data-theme="light"] body {
+        background: var(--bg);
+      }
       * {
         box-sizing: border-box;
       }
@@ -254,7 +268,10 @@
           Local investigation workbench · evidence-first reverse engineering
         </div>
       </div>
-      <div class="pill">LOCAL ONLY · NO TARGET EXECUTION</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <div class="pill">LOCAL ONLY · NO TARGET EXECUTION</div>
+        <button id="themeToggle" type="button" class="secondary" style="padding:4px 10px;font-size:12px" title="Toggle dark/light theme">🌙 Dark</button>
+      </div>
     </header>
     <main class="layout">
       <aside class="stack">
@@ -564,8 +581,28 @@
         </div>
       </div>
     </main>
+    <!-- ── Engine workbench panel ─────────────────────────────────────────── -->
+    <section style="margin:24px clamp(12px,4vw,44px);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+        <div>
+          <h2 style="margin:0;font-size:17px">⚡ PTAH Engine — 37+ Providers</h2>
+          <p class="muted" style="margin:4px 0 0;font-size:12px">Standalone analysis engine: demangling, crypto constants, entropy, SBOM, license detection, and more. Zero legacy dependency.</p>
+        </div>
+        <div class="actions" style="gap:8px">
+          <button id="engineAnalyzeBtn" class="button" type="button">Run Engine Analysis</button>
+          <button id="engineProvidersBtn" class="secondary" type="button">Provider Matrix</button>
+          <button id="engineReportBtn" class="secondary" type="button">HTML Report ↗</button>
+        </div>
+      </div>
+      <pre id="engineOutput" style="background:var(--bg);padding:12px;border-radius:8px;font-size:12px;min-height:60px;white-space:pre-wrap;overflow:auto;max-height:280px">Upload a target, then click Run Engine Analysis.</pre>
+      <div id="entropyHeatmap" style="margin-top:12px"></div>
+      <div id="matrixSection" class="hidden" style="margin-top:16px;overflow-x:auto">
+        <h3 style="font-size:14px;margin-bottom:8px">Provider availability matrix</h3>
+        <div id="matrixOutput"></div>
+      </div>
+    </section>
     <footer>
-      PTAH migration preview · data stays in a temporary local workspace ·
+      PTAH — evidence-first program analysis · data stays in a temporary local workspace ·
       review evidence provenance before trusting conclusions.
     </footer>
     <script>
@@ -971,6 +1008,108 @@
         }),
       );
       refresh();
+
+      // ── Engine panel ────────────────────────────────────────────────────────
+      const engineOutput = $("engineOutput");
+      const entropyOutput = $("entropyHeatmap");
+
+      function renderEntropyHeatmap(windows) {
+        if (!windows?.length) { entropyOutput.innerHTML = "<em>No entropy data.</em>"; return; }
+        const MAX_CELLS = 500;
+        const step = Math.max(1, Math.floor(windows.length / MAX_CELLS));
+        const cells = windows
+          .filter((_, i) => i % step === 0)
+          .map((w) => {
+            const pct = Math.min(w.entropy / 8, 1);
+            const r = Math.round(pct * 220);
+            const g = Math.round((1 - pct) * 120);
+            const b = 60;
+            const title = `0x${w.offset.toString(16)}: ${w.entropy.toFixed(2)} bits${w.packed ? " [PACKED]" : ""}`;
+            const div = document.createElement("span");
+            div.title = title;
+            div.style.cssText = `display:inline-block;width:5px;height:24px;background:rgb(${r},${g},${b});opacity:${w.packed?1:0.75};cursor:default`;
+            return div;
+          });
+        entropyOutput.innerHTML = `<div style="margin-bottom:4px;font-size:11px;color:var(--muted)">${windows.length} windows of 256B · red = high entropy · green = low · packed threshold: 7.4 bits</div>`;
+        const bar = document.createElement("div");
+        bar.style.cssText = "display:flex;flex-wrap:wrap;gap:1px;line-height:0";
+        bar.append(...cells);
+        entropyOutput.append(bar);
+      }
+
+      function renderProviderMatrix(providers) {
+        if (!providers?.length) { $("matrixOutput").innerHTML = "<em>No providers.</em>"; return; }
+        const kinds = { builtin: "🔵", tool: "🟢", engine: "🟣" };
+        const rows = providers.map((p) => {
+          const av = p.available ? "✓" : "–";
+          const avColor = p.available ? "var(--good)" : "var(--muted)";
+          const fmts = (p.formats ?? []).slice(0, 6).join(", ") + (p.formats?.length > 6 ? "…" : "");
+          const tasks = (p.tasks ?? []).join(", ");
+          return `<tr>
+            <td>${kinds[p.kind] ?? "⚪"} <strong>${p.id}</strong></td>
+            <td style="color:${avColor}">${av} ${p.version ? `<small>(${p.version.slice(0, 20)})</small>` : ""}</td>
+            <td>${fmts}</td>
+            <td style="font-size:11px">${tasks}</td>
+          </tr>`;
+        }).join("");
+        $("matrixOutput").innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="text-align:left;border-bottom:1px solid var(--line)">
+            <th>Provider</th><th>Available</th><th>Formats</th><th>Tasks</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      }
+
+      $("engineAnalyzeBtn").addEventListener("click", async () => {
+        engineOutput.textContent = "Running PTAH Engine analysis…";
+        entropyOutput.innerHTML = "";
+        try {
+          const result = await api("/api/engine/analyze", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ tasks: ["manifest", "sections", "symbols", "importsExports", "strings", "resources"] }),
+          });
+          const tgt = result.target;
+          const lines = [`Target: ${tgt.format?.toUpperCase() ?? "?"} · ${tgt.sha256?.slice(0, 16)}… · ${tgt.size ?? "?"}B\n`];
+          for (const [task, r] of Object.entries(result.results ?? {})) {
+            const icon = r.status === "ok" ? "✓" : r.status === "partial" ? "◐" : r.status === "unavailable" ? "–" : "✗";
+            lines.push(`${icon} ${task.padEnd(16)} [${r.provider ?? "—"}] ${r.summary ?? ""}`);
+          }
+          engineOutput.textContent = lines.join("\n");
+          // Entropy heatmap
+          const entropy = result.results?.entropy ?? result.results?.sections;
+          if (entropy?.data?.windows) renderEntropyHeatmap(entropy.data.windows);
+          // Show crypto findings
+          const crypto = result.results?.crypto;
+          if (crypto?.data?.cryptoConstants?.length) {
+            const found = crypto.data.algorithmsDetected.join(", ");
+            engineOutput.textContent += `\n\n⚠ Crypto constants: ${found}`;
+          }
+        } catch (err) { showError(err); }
+      });
+
+      $("engineProvidersBtn").addEventListener("click", async () => {
+        try {
+          showStatus("Loading provider matrix…");
+          const result = await api("/api/engine/providers");
+          renderProviderMatrix(result.providers);
+          $("matrixSection").classList.remove("hidden");
+          showStatus(`${result.providers.length} providers across ${result.formatCount} formats.`);
+        } catch (err) { showError(err); }
+      });
+
+      $("engineReportBtn").addEventListener("click", () => {
+        window.open("/api/engine/report.html", "_blank");
+      });
+
+      // Theme toggle
+      const themeBtn = $("themeToggle");
+      let isDark = true;
+      themeBtn.addEventListener("click", () => {
+        isDark = !isDark;
+        document.documentElement.dataset.theme = isDark ? "dark" : "light";
+        themeBtn.textContent = isDark ? "🌙 Dark" : "☀ Light";
+      });
     </script>
   </body>
 </html>

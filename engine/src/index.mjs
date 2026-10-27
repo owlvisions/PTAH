@@ -117,6 +117,11 @@ export {
   emulate,
   probeOptionalEngine,
   ADVANCED_ANALYZERS,
+  detectLicenses,
+  scanLicenses,
+  generateCycloneDx,
+  exportSbom,
+  fuzzyHash,
 } from "./analyzers.mjs";
 export {
   capabilityMatrix,
@@ -163,3 +168,19 @@ export {
   planApkPull,
   parseAdbDevices,
 } from "./adapters/android-device.mjs";
+export {
+  DemangledNmProvider,
+  CryptoInspector,
+  EntropyInspector,
+  EntryPointInspector,
+  staticExtraProviders,
+  detectCryptoConstants,
+  detectMangledLanguage,
+  demangleRustV0,
+  stripRustHash,
+  shannonEntropy,
+  entropyWindows,
+} from "./adapters/static-extra.mjs";
+export { DiskCache, attachDiskCache } from "./disk-cache.mjs";
+export { renderHtmlReport, renderSarifReport } from "./report.mjs";
+export { loadPlugin, loadPlugins } from "./plugin.mjs";

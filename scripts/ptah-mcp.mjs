@@ -594,6 +594,70 @@ const tools = [
     },
   },
   {
+    name: "ptah_engine_analyze",
+    description:
+      "Run the standalone PTAH Engine on a target. Runs up to five tasks (manifest, sections, symbols, importsExports, strings) through 37+ built-in providers. Requires --ownership and --purpose attestation (or --i-own-this). Never executes the target.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Path to the target file" },
+        task: {
+          type: "string",
+          description: "Single task to run (default: all five standard tasks)",
+          enum: [
+            "manifest",
+            "sections",
+            "symbols",
+            "importsExports",
+            "strings",
+            "disassemble",
+            "decompile",
+            "resources",
+          ],
+        },
+        provider: { type: "string", description: "Pin a specific provider id" },
+        ownership: {
+          type: "string",
+          enum: ["owner", "authorized-researcher", "authorized-auditor"],
+          description: "Attestation: your ownership or authorization status",
+        },
+        purpose: {
+          type: "string",
+          enum: [
+            "interoperability",
+            "security-research",
+            "education",
+            "archival",
+            "authorized-pentest",
+          ],
+          description: "Attestation: purpose for the analysis",
+        },
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_engine_matrix",
+    description:
+      "Render the PTAH Engine capability matrix as Markdown: all 37+ providers, 26+ formats, every task, parity-vs-beyond classification.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ptah_engine_providers",
+    description:
+      "List all engine providers with their kind (builtin/tool/engine), supported formats, tasks, and availability on this machine.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
     name: "ptah_static_analyze",
     description:
       "Run an allow-listed static analyzer (objdump, readelf, nm, file, rabin2, rz-bin, monodis, aapt2, wasm-objdump, wasm-tools) with fixed argv, timeout, output cap, and optional bubblewrap isolation and prlimit limits; the target itself is not executed.",
@@ -772,6 +836,76 @@ async function artifactDigest(path) {
     name: fingerprint.id,
   };
 }
+async function runEngineMcp(toolName, args) {
+  const { createDefaultRegistry, createEngine, renderMatrixMarkdown } =
+    await import("../engine/src/index.mjs");
+  const registry = createDefaultRegistry();
+  if (toolName === "ptah_engine_providers") {
+    const { providers, routes } = await registry.probe();
+    return {
+      providers: providers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        kind: p.kind,
+        formats: p.formats,
+        tasks: Object.keys(p.tasks),
+        available: p.available,
+        version: p.version ?? null,
+      })),
+      formatCount: Object.keys(routes).length,
+    };
+  }
+  if (toolName === "ptah_engine_matrix") {
+    await registry.probe();
+    return { matrix: renderMatrixMarkdown(registry) };
+  }
+  // ptah_engine_analyze
+  const target = args.target;
+  if (typeof target !== "string" || !target.trim())
+    throw new TypeError("target must be a non-empty file path");
+  const ownership = args.ownership ?? "owner";
+  const purpose = args.purpose ?? "interoperability";
+  const attestation = {
+    ownership,
+    purpose,
+    statement: "ptah_engine_analyze MCP",
+  };
+  const engine = createEngine({ registry });
+  const session = await engine.open(target, attestation);
+  if (args.task) {
+    const result = await session.run(args.task, { provider: args.provider });
+    return {
+      target: { format: session.target.format, sha256: session.target.sha256 },
+      task: args.task,
+      provider: result.provider,
+      status: result.evidence[0].status,
+      summary: result.evidence[0].summary,
+      data: result.evidence[0].data,
+    };
+  }
+  const tasks = [
+    "manifest",
+    "sections",
+    "symbols",
+    "importsExports",
+    "strings",
+  ];
+  const results = await session.runAll(tasks, {});
+  return {
+    target: { format: session.target.format, sha256: session.target.sha256 },
+    results: Object.fromEntries(
+      Object.entries(results).map(([task, r]) => [
+        task,
+        {
+          provider: r.provider,
+          status: r.evidence[0].status,
+          summary: r.evidence[0].summary,
+        },
+      ]),
+    ),
+  };
+}
+
 async function callTool(name, args) {
   if (!args || typeof args !== "object" || Array.isArray(args))
     throw new TypeError("tool arguments must be an object");
@@ -983,6 +1117,10 @@ async function callTool(name, args) {
       });
     case "ptah_providers":
       return await discoverProviders();
+    case "ptah_engine_analyze":
+    case "ptah_engine_matrix":
+    case "ptah_engine_providers":
+      return await runEngineMcp(name, args);
     case "ptah_static_analyze":
       if (typeof args.target !== "string" || !args.target.trim())
         throw new TypeError("target must be a non-empty file path");

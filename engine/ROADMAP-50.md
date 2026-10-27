@@ -13,11 +13,11 @@ Legend: ☐ planned · ☑ done (with test) · ◐ partial.
 3. ☐ Control-flow graph per function with basic blocks.
 4. ☐ Type/struct recovery surfaced from Ghidra decompilation into evidence.
 5. ☐ String cross-reference: which function references each string.
-6. ☐ Constant and crypto-constant detection (AES S-box, SHA IV, base64 tables).
+6. ☑ Constant and crypto-constant detection (AES S-box, SHA IV, base64 tables).
 7. ☐ Import resolution across libraries (which dylib/so exports a symbol).
-8. ☐ Entry-point and init/fini array recovery for ELF/PE/Mach-O.
-9. ☐ Section entropy map with packed-region flagging per offset window.
-10. ☐ Symbol demangling (Itanium C++, Rust, Swift) in PTAH's own code.
+8. ☑ Entry-point and init/fini array recovery for ELF/PE/Mach-O.
+9. ☑ Section entropy map with packed-region flagging per offset window.
+10. ☑ Symbol demangling (Itanium C++, Rust, Swift) in PTAH's own code.
 
 ## B. Dynamic analysis in a consented sandbox (11–20)
 
@@ -49,16 +49,16 @@ Legend: ☐ planned · ☑ done (with test) · ◐ partial.
 
 31. ☐ YARA rule _bundles_ shipped (malware families, packers, compilers).
 32. ☐ CVE scanning with an offline, versioned advisory database + updater.
-33. ☐ SBOM export (CycloneDX / SPDX) from the dependency inventory.
+33. ☑ SBOM export (CycloneDX / SPDX) from the dependency inventory.
 34. ☐ Capability-to-ATT&CK mapping with confidence and evidence links.
-35. ☐ Similarity/clustering: fuzzy hashes (ssdeep/TLSH) across a corpus.
-36. ☐ Diffing two versions: added/removed/changed functions and strings.
-37. ☐ License detection from embedded notices and dependency metadata.
+35. ☑ Similarity/clustering: fuzzy hashes (ssdeep/TLSH) across a corpus.
+36. ☑ Diffing two versions: added/removed/changed functions and strings.
+37. ☑ License detection from embedded notices and dependency metadata.
 38. ☐ Secret validation hooks (opt-in, user-authorized scope only).
 
 ## E. Performance, scale & correctness (39–44)
 
-39. ☐ Persistent on-disk cache keyed by SHA-256 across runs.
+39. ☑ Persistent on-disk cache keyed by SHA-256 across runs.
 40. ☐ Parallel multi-target analysis with a work queue and progress events.
 41. ☐ Incremental analysis: reuse unchanged-region results on a new version.
 42. ☐ Deterministic, byte-stable reports verified by a golden-file test.
@@ -68,11 +68,11 @@ Legend: ☐ planned · ☑ done (with test) · ◐ partial.
 ## F. Surfaces & experience (45–50)
 
 45. ☑ Wire the engine into the `ptah` CLI (every provider reachable). — `ptah engine` (task/matrix/benchmark/providers/crossvalidate), tested.
-46. ☐ Expose engine providers as MCP tools for agents.
-47. ☐ A graphical workbench better than peers: evidence graph, hex+entropy,
+46. ☑ Expose engine providers as MCP tools for agents.
+47. ☑ A graphical workbench better than peers: evidence graph, hex+entropy,
     provider matrix, timeline, side-by-side diff, dark/light.
-48. ☐ HTML and SARIF reports with navigation and evidence drill-down.
-49. ☐ A plugin API so third parties add providers without forking.
+48. ☑ HTML and SARIF reports with navigation and evidence drill-down.
+49. ☑ A plugin API so third parties add providers without forking.
 50. ☐ Benchmark suite + public capability matrix vs named peers, reproducible.
 
 ## Execution rule

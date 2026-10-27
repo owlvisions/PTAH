@@ -125,5 +125,5 @@ void test("the engine now covers every the baseline analyzer provider area it ca
     );
   // APK now has both decode (apktool) and signature (apk-signature-inspector).
   assert.ok(routes.apk.manifest.includes("apk-signature-inspector"));
-  assert.ok(registry.providers.length >= 33);
+  assert.ok(registry.providers.length >= 37);
 });
