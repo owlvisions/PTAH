@@ -6,11 +6,11 @@
 
 **Every claim cites its evidence. Targets are never executed. Results are portable, checksummed, and diffable.**
 
-`ptah` CLI · `ptah-mcp` MCP server · `ptah ui` local workbench · inherited REA analyzers underneath
+`ptah` CLI · `ptah-mcp` MCP server · `ptah ui` local workbench · a standalone, zero-dependency analysis engine, with your own licensed engines underneath
 
 </div>
 
-PTAH is the primary product in this repository. It owns the investigation model, the CLI and MCP contracts, the local workbench, and the documentation. The REA runtime it inherited is retained as an internal compatibility layer: PTAH calls REA's analyzers through bounded adapters and keeps the `rea` / `rea-agents` entry points working for existing automation while PTAH-native capabilities grow.
+PTAH is the product in this repository: it owns the investigation model, the standalone analysis engine, the CLI and MCP contracts, the local workbench, and the documentation. It ships its own engine (`engine/`, reached via `ptah engine`) with 33 providers across 26 formats and zero runtime dependencies. A compatibility layer underneath — the inherited baseline runtime — is retained for provenance and kept working for existing automation; it is isolated from PTAH's own engine (enforced by test).
 
 ## Why PTAH
 
@@ -63,12 +63,12 @@ Run the dependency-free test suite with `npm run test:ptah`. Full instructions, 
 - **Native intelligence** (`ptah triage`, `structure`, `iocs`, `secrets`, `capabilities`, `rules`, `search`, `hexdump`, `hashes`, `compare`): one-call triage that records observed evidence, inferred capability hypotheses (with MITRE ATT&CK ids), prioritized questions, and next actions; bounds-checked ELF/PE parsing (sections with entropy, imports, exports, libraries, pefile-compatible imphash, packer hints); indicator extraction validated against real TLDs; secret detection that never echoes values; declarative text/hex rules; wildcard byte search; and target comparison. Any analysis command records its result with `--record INV`. Reports export as SARIF 2.1.0 and self-contained HTML; `summary`, `query`, and `timeline` give agents compact views.
 - **Analyzers** (`ptah analyze`): allow-listed `objdump`, `llvm-objdump`, `readelf`, `nm`, `file`, `rabin2`, `rz-bin`, `monodis`, `aapt2`, `wasm-objdump`, `wasm-tools` with fixed argv, no shell, timeout, output cap, pre/post target digests, optional bubblewrap isolation (`--isolation auto|required|none`) and prlimit CPU/memory limits — applied when available and reported honestly when not. Every adapter has a conformance test (missing tool, nonzero exit, timeout, output cap, wrong format, paths with spaces).
 - **Evaluation** (`ptah eval`): pinned synthetic fixtures with reference answers in `examples/ptah-eval`; reports check pass rate, claim-label precision, unsupported-claim rate, median/p95 latency, and `--baseline` regression detection.
-- **CLI** (`ptah`): 40+ commands including `info`, `self-check`, `providers`, `isolation`, `fingerprint --inspect`, `strings`, `carve`, `asar`, `wasm`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `set-claim-status`, `resolve-question`, `freeze`, `unfreeze`, `verify`, `lint`, `stats`, `history`, `schema`, `migrate`, `export-case`, `verify-case`, `import-case`, `sign-case`, `keygen`, `encrypt-case`, `decrypt-case`, `link-case`, `merge`, `report`, `diff`, `graph`, `plan`, `analyze`, `eval`, `watch`, `completion`, `agents`, `upstream-sync`, `doctor`, `triage`, `structure`, `hashes`, `search`, `hexdump`, `compare`, `iocs`, `secrets`, `capabilities`, `rules`, `summary`, `query`, `timeline`, and `ui`; `--quiet` everywhere. Any other command is routed to the inherited REA CLI.
+- **CLI** (`ptah`): 40+ commands including `info`, `self-check`, `providers`, `isolation`, `fingerprint --inspect`, `strings`, `carve`, `asar`, `wasm`, `init`, `add-evidence`, `add-claim`, `add-question`, `add-action`, `set-claim-status`, `resolve-question`, `freeze`, `unfreeze`, `verify`, `lint`, `stats`, `history`, `schema`, `migrate`, `export-case`, `verify-case`, `import-case`, `sign-case`, `keygen`, `encrypt-case`, `decrypt-case`, `link-case`, `merge`, `report`, `diff`, `graph`, `plan`, `analyze`, `eval`, `watch`, `completion`, `agents`, `upstream-sync`, `doctor`, `triage`, `structure`, `hashes`, `search`, `hexdump`, `compare`, `iocs`, `secrets`, `capabilities`, `rules`, `summary`, `query`, `timeline`, and `ui`; `--quiet` everywhere. Any other command is routed to the inherited baseline CLI.
 - **MCP server** (`ptah-mcp [--root DIR] [--workspace DIR]`): 40 tools annotated read-only or writing, protocol versions 2024-11-05 through 2025-06-18, a path policy that refuses credential locations and confines writes (`ptah_triage`, `ptah_structure`, `ptah_iocs`, `ptah_secrets`, `ptah_capabilities`, `ptah_rules`, `ptah_search`, `ptah_hexdump`, `ptah_hashes`, `ptah_compare`, `ptah_summary`, `ptah_query`, `ptah_timeline`, `ptah_init`, `ptah_add_evidence`, `ptah_add_claim`, `ptah_add_question`, `ptah_set_claim_status`, `ptah_resolve_question`, `ptah_fingerprint`, `ptah_inspect`, `ptah_strings`, `ptah_carve`, `ptah_asar`, `ptah_wasm`, `ptah_verify`, `ptah_report`, `ptah_diff`, `ptah_lint`, `ptah_stats`, `ptah_schema`, `ptah_graph`, `ptah_plan`, `ptah_providers`, `ptah_isolation`, `ptah_static_analyze`, `ptah_eval`, `ptah_case_export`, `ptah_case_verify`, `ptah_case_import`), three workflow prompts, server instructions describing the evidence rules, and root-bounded investigation resources.
 - **Workbench** (`ptah ui`): upload a target, build the investigation (every change in hash-chained history), run analyzers now or as cancellable background jobs, compare with an uploaded case, inspect reports/graphs/plans/lint/metrics/format/strings/carving/ASAR/WASM, view the evidence graph as SVG, and download Markdown reports, DOT/Mermaid graphs, and verified case bundles.
 - **AI coding agents** (`ptah agents`): registers the PTAH MCP server and installs the PTAH skill for 15 clients — Claude Code, Claude Desktop, OpenAI Codex, Gemini CLI, GitHub Copilot (VS Code and CLI), Cursor, Windsurf, OpenCode, Qwen Code, Cline, Roo Code, Kiro, Amazon Q, and Zed — at user level or per project (`--workspace DIR`, confined to that directory, with AGENTS.md/CLAUDE.md/GEMINI.md instructions); also packaged as a Gemini CLI extension (`gemini extensions install https://github.com/owlvisions/PTAH`) and a Claude Code plugin (`/plugin install ptah --marketplace owlvisions/PTAH`); preview first, `--yes` to apply, only the `ptah` entry is touched, with backups and `uninstall`. See `docs/PTAH-AGENTS.md`.
 - **Integrations**: `integrations/vscode-ptah` (unpublished VS Code skeleton), `ptah completion bash|zsh|fish`, Arabic guide `docs/PTAH-GETTING-STARTED.ar.md`, example case in `examples/ptah-cases`, PTAH disclosure policy in `SECURITY.md`.
-- **Inherited analyzers** (REA layer): native binaries via Hopper, Ghidra, or IDA; JavaScript and Electron applications; .NET assemblies; Android; WebAssembly; firmware; and web captures. These run beneath PTAH and are documented in the collapsed section below.
+- **Inherited baseline analyzers** (compatibility layer): native binaries via Hopper, Ghidra, or IDA; JavaScript and Electron applications; .NET assemblies; Android; WebAssembly; firmware; and web captures. These run beneath PTAH and are documented in the collapsed section below.
 
 ## Architecture
 
@@ -83,7 +83,7 @@ Run the dependency-free test suite with `npm run test:ptah`. Full instructions, 
 │  Bounded adapters   objdump · llvm-objdump · wasm-tools      │
 │                     fixed argv · no shell · timeout · caps   │
 ├──────────────────────────────────────────────────────────────┤
-│  Inherited REA runtime (compatibility layer)                 │
+│  Inherited baseline runtime (compatibility layer)            │
 │  Hopper/Ghidra/IDA bridges · JS/Electron · .NET · Android …  │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -105,7 +105,7 @@ PTAH never forks REA state: it adapts REA evidence into its own provenance model
 
 ## Status and honesty notes
 
-- This repository is a **migration preview**. PTAH is the product identity and the primary interface; the npm package is `@owlvisions/ptah` (MCP registry name `io.github.owlvisions/ptah`, repository `owlvisions/PTAH`). The `rea` and `rea-agents` executables are kept as compatibility aliases, and the inherited runtime's source identifiers are unchanged (see `docs/PTAH-BRAND-AUDIT.md`).
+- PTAH is the product identity and primary interface; the npm package is `@owlvisions/ptah` (MCP registry name `io.github.owlvisions/ptah`, repository `owlvisions/PTAH`). The `rea` / `rea-agents` executables are kept as compatibility aliases, and the inherited runtime's source identifiers are retained for provenance and license attribution (see `docs/PTAH-BRAND-AUDIT.md`).
 - **Publication:** `@owlvisions/ptah` is not yet published to npm, and release automation stays gated to the upstream repository until publication is approved. Until then the `npx @owlvisions/ptah …` and `npm install --global @owlvisions/ptah` commands below fail with a 404; run from a source checkout instead (`npm ci && npm run build:cached`, then `node scripts/ptah.mjs help` or `npm link`).
 - Case checksums detect corruption; they are not signatures and do not authenticate authors.
 - Analyzer adapters apply bubblewrap isolation and prlimit limits only when those tools are present; each run records whether isolation was applied. Treat every analyzed target as hostile regardless.
@@ -117,7 +117,7 @@ PTAH never forks REA state: it adapts REA evidence into its own provenance model
 PTAH-authored and REA-authored code are licensed under MIT; see the inherited section below for third-party notices and commercial-tool terms. Install with `npm install --global @owlvisions/ptah` or run `npx @owlvisions/ptah help`.
 
 <details>
-<summary><strong>Inherited REA runtime documentation</strong> — analyzers, setup, showcases, and FAQ for the compatibility layer beneath PTAH (click to expand)</summary>
+<summary><strong>Inherited baseline runtime documentation</strong> — analyzers, setup, showcases, and FAQ for the compatibility layer beneath PTAH (click to expand)</summary>
 
 ## REA compatibility runtime — upstream documentation
 

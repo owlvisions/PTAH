@@ -745,7 +745,7 @@ void test("root branding identifies PTAH and documents the remaining compatibili
     await readFile(join(root, "package.json"), "utf8"),
   );
   assert.match(readme, /^# PTAH — Program Understanding & Analysis Toolkit/m);
-  assert.match(readme, /migration preview/);
+  assert.match(readme, /compatibility layer/);
   assert.match(readme, /PTAH-BRAND-AUDIT\.md/);
   assert.match(audit, /package identity migrated to `@owlvisions\/ptah`/);
   assert.match(audit, /Release gate checklist/);
