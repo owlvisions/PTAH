@@ -1,5 +1,5 @@
 /**
- * Advanced analyzers (beyond REA). These are cross-cutting: they work on raw
+ * Advanced analyzers (beyond the baseline). These are cross-cutting: they work on raw
  * bytes, dependency manifests, or a pair of targets rather than one format's
  * tasks, so they sit beside the provider contract and each returns Evidence.
  *

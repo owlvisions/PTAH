@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   compareInspections,
-  reaMetrics,
+  baselineMetrics,
   renderHeadToHead,
 } from "../src/index.mjs";
 
 const SHA = "6974".padEnd(64, "a");
 
-void test("reaMetrics normalizes a REA inspect record", () => {
-  const m = reaMetrics({
+void test("baselineMetrics normalizes a the baseline analyzer inspect record", () => {
+  const m = baselineMetrics({
     subject: { format: "elf", architecture: "x86_64", digest: { sha256: SHA } },
     normalized_result: {
       segment_count: 32,
@@ -65,7 +65,7 @@ void test("renderHeadToHead produces a table with timings and interpretation", (
   const md = renderHeadToHead([
     {
       target: "true",
-      reaMs: 16804,
+      baselineMs: 16804,
       ptahMs: 2003,
       comparison: compareInspections(rea, {
         ...rea,
@@ -75,7 +75,7 @@ void test("renderHeadToHead produces a table with timings and interpretation", (
       }),
     },
   ]);
-  assert.match(md, /# PTAH Engine vs REA/);
+  assert.match(md, /# PTAH Engine vs the baseline analyzer/);
   assert.match(md, /\| true \| format \| elf \| elf \| yes \|/);
   assert.match(md, /\| true \| 16804 \| 2003 \|/);
   assert.match(md, /analysis \*depth\*, not capability/);

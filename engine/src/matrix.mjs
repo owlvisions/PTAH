@@ -1,16 +1,16 @@
 /**
  * Capability matrix and coverage summary for the PTAH Engine.
  *
- * The PTAH side is read from the live registry (measured from code). The REA
- * comparison columns are REA's *documented* capabilities, not measured here,
- * and are labelled as such: each row is marked "parity" when REA has an
+ * The PTAH side is read from the live registry (measured from code). The the baseline analyzer
+ * comparison columns are the baseline analyzer's *documented* capabilities, not measured here,
+ * and are labelled as such: each row is marked "parity" when the baseline analyzer has an
  * equivalent for that format, or "beyond" when it does not.
  */
 import { compareCodePoints } from "./canonical.mjs";
 import { ADVANCED_ANALYZERS } from "./analyzers.mjs";
 
-/** Formats REA is documented to analyze (used only to annotate parity). */
-export const REA_FORMATS = Object.freeze(
+/** Formats the baseline analyzer is documented to analyze (used only to annotate parity). */
+export const BASELINE_FORMATS = Object.freeze(
   new Set([
     "elf",
     "pe",
@@ -36,8 +36,8 @@ export const REA_FORMATS = Object.freeze(
   ]),
 );
 
-/** Analysis capabilities REA does not have; PTAH's additions over REA. */
-export const BEYOND_REA = Object.freeze(
+/** Analysis capabilities the baseline analyzer does not have; PTAH's additions over the baseline analyzer. */
+export const BEYOND_BASELINE = Object.freeze(
   new Set([
     "dependencies",
     "diff",
@@ -53,7 +53,7 @@ export const BEYOND_REA = Object.freeze(
 
 /**
  * One row per (format, task): which providers serve it, and whether it is at
- * parity with REA or beyond it. Built from the registry's capability table.
+ * parity with the baseline analyzer or beyond it. Built from the registry's capability table.
  */
 export function capabilityMatrix(registry) {
   const { providers, routes } = registry.table();
@@ -70,13 +70,13 @@ export function capabilityMatrix(registry) {
           compareCodePoints,
         ),
         availableProviders: ids.filter((id) => byId.get(id)?.available),
-        comparison: REA_FORMATS.has(format) ? "parity" : "beyond",
+        comparison: BASELINE_FORMATS.has(format) ? "parity" : "beyond",
       });
     }
   return rows;
 }
 
-/** Headline counts: providers, formats, tasks, and the beyond-REA additions. */
+/** Headline counts: providers, formats, tasks, and the beyond-baseline additions. */
 export function coverageSummary(registry) {
   const { providers } = registry.table();
   const formats = new Set();
@@ -96,10 +96,10 @@ export function coverageSummary(registry) {
     tasks: [...tasks].sort(compareCodePoints),
     advancedAnalyzers: ADVANCED_ANALYZERS.map((a) => a.id),
     beyondReaFormats: [...formats]
-      .filter((f) => !REA_FORMATS.has(f))
+      .filter((f) => !BASELINE_FORMATS.has(f))
       .sort(compareCodePoints),
     beyondReaCapabilities: ADVANCED_ANALYZERS.filter((a) =>
-      BEYOND_REA.has(a.id),
+      BEYOND_BASELINE.has(a.id),
     ).map((a) => a.id),
   };
 }
@@ -116,16 +116,16 @@ export function renderMatrixMarkdown(registry) {
       .join(", ")}). ` +
       `Formats: ${summary.formatCount}. Advanced analyzers: ${summary.advancedAnalyzers.length}.`,
     "",
-    "The PTAH column is read from the engine's registry. The REA column marks whether REA is documented to cover that format (parity) or not (beyond REA); it is not a measurement of REA.",
+    "The PTAH column is read from the engine's registry. The the baseline analyzer column marks whether the baseline analyzer is documented to cover that format (parity) or not (beyond the baseline); it is not a measurement of the baseline analyzer.",
     "",
-    "| Format | Task | PTAH providers | Kinds | vs REA |",
+    "| Format | Task | PTAH providers | Kinds | vs baseline |",
     "| --- | --- | --- | --- | --- |",
     ...rows.map(
       (r) =>
         `| ${r.format} | ${r.task} | ${r.providers.join(", ")} | ${r.kinds.join(", ")} | ${r.comparison} |`,
     ),
     "",
-    "## Beyond REA",
+    "## beyond the baseline",
     "",
     `- Formats PTAH adds: ${summary.beyondReaFormats.join(", ") || "none"}`,
     `- Capabilities PTAH adds: ${summary.beyondReaCapabilities.join(", ")}`,

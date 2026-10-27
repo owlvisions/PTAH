@@ -1,8 +1,8 @@
-# PTAH Engine vs REA — head to head
+# PTAH Engine vs the baseline analyzer — head to head
 
 Both run on the same targets on this machine. Identity metrics must match exactly; counts agree when within 25% (tools count sections/functions differently). Timings are wall-clock for the comparable operation.
 
-| Target | Metric       | REA                                                              | PTAH                                                             | Agree |
+| Target | Metric       | the baseline analyzer                                            | PTAH                                                             | Agree |
 | ------ | ------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------- | ----- |
 | true   | format       | elf                                                              | elf                                                              | yes   |
 | true   | architecture | x86_64                                                           | x86_64                                                           | yes   |
@@ -13,12 +13,12 @@ Both run on the same targets on this machine. Identity metrics must match exactl
 
 ## Timing (ms)
 
-| Target | REA inspect | PTAH comparable tasks |
-| ------ | ----------- | --------------------- |
-| true   | 12452       | 1633                  |
+| Target | the baseline analyzer inspect | PTAH comparable tasks |
+| ------ | ----------------------------- | --------------------- |
+| true   | 12452                         | 1633                  |
 
 ## Interpretation
 
 - Identity (format, architecture, SHA-256) and section counts match: the engines agree on what the target is.
-- Function and string counts differ by analysis _depth_, not capability. REA's `inspect` defaults to a full Ghidra analysis; PTAH's default disassemble uses fast radare2, which is why PTAH is quicker here. PTAH's own Ghidra provider reaches the same depth at comparable cost — selecting it closes the count gap and is the apples-to-apples path.
+- Function and string counts differ by analysis _depth_, not capability. the baseline analyzer's `inspect` defaults to a full Ghidra analysis; PTAH's default disassemble uses fast radare2, which is why PTAH is quicker here. PTAH's own Ghidra provider reaches the same depth at comparable cost — selecting it closes the count gap and is the apples-to-apples path.
 - These are measured on this machine for these targets only; they are not a universal ranking.

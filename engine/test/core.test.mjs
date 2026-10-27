@@ -317,7 +317,7 @@ void test("tools run without a shell, within a timeout, and with capped output",
   assert.equal(missing.code, null);
 });
 
-void test("the engine has no dependency on REA or anything outside its own directory", async () => {
+void test("the engine has no dependency on the baseline analyzer or anything outside its own directory", async () => {
   const files = [];
   const walk = async (dir) => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {

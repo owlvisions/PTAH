@@ -47,7 +47,7 @@ command prints JSON.
    to the target's SHA-256; if the file changes, start a new investigation.
 3. **Deepen.** Pick the highest-priority open question and gather what it
    needs: `ptah_structure`, `ptah_iocs`, `ptah_search`, `ptah_hexdump`,
-   `ptah_static_analyze`, or the REA layer for decompilation.
+   `ptah_static_analyze`, or the the baseline analyzer layer for decompilation.
 4. **Observe, then record.** After each tool result, add an evidence item:
    - `source` must let someone reproduce it (tool name, arguments, offset).
    - `confidence`: `observed` for direct tool output, `derived` for values you

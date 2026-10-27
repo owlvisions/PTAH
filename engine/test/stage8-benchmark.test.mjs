@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
-  REA_FORMATS,
+  BASELINE_FORMATS,
   benchmark,
   capabilityMatrix,
   coverageSummary,
@@ -15,7 +15,7 @@ import {
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
-void test("the capability matrix covers every provider and marks parity vs beyond REA", async () => {
+void test("the capability matrix covers every provider and marks parity vs beyond the baseline", async () => {
   const registry = createDefaultRegistry();
   await registry.probe();
   const rows = capabilityMatrix(registry);
@@ -27,10 +27,10 @@ void test("the capability matrix covers every provider and marks parity vs beyon
   const inMatrix = new Set(rows.flatMap((r) => r.providers));
   for (const provider of registry.providers)
     assert.ok(inMatrix.has(provider.id), `${provider.id} missing from matrix`);
-  // Each row is classified, and parity rows are REA formats.
+  // Each row is classified, and parity rows are the baseline analyzer formats.
   for (const row of rows) {
     assert.ok(["parity", "beyond"].includes(row.comparison));
-    assert.equal(row.comparison === "parity", REA_FORMATS.has(row.format));
+    assert.equal(row.comparison === "parity", BASELINE_FORMATS.has(row.format));
   }
   const markdown = renderMatrixMarkdown(registry);
   assert.match(markdown, /# PTAH Engine capability matrix/);

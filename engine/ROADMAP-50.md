@@ -1,4 +1,4 @@
-# PTAH Engine — 50 improvements to surpass REA and every similar tool
+# PTAH Engine — 50 improvements to surpass the baseline analyzer and every similar tool
 
 Each item is executed in a **tested batch**: real code plus a test that passes
 before moving on. Nothing is marked done without a test. Status: `planned`
@@ -78,5 +78,5 @@ Legend: ☐ planned · ☑ done (with test) · ◐ partial.
 ## Execution rule
 
 A batch lands only when `node --test engine/test/*.test.mjs` is green, lint and
-format pass, and the capability matrix / README reflect the change. Beyond-REA
+format pass, and the capability matrix / README reflect the change. Beyond-the baseline analyzer
 items are additive; nothing removes a working capability.

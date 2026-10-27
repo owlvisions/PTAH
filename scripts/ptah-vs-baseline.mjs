@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Head-to-head harness: runs REA `inspect` and the PTAH Engine on the same
+ * Head-to-head harness: runs the baseline analyzer `inspect` and the PTAH Engine on the same
  * targets and writes engine/HEAD-TO-HEAD.md. All numbers are measured here.
- * Bridges the REA CLI (scripts/rea.mjs) and the standalone engine, so it lives
- * outside engine/ (which must stay REA-free).
+ * Bridges the the baseline analyzer CLI (scripts/rea.mjs) and the standalone engine, so it lives
+ * outside engine/ (which must stay the baseline analyzer-free).
  */
 import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
@@ -13,7 +13,7 @@ import {
   compareInspections,
   createDefaultRegistry,
   createEngine,
-  reaMetrics,
+  baselineMetrics,
   renderHeadToHead,
 } from "../engine/src/index.mjs";
 
@@ -24,7 +24,7 @@ const attestation = {
   statement: "head-to-head benchmark",
 };
 
-function reaInspect(target) {
+function baselineInspect(target) {
   return new Promise((resolve) => {
     const started = process.hrtime.bigint();
     const child = spawn(
@@ -38,7 +38,7 @@ function reaInspect(target) {
     child.once("close", () => {
       const ms = Number((process.hrtime.bigint() - started) / 1_000_000n);
       try {
-        resolve({ metrics: reaMetrics(JSON.parse(out)), ms });
+        resolve({ metrics: baselineMetrics(JSON.parse(out)), ms });
       } catch {
         resolve(null);
       }
@@ -80,19 +80,21 @@ async function main() {
   const engine = createEngine({ registry: createDefaultRegistry() });
   const entries = [];
   for (const target of targets) {
-    const [rea, ptah] = [
-      await reaInspect(target),
+    const [baseline, ptah] = [
+      await baselineInspect(target),
       await ptahInspect(engine, target),
     ];
-    if (!rea) {
-      process.stderr.write(`REA inspect unavailable for ${target}; skipping\n`);
+    if (!baseline) {
+      process.stderr.write(
+        `the baseline analyzer inspect unavailable for ${target}; skipping\n`,
+      );
       continue;
     }
     entries.push({
       target: target.split("/").pop(),
-      reaMs: rea.ms,
+      baselineMs: rea.ms,
       ptahMs: ptah.ms,
-      comparison: compareInspections(rea.metrics, ptah.metrics),
+      comparison: compareInspections(baseline.metrics, ptah.metrics),
     });
   }
   const markdown = renderHeadToHead(entries);

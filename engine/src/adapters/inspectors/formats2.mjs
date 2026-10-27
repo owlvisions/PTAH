@@ -1,5 +1,5 @@
 /**
- * Parity inspectors closing the remaining REA format gaps: archives
+ * Parity inspectors closing the remaining the baseline analyzer format gaps: archives
  * (zip/jar/apk entry listing), Electron ASAR, Apple IPS crash reports, and
  * CPython .pyc. Written from scratch over the bounded Reader; no external tool.
  */

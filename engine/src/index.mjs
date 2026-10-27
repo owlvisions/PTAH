@@ -122,8 +122,8 @@ export {
   capabilityMatrix,
   coverageSummary,
   renderMatrixMarkdown,
-  REA_FORMATS,
-  BEYOND_REA,
+  BASELINE_FORMATS,
+  BEYOND_BASELINE,
 } from "./matrix.mjs";
 export {
   benchmark,
@@ -131,10 +131,10 @@ export {
   renderBenchmarkMarkdown,
 } from "./benchmark.mjs";
 export {
-  reaMetrics,
+  baselineMetrics,
   compareInspections,
   renderHeadToHead,
-} from "./compare-rea.mjs";
+} from "./compare-baseline.mjs";
 export {
   parseZipEntries,
   parseAsar,

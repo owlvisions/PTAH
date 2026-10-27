@@ -108,10 +108,10 @@ void test("the dynamic-tool roster (adb, gdb, cutter, sigrok, frida) probes and 
   }
 });
 
-void test("the engine now covers every REA provider area it can statically", async () => {
+void test("the engine now covers every the baseline analyzer provider area it can statically", async () => {
   const registry = createDefaultRegistry();
   const { routes } = await registry.probe();
-  // Formats added for REA parity in this stage.
+  // Formats added for the baseline analyzer parity in this stage.
   for (const [format, task] of [
     ["apk", "resources"],
     ["asar", "manifest"],
