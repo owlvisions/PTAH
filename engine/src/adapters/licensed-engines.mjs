@@ -6,11 +6,15 @@
  * degrades instead of failing. These never download or install anything.
  */
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { sha256 } from "../canonical.mjs";
 import { createEvidence } from "../evidence.mjs";
 import { findExecutable, runTool, toolEnvironment } from "../exec.mjs";
 import { AnalysisProvider } from "../provider.mjs";
 import { ToolFailure } from "./tool-provider.mjs";
+
+const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), "scripts");
 
 /**
  * Base for a user-licensed headless engine located by one env var. Subclasses
@@ -112,12 +116,9 @@ export class IdaProvider extends LicensedEngine {
   }
   async #run(target, context) {
     const env = context.env ?? process.env;
-    const script = env.PTAH_IDA_SCRIPT;
-    if (!script)
-      throw new ToolFailure(
-        this.id,
-        "set PTAH_IDA_SCRIPT to an IDAPython script that writes JSON to $PTAH_OUT",
-      );
+    // Default to the shipped headless script so the adapter is turnkey once
+    // the licensed tool is present; override with PTAH_IDA_SCRIPT.
+    const script = env.PTAH_IDA_SCRIPT ?? join(SCRIPTS, "ptah_ida_export.py");
     const out = `${target.path}.ptah-ida.json`;
     const text = await this.runHeadless(
       target,
@@ -161,12 +162,10 @@ export class HopperProvider extends LicensedEngine {
   }
   async decompile(target, context = {}) {
     const env = context.env ?? process.env;
-    const script = env.PTAH_HOPPER_SCRIPT;
-    if (!script)
-      throw new ToolFailure(
-        this.id,
-        "set PTAH_HOPPER_SCRIPT to a Hopper script that writes JSON to $PTAH_OUT",
-      );
+    // Default to the shipped headless script so the adapter is turnkey once
+    // the licensed tool is present; override with PTAH_HOPPER_SCRIPT.
+    const script =
+      env.PTAH_HOPPER_SCRIPT ?? join(SCRIPTS, "ptah_hopper_export.py");
     const out = `${target.path}.ptah-hopper.json`;
     const text = await this.runHeadless(
       target,
@@ -198,12 +197,9 @@ export class JebProvider extends LicensedEngine {
   }
   async decompile(target, context = {}) {
     const env = context.env ?? process.env;
-    const script = env.PTAH_JEB_SCRIPT;
-    if (!script)
-      throw new ToolFailure(
-        this.id,
-        "set PTAH_JEB_SCRIPT to a JEB script that writes JSON to $PTAH_OUT",
-      );
+    // Default to the shipped headless script so the adapter is turnkey once
+    // the licensed tool is present; override with PTAH_JEB_SCRIPT.
+    const script = env.PTAH_JEB_SCRIPT ?? join(SCRIPTS, "ptah_jeb_export.py");
     const out = `${target.path}.ptah-jeb.json`;
     const text = await this.runHeadless(
       target,

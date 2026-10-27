@@ -125,5 +125,5 @@ void test("the engine now covers every REA provider area it can statically", asy
     );
   // APK now has both decode (apktool) and signature (apk-signature-inspector).
   assert.ok(routes.apk.manifest.includes("apk-signature-inspector"));
-  assert.ok(registry.providers.length >= 32);
+  assert.ok(registry.providers.length >= 33);
 });

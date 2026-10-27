@@ -1,6 +1,6 @@
 # PTAH Engine capability matrix
 
-Providers: 32 (11 tool, 7 engine, 14 builtin). Formats: 26. Advanced analyzers: 13.
+Providers: 33 (11 tool, 8 engine, 14 builtin). Formats: 26. Advanced analyzers: 13.
 
 The PTAH column is read from the engine's registry. The REA column marks whether REA is documented to cover that format (parity) or not (beyond REA); it is not a measurement of REA.
 
@@ -34,9 +34,9 @@ The PTAH column is read from the engine's registry. The REA column marks whether
 | elf             | disassemble    | objdump, radare2, rizin                              | engine, tool          | parity |
 | elf             | importsExports | readelf, radare2, nm, rizin                          | engine, tool          | parity |
 | elf             | manifest       | readelf, radare2, rizin, toolchain-inspector         | builtin, engine, tool | parity |
-| elf             | sections       | readelf, objdump, radare2, rizin                     | engine, tool          | parity |
+| elf             | sections       | readelf, objdump, radare2, gdb, rizin                | engine, tool          | parity |
 | elf             | strings        | radare2, rizin                                       | engine                | parity |
-| elf             | symbols        | readelf, radare2, ida, nm, rizin, ghidra, kuna       | engine, tool          | parity |
+| elf             | symbols        | readelf, radare2, ida, nm, rizin, gdb, ghidra, kuna  | engine, tool          | parity |
 | evm             | disassemble    | evm-inspector                                        | builtin               | parity |
 | evm             | manifest       | evm-inspector                                        | builtin               | parity |
 | gguf            | manifest       | gguf-inspector                                       | builtin               | parity |
@@ -63,9 +63,9 @@ The PTAH column is read from the engine's registry. The REA column marks whether
 | pe              | disassemble    | objdump, radare2, rizin                              | engine, tool          | parity |
 | pe              | importsExports | radare2, nm, rizin                                   | engine, tool          | parity |
 | pe              | manifest       | radare2, rizin, toolchain-inspector                  | builtin, engine       | parity |
-| pe              | sections       | objdump, radare2, rizin                              | engine, tool          | parity |
+| pe              | sections       | objdump, radare2, gdb, rizin                         | engine, tool          | parity |
 | pe              | strings        | radare2, rizin                                       | engine                | parity |
-| pe              | symbols        | radare2, ida, nm, rizin, ghidra, kuna                | engine, tool          | parity |
+| pe              | symbols        | radare2, ida, nm, rizin, gdb, ghidra, kuna           | engine, tool          | parity |
 | pyc             | manifest       | pyc-inspector                                        | builtin               | beyond |
 | safetensors     | manifest       | safetensors-inspector                                | builtin               | parity |
 | sqlite          | manifest       | sqlite-inspector                                     | builtin               | parity |

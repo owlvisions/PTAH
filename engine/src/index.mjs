@@ -151,3 +151,15 @@ export {
   apkSignatureProviders,
   ApkSignatureInspector,
 } from "./adapters/inspectors/apk-signature.mjs";
+export {
+  GdbProvider,
+  gdbProviders,
+  parseGdbFunctions,
+  parseGdbSections,
+} from "./adapters/gdb.mjs";
+export {
+  listAndroidDevices,
+  listDevicePackages,
+  planApkPull,
+  parseAdbDevices,
+} from "./adapters/android-device.mjs";

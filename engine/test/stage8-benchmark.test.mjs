@@ -20,8 +20,8 @@ void test("the capability matrix covers every provider and marks parity vs beyon
   await registry.probe();
   const rows = capabilityMatrix(registry);
   const summary = coverageSummary(registry);
-  assert.ok(summary.providers >= 32);
-  assert.deepEqual(summary.byKind, { tool: 11, engine: 7, builtin: 14 });
+  assert.ok(summary.providers >= 33);
+  assert.deepEqual(summary.byKind, { tool: 11, engine: 8, builtin: 14 });
   assert.ok(summary.formatCount >= 20);
   // Every provider appears in at least one matrix row.
   const inMatrix = new Set(rows.flatMap((r) => r.providers));
