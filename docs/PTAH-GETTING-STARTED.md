@@ -14,6 +14,24 @@ PTAH is the emerging product identity for this codebase: a program-understanding
 
 These features are deliberately scoped. Static adapters for `objdump`, `llvm-objdump`, and `wasm-tools` provide bounded metadata/validation operations; they are not a universal decompiler. External tools are not OS-sandboxed by this migration slice, and the workbench is a local single-user utility rather than a production multi-user application.
 
+## The standalone PTAH Engine
+
+PTAH ships a self-contained analysis engine (`engine/`) reachable from the CLI:
+
+```sh
+node scripts/ptah.mjs engine providers                 # list all 33 providers
+node scripts/ptah.mjs engine --target ./app --i-own-this   # analyze (owner + interoperability)
+node scripts/ptah.mjs engine symbols --target ./app --provider gdb --ownership owner --purpose security-research
+node scripts/ptah.mjs engine matrix                    # capability matrix (Markdown)
+```
+
+It has zero runtime dependencies, routes each task (`manifest`, `sections`,
+`symbols`, `importsExports`, `strings`, `disassemble`, `decompile`,
+`resources`) to the best available provider with automatic fallback, and
+returns Evidence bound to the target's SHA-256. Analysis requires an
+attestation (`--ownership` + `--purpose`, or `--i-own-this`). Details,
+architecture diagram, and the capability matrix are in `engine/README.md`.
+
 ## Quick start from a source checkout
 
 Requirements for the full legacy project are declared in `package.json` (Node.js `^22.23.4 || ^24.22.1 || >=26.12.1` and npm `11.16.0`). The lightweight PTAH-native commands do not require installing project dependencies, but the legacy runtime does.
