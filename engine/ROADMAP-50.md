@@ -67,7 +67,7 @@ Legend: ☐ planned · ☑ done (with test) · ◐ partial.
 
 ## F. Surfaces & experience (45–50)
 
-45. ☐ Wire the engine into the `ptah` CLI (every provider reachable).
+45. ☑ Wire the engine into the `ptah` CLI (every provider reachable). — `ptah engine` (task/matrix/benchmark/providers/crossvalidate), tested.
 46. ☐ Expose engine providers as MCP tools for agents.
 47. ☐ A graphical workbench better than peers: evidence graph, hex+entropy,
     provider matrix, timeline, side-by-side diff, dark/light.

@@ -222,6 +222,9 @@ function printHelp() {
   );
   for (const usage of INTEL_USAGE) process.stdout.write(`  ${usage}\n`);
   process.stdout.write(
+    `  ptah engine TASK|matrix|benchmark|providers|crossvalidate --target FILE [--provider ID] [--ownership OWN --purpose PUR | --i-own-this]  Standalone PTAH Engine: 33 providers, 26 formats\n`,
+  );
+  process.stdout.write(
     `  ptah doctor  Readiness of runtime, analyzers, isolation, agent registrations, and upstream sync\n`,
   );
   process.stdout.write(
@@ -1035,6 +1038,7 @@ const SHELL_COMMANDS = [
   "agents",
   "upstream-sync",
   "doctor",
+  "engine",
   ...INTEL_COMMAND_NAMES,
   "ui",
   "help",
@@ -1265,6 +1269,9 @@ const cliContext = {
   integer: integerOption,
   emit,
   readJson: readJsonFile,
+  exitCode: (code) => {
+    process.exitCode = code;
+  },
   required(name) {
     const value = optionValue(name);
     if (!value) throw new Error(`Missing required ${name} argument.`);
@@ -1279,7 +1286,13 @@ async function runDoctorCommand() {
   if (!report.ok) process.exitCode = 2;
 }
 
+async function runEngineCommand2() {
+  const { runEngineCli } = await import("./ptah-engine-cli.mjs");
+  await runEngineCli(cliContext);
+}
+
 const COMMAND_HANDLERS = {
+  engine: runEngineCommand2,
   ...Object.fromEntries(
     INTEL_COMMAND_NAMES.map((name) => [
       name,
