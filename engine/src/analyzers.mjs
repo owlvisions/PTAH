@@ -470,6 +470,16 @@ export const ADVANCED_ANALYZERS = Object.freeze([
   { id: "capstone", kind: "tool", beyondRea: true, run: capstoneDisassemble },
   { id: "unicorn", kind: "tool", beyondRea: true, run: emulate },
   { id: "angr", kind: "tool", beyondRea: true, optional: true },
-  { id: "frida", kind: "tool", beyondRea: true, optional: true },
+  { id: "frida", kind: "tool", beyondRea: true, optional: true, dynamic: true },
   { id: "diffoscope", kind: "tool", beyondRea: true, optional: true },
+  { id: "adb", kind: "tool", beyondRea: false, optional: true, dynamic: true },
+  { id: "gdb", kind: "tool", beyondRea: false, optional: true, dynamic: true },
+  { id: "cutter", kind: "tool", beyondRea: false, optional: true },
+  {
+    id: "sigrok-cli",
+    kind: "tool",
+    beyondRea: false,
+    optional: true,
+    dynamic: true,
+  },
 ]);

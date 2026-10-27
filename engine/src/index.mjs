@@ -135,3 +135,19 @@ export {
   compareInspections,
   renderHeadToHead,
 } from "./compare-rea.mjs";
+export {
+  parseZipEntries,
+  parseAsar,
+  parseIps,
+  parsePyc,
+  formats2Providers,
+  ArchiveInspector,
+  AsarInspector,
+  IpsInspector,
+  PycInspector,
+} from "./adapters/inspectors/formats2.mjs";
+export {
+  parseApkSigningBlock,
+  apkSignatureProviders,
+  ApkSignatureInspector,
+} from "./adapters/inspectors/apk-signature.mjs";

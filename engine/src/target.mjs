@@ -26,6 +26,12 @@ const MAGIC = [
   [[0x0a, 0x0d, 0x0d, 0x0a], "pcapng"],
   [[0x47, 0x47, 0x55, 0x46], "gguf"],
   [[0xaf, 0x1b, 0xb1, 0xfa], "il2cpp-metadata"],
+  [[0x1f, 0x8b], "gzip"],
+  [[0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00], "xz"],
+  [[0x28, 0xb5, 0x2f, 0xfd], "zstd"],
+  [[0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c], "7z"],
+  [[0x42, 0x5a, 0x68], "bzip2"],
+  [[0x52, 0x61, 0x72, 0x21, 0x1a, 0x07], "rar"],
   [[0x47, 0x44, 0x50, 0x43], "godot-pck"],
   [[0x46, 0x4f, 0x52, 0x31], "beam"],
   [
@@ -120,7 +126,13 @@ function detect(header, names, name) {
   );
   if (!match) {
     // Formats without a reliable magic are recognized by extension.
-    if (name?.toLowerCase().endsWith(".safetensors")) return "safetensors";
+    const lower = name?.toLowerCase() ?? "";
+    if (lower.endsWith(".safetensors")) return "safetensors";
+    if (lower.endsWith(".asar")) return "asar";
+    if (lower.endsWith(".ips")) return "ips";
+    // CPython .pyc: bytes 2-3 are CR LF after the version magic.
+    if (lower.endsWith(".pyc") && header[2] === 0x0d && header[3] === 0x0a)
+      return "pyc";
     return "unknown";
   }
   if (match[1] === "zip") return zipFlavor(names);
